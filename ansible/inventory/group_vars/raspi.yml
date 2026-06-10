@@ -1,0 +1,4 @@
+ansible_user: rcanoff
+remote_deploy_path: /home/rcanoff/hermes
+compose_env_file: .env
+compose_project_dir: /home/rcanoff/hermes

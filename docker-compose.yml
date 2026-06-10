@@ -1,0 +1,40 @@
+services:
+  apple-caldav-mcp:
+    build:
+      context: .
+      dockerfile: docker/apple-caldav-mcp/Dockerfile
+    restart: unless-stopped
+    environment:
+      APPLE_CALDAV_URL: ${APPLE_CALDAV_URL:-https://caldav.icloud.com}
+      APPLE_CALDAV_USERNAME: ${APPLE_CALDAV_USERNAME:-}
+      APPLE_CALDAV_APP_PASSWORD: ${APPLE_CALDAV_APP_PASSWORD:-}
+      MCP_BEARER_TOKEN: ${CALDAV_MCP_BEARER_TOKEN:-}
+      PORT: 3000
+
+  hermes-gateway:
+    image: ${HERMES_IMAGE}
+    container_name: hermes
+    restart: unless-stopped
+    volumes:
+      - ${HERMES_DATA_DIR}:/opt/data
+    environment:
+      HERMES_UID: ${HERMES_UID:-10000}
+      HERMES_GID: ${HERMES_GID:-10000}
+      HERMES_DASHBOARD: "true"
+      HERMES_DASHBOARD_HOST: 0.0.0.0
+      HERMES_DASHBOARD_PORT: ${HERMES_DASHBOARD_PORT:-9119}
+      HERMES_DASHBOARD_INSECURE: "true"
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+      FIRECRAWL_API_URL: ${FIRECRAWL_API_URL:-}
+      FIRECRAWL_BROWSER_TTL: ${FIRECRAWL_BROWSER_TTL:-300}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS:-}
+      TELEGRAM_HOME_CHANNEL: ${TELEGRAM_HOME_CHANNEL:-}
+      TELEGRAM_HOME_CHANNEL_NAME: ${TELEGRAM_HOME_CHANNEL_NAME:-}
+      TELEGRAM_GROUP_ALLOWED_USERS: ${TELEGRAM_GROUP_ALLOWED_USERS:-}
+      TELEGRAM_GROUP_ALLOWED_CHATS: ${TELEGRAM_GROUP_ALLOWED_CHATS:-}
+    ports:
+      - 127.0.0.1:${HERMES_DASHBOARD_PORT:-9119}:9119
+    command: ["gateway", "run"]

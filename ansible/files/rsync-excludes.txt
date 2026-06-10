@@ -1,0 +1,7 @@
+.git/
+.pnpm-store/
+apple-caldav-mcp/node_modules/
+apple-caldav-mcp/dist/
+data/
+v11/
+hermes.zip

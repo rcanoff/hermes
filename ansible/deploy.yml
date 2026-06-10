@@ -1,0 +1,103 @@
+---
+- name: Deploy Hermes workspace to Raspberry Pi
+  hosts: raspi
+  gather_facts: false
+  vars:
+    local_project_dir: "{{ playbook_dir | dirname }}"
+    rsync_excludes_file: "{{ playbook_dir }}/files/rsync-excludes.txt"
+    remote_compose_dir: "{{ compose_project_dir | default(remote_deploy_path) }}"
+    rsync_ssh_cmd: >-
+      /home/rcanoff/.local/bin/win-ssh
+      -C
+      -o ControlMaster=auto
+      -o ControlPersist=10m
+      -o ControlPath=~/.ansible/cp/ansible-%r@%h:%p
+      -p {{ ansible_port | default(22) }}
+  pre_tasks:
+    - name: Validate required deployment variables
+      ansible.builtin.assert:
+        that:
+          - ansible_host is defined
+          - ansible_user is defined
+          - remote_deploy_path is defined
+          - remote_deploy_path | length > 0
+        fail_msg: Missing one of ansible_host, ansible_user, or remote_deploy_path.
+
+    - name: Check local rsync availability
+      ansible.builtin.command: rsync --version
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Check remote rsync availability
+      ansible.builtin.command: rsync --version
+      changed_when: false
+
+    - name: Ensure remote deploy directory exists
+      ansible.builtin.file:
+        path: "{{ remote_deploy_path }}"
+        state: directory
+        mode: "0755"
+
+    - name: Ensure remote data directory exists
+      ansible.builtin.file:
+        path: "{{ remote_deploy_path }}/data"
+        state: directory
+        mode: "0755"
+
+  tasks:
+    - name: Sync workspace to Raspberry Pi
+      ansible.builtin.command:
+        argv:
+          - rsync
+          - -az
+          - --delete
+          - "--exclude-from={{ rsync_excludes_file }}"
+          - -e
+          - "{{ rsync_ssh_cmd }}"
+          - "{{ local_project_dir }}/"
+          - "{{ ansible_user }}@{{ ansible_host }}:{{ remote_deploy_path }}/"
+      delegate_to: localhost
+      changed_when: true
+
+    - name: Deploy managed Hermes config
+      ansible.builtin.copy:
+        src: "{{ local_project_dir }}/data/config.yaml"
+        dest: "{{ remote_deploy_path }}/data/config.yaml"
+        mode: "0644"
+
+    - name: Sync Apple Calendar MCP token on remote host
+      ansible.builtin.command:
+        argv:
+          - sh
+          - ./scripts/sync-apple-calendar-mcp-token.sh
+          - "{{ compose_env_file }}"
+          - data/config.yaml
+      args:
+        chdir: "{{ remote_compose_dir }}"
+
+    - name: Start or update remote Hermes stack
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - "{{ compose_env_file }}"
+          - up
+          - -d
+      args:
+        chdir: "{{ remote_compose_dir }}"
+
+    - name: Show remote compose status
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - ps
+      args:
+        chdir: "{{ remote_compose_dir }}"
+      changed_when: false
+      register: compose_ps
+
+    - name: Print remote compose status
+      ansible.builtin.debug:
+        msg: "{{ compose_ps.stdout_lines }}"

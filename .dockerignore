@@ -1,0 +1,9 @@
+*
+!apple-caldav-mcp/
+!apple-caldav-mcp/package.json
+!apple-caldav-mcp/pnpm-lock.yaml
+!apple-caldav-mcp/dist/
+!apple-caldav-mcp/dist/**
+!docker/
+!docker/apple-caldav-mcp/
+!docker/apple-caldav-mcp/Dockerfile

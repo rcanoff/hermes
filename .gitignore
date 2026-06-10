@@ -1,0 +1,5 @@
+.env
+data/
+apple-caldav-mcp/node_modules/
+apple-caldav-mcp/dist/
+apple-caldav-mcp/.env
