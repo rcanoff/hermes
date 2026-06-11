@@ -43,6 +43,16 @@ This is equivalent to:
 docker compose up -d
 ```
 
+Common operator shortcuts:
+
+```bash
+make hermes-config
+make hermes-model
+make hermes-mcp-list
+make hermes-gateway-nosupervise
+make hermes-shell
+```
+
 ## Start Hermes on Windows PowerShell
 
 This repo's `Makefile` is Unix-oriented. In PowerShell, use the native wrapper instead of `make`:
@@ -65,8 +75,13 @@ The PowerShell wrapper mirrors the Makefile behavior, including syncing the Appl
 
 If you run `make` from WSL, the operational targets `up`, `down`, `ps`, `logs`, `config`, and `restart` automatically delegate to the Windows PowerShell wrapper so they use the Windows Docker Desktop integration instead of the WSL `docker compose` path.
 
-The dashboard is enabled inside the same container and bound on the host to `127.0.0.1:${HERMES_DASHBOARD_PORT}`. It is not exposed on the LAN.
-Inside the container it binds to `0.0.0.0` so Docker can forward the port, and `HERMES_DASHBOARD_INSECURE=true` is required because this local-only setup does not configure Hermes dashboard OAuth providers.
+The dashboard is enabled inside the same container and published on the host at `${HERMES_DASHBOARD_PORT}` on all interfaces, so it is reachable from other machines on the same network at `http://<host-ip>:${HERMES_DASHBOARD_PORT}`.
+Inside the container it binds to `0.0.0.0` so Docker can forward the port, and `HERMES_DASHBOARD_INSECURE=true` is required because this setup does not configure Hermes dashboard OAuth providers.
+
+Security note:
+
+- anyone who can reach `http://<host-ip>:${HERMES_DASHBOARD_PORT}` can access the dashboard
+- if you only want selected remote access, put Hermes behind a VPN, SSH tunnel, or a trusted reverse proxy instead of exposing the port broadly on your LAN
 
 ## Raspberry Pi deployment with Ansible
 
@@ -111,6 +126,7 @@ make logs
 
 Optional:
 
+- `FIRECRAWL_API_URL=https://api.firecrawl.dev` is the default hosted Firecrawl API
 - `FIRECRAWL_API_URL=http://localhost:3002` for a self-hosted Firecrawl instance
 - `FIRECRAWL_BROWSER_TTL=600` to keep Firecrawl browser sessions alive longer
 
@@ -159,48 +175,13 @@ Notes:
 
 ## Telegram bot setup
 
-Hermes' gateway already runs in this container. To enable Telegram, you just need to pass the Telegram env vars into it.
+This workspace no longer injects Telegram credentials through Docker Compose env vars.
+Configure Telegram directly inside Hermes instead, so bot tokens and chat settings live in Hermes' own config/state under `data/`.
 
-DM-first setup:
+Practical effect:
 
-1. Open Telegram and message `@BotFather`.
-2. Send `/newbot` and follow the prompts.
-3. Copy the bot token.
-4. Message `@userinfobot` to get your numeric Telegram user ID.
-5. Add these to `.env`:
-
-```bash
-TELEGRAM_BOT_TOKEN=123456:ABCDEF...
-TELEGRAM_ALLOWED_USERS=123456789
-TELEGRAM_HOME_CHANNEL=123456789
-```
-
-6. Recreate Hermes:
-
-```bash
-make down
-make up
-```
-
-7. Verify startup:
-
-```bash
-make logs
-```
-
-8. Open a DM with your bot and send `/start`.
-
-Notes:
-
-- `TELEGRAM_ALLOWED_USERS` is the main safety gate. Without it, Hermes denies everyone by default.
-- For a simple personal DM bot, set `TELEGRAM_HOME_CHANNEL` to your own Telegram user ID.
-- You can also set the home channel later from chat with `/set-home`.
-
-Optional group/forum settings:
-
-- `TELEGRAM_GROUP_ALLOWED_USERS` authorizes specific senders in groups/forums only.
-- `TELEGRAM_GROUP_ALLOWED_CHATS` authorizes an entire group/forum chat by chat ID.
-- `TELEGRAM_HOME_CHANNEL_NAME` is only a friendly label for the configured home channel.
+- removing or changing Telegram setup no longer requires editing `.env`
+- restarting Compose will not overwrite Telegram settings from workspace env vars
 
 ## Todoist MCP setup
 

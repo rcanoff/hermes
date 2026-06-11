@@ -11,7 +11,7 @@ POWERSHELL_HERMES := powershell.exe -NoProfile -ExecutionPolicy Bypass -Command 
 ANSIBLE_DIR := ansible
 ANSIBLE := cd $(ANSIBLE_DIR) && ansible-playbook
 
-.PHONY: help env config up down ps logs restart sync-apple-calendar-mcp-token deploy
+.PHONY: help env config up down ps logs restart sync-apple-calendar-mcp-token deploy hermes-config hermes-config-edit hermes-setup hermes-model hermes-mcp-list hermes-gateway hermes-gateway-nosupervise hermes-shell
 
 help:
 	@printf '%s\n' \
@@ -20,6 +20,14 @@ help:
 		'make ps             Show container status' \
 		'make logs           Show container logs' \
 		'make config         Render merged compose config' \
+		'make hermes-config  Open Hermes interactive config inside the container' \
+		'make hermes-config-edit  Edit Hermes config file inside the container' \
+		'make hermes-setup   Run Hermes setup inside the container' \
+		'make hermes-model   Open Hermes model picker inside the container' \
+		'make hermes-mcp-list  List configured Hermes MCP servers' \
+		'make hermes-gateway Run `hermes gateway` inside the container' \
+		'make hermes-gateway-nosupervise  Run gateway in foreground mode' \
+		'make hermes-shell   Open a shell inside the Hermes container' \
 		'make deploy         Deploy this workspace to the Raspberry Pi via Ansible' \
 		'make sync-apple-calendar-mcp-token  Sync Apple Calendar MCP token into data/config.yaml' \
 		'make env            Show the env file and UID/GID in use'
@@ -73,6 +81,30 @@ ifeq ($(IS_WSL),1)
 else
 	@$(COMPOSE) restart
 endif
+
+hermes-config:
+	@docker exec -it hermes hermes config
+
+hermes-config-edit:
+	@docker exec -it hermes hermes config edit
+
+hermes-setup:
+	@docker exec -it hermes hermes setup
+
+hermes-model:
+	@docker exec -it hermes hermes model
+
+hermes-mcp-list:
+	@docker exec -it hermes hermes mcp list
+
+hermes-gateway:
+	@docker exec -it hermes hermes gateway
+
+hermes-gateway-nosupervise:
+	@docker exec -it hermes hermes gateway run --no-supervise
+
+hermes-shell:
+	@docker exec -it hermes sh
 
 deploy:
 	@$(ANSIBLE) deploy.yml
