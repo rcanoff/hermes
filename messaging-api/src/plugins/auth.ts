@@ -1,4 +1,5 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import fp from 'fastify-plugin'
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import { isTokenDenied } from '../db/repos/sessions.js'
 import { findUserById } from '../db/repos/users.js'
 
@@ -27,7 +28,7 @@ declare module 'fastify' {
   }
 }
 
-export default function registerAuth(app: FastifyInstance): void {
+const authPlugin: FastifyPluginAsync = async (app) => {
   app.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {
     const token = extractBearerToken(request.headers.authorization)
     if (!token) {
@@ -54,6 +55,8 @@ export default function registerAuth(app: FastifyInstance): void {
     }
   })
 }
+
+export default fp(authPlugin, { name: 'auth-plugin' })
 
 function extractBearerToken(authorizationHeader: string | undefined): string | null {
   const match = authorizationHeader?.match(/^Bearer\s+(.+)$/i)

@@ -6,6 +6,8 @@ import { getDb } from './db/index.js'
 import { ensureBootstrapUser, findUserByUsername, updateUserPasswordHash } from './db/repos/users.js'
 import authPlugin from './plugins/auth.js'
 import authRoutes from './routes/auth.js'
+import conversationRoutes from './routes/conversations.js'
+import locationRoutes from './routes/locations.js'
 import { hashPassword, verifyPassword } from './services/password.js'
 
 declare module 'fastify' {
@@ -19,8 +21,10 @@ export function buildApp(options: AppOptions) {
 
   app.register(jwt, { secret: options.jwtSecret })
   app.decorate('db', getDb(options.dbPath))
-  authPlugin(app)
+  app.register(authPlugin)
   app.register(authRoutes)
+  app.register(conversationRoutes)
+  app.register(locationRoutes)
 
   app.addHook('onReady', async () => {
     // MVP contract: the configured bootstrap credentials remain authoritative at startup
