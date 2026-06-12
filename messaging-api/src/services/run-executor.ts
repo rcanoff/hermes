@@ -13,10 +13,11 @@ export interface ExecuteAssistantRunInput {
   conversationId: string
   hermesSessionId: string
   userMessageId: string
+  runId?: string
 }
 
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
-  const runId = createRun(input.db, input.conversationId, input.userMessageId)
+  const runId = input.runId ?? createRun(input.db, input.conversationId, input.userMessageId)
   const history = listMessages(input.db, input.conversationId)
   const location = getConversationLocation(input.db, input.conversationId)
   const hermesMessages = buildHermesMessages(history, location)
