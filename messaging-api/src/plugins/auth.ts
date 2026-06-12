@@ -1,0 +1,61 @@
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import { isTokenDenied } from '../db/repos/sessions.js'
+import { findUserById } from '../db/repos/users.js'
+
+interface JwtClaims {
+  sub: string
+  username: string
+  exp?: number
+}
+
+declare module '@fastify/jwt' {
+  interface FastifyJWT {
+    payload: JwtClaims
+    user: JwtClaims
+  }
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    userId: string
+    username: string
+    bearerToken: string
+  }
+
+  interface FastifyInstance {
+    authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply | void>
+  }
+}
+
+export default function registerAuth(app: FastifyInstance): void {
+  app.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {
+    const token = extractBearerToken(request.headers.authorization)
+    if (!token) {
+      return reply.code(401).send({ error: 'unauthorized' })
+    }
+
+    try {
+      const claims = app.jwt.verify<JwtClaims>(token)
+
+      if (isTokenDenied(app.db, token)) {
+        return reply.code(401).send({ error: 'unauthorized' })
+      }
+
+      const user = findUserById(app.db, claims.sub)
+      if (!user) {
+        return reply.code(401).send({ error: 'unauthorized' })
+      }
+
+      request.userId = user.id
+      request.username = user.username
+      request.bearerToken = token
+    } catch {
+      return reply.code(401).send({ error: 'unauthorized' })
+    }
+  })
+}
+
+function extractBearerToken(authorizationHeader: string | undefined): string | null {
+  const match = authorizationHeader?.match(/^Bearer\s+(.+)$/i)
+  return match?.[1]?.trim() || null
+}

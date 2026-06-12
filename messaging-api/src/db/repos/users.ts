@@ -18,6 +18,16 @@ export function findUserByUsername(db: Database.Database, username: string): Use
     .get(username) as UserRow | undefined
 }
 
+export function findUserById(db: Database.Database, id: string): UserRow | undefined {
+  return db
+    .prepare(`
+      SELECT id, username, password_hash, created_at
+      FROM users
+      WHERE id = ?
+    `)
+    .get(id) as UserRow | undefined
+}
+
 export function ensureBootstrapUser(db: Database.Database, username: string, passwordHash: string): UserRow {
   const existing = findUserByUsername(db, username)
   if (existing) {
@@ -37,4 +47,12 @@ export function ensureBootstrapUser(db: Database.Database, username: string, pas
       WHERE id = ?
     `)
     .get(id) as UserRow
+}
+
+export function updateUserPasswordHash(db: Database.Database, id: string, passwordHash: string): void {
+  db.prepare(`
+    UPDATE users
+    SET password_hash = ?
+    WHERE id = ?
+  `).run(passwordHash, id)
 }
