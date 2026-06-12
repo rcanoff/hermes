@@ -276,6 +276,32 @@ Safe read-first verification:
 7. Recreate with `docker compose up -d --force-recreate` and confirm data still exists in `./data`.
 8. Open `http://127.0.0.1:${HERMES_DASHBOARD_PORT}` to confirm the dashboard is reachable on localhost.
 
+## Messaging API setup
+
+The iOS companion talks to a private `messaging-api` service running alongside Hermes on the Raspberry Pi.
+
+Add these variables to `.env`:
+
+```dotenv
+MESSAGING_API_PORT=3000
+MESSAGING_API_JWT_SECRET=replace-this
+MESSAGING_API_BOOTSTRAP_USERNAME=operator
+MESSAGING_API_BOOTSTRAP_PASSWORD=replace-this
+```
+
+Start or update the stack:
+
+```bash
+make up
+```
+
+Verify the service:
+
+```bash
+curl http://<tailscale-ip>:3000/health
+make messaging-api-logs
+```
+
 ## Persistence check
 
 Hermes state is stored on the host at `./data` and mounted into the container at `/opt/data`.

@@ -32,3 +32,21 @@ services:
     ports:
       - ${HERMES_DASHBOARD_PORT:-9119}:9119
     command: ["gateway", "run"]
+
+  messaging-api:
+    build:
+      context: ./messaging-api
+    restart: unless-stopped
+    depends_on:
+      - hermes-gateway
+    environment:
+      PORT: 3000
+      JWT_SECRET: ${MESSAGING_API_JWT_SECRET:-change-me}
+      HERMES_BASE_URL: http://hermes:8642
+      DB_PATH: /opt/data/messaging-api.sqlite
+      BOOTSTRAP_USERNAME: ${MESSAGING_API_BOOTSTRAP_USERNAME:-operator}
+      BOOTSTRAP_PASSWORD: ${MESSAGING_API_BOOTSTRAP_PASSWORD:-change-me}
+    volumes:
+      - ${HERMES_DATA_DIR}:/opt/data
+    ports:
+      - ${MESSAGING_API_PORT:-3000}:3000

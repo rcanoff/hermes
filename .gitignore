@@ -3,3 +3,6 @@ data/
 apple-caldav-mcp/node_modules/
 apple-caldav-mcp/dist/
 apple-caldav-mcp/.env
+messaging-api/node_modules/
+messaging-api/dist/
+messaging-api/.env

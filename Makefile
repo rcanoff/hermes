@@ -11,7 +11,7 @@ POWERSHELL_HERMES := powershell.exe -NoProfile -ExecutionPolicy Bypass -Command 
 ANSIBLE_DIR := ansible
 ANSIBLE := cd $(ANSIBLE_DIR) && ansible-playbook
 
-.PHONY: help env config up down ps logs restart sync-apple-calendar-mcp-token deploy hermes-config hermes-config-edit hermes-setup hermes-model hermes-mcp-list hermes-gateway hermes-gateway-nosupervise hermes-shell
+.PHONY: help env config up down ps logs restart sync-apple-calendar-mcp-token deploy hermes-config hermes-config-edit hermes-setup hermes-model hermes-mcp-list hermes-gateway hermes-gateway-nosupervise hermes-shell messaging-api-logs messaging-api-shell
 
 help:
 	@printf '%s\n' \
@@ -28,6 +28,8 @@ help:
 		'make hermes-gateway Run `hermes gateway` inside the container' \
 		'make hermes-gateway-nosupervise  Run gateway in foreground mode' \
 		'make hermes-shell   Open a shell inside the Hermes container' \
+		'make messaging-api-logs   Show messaging-api logs' \
+		'make messaging-api-shell  Open a shell inside the messaging-api container' \
 		'make deploy         Deploy this workspace to the Raspberry Pi via Ansible' \
 		'make sync-apple-calendar-mcp-token  Sync Apple Calendar MCP token into data/config.yaml' \
 		'make env            Show the env file and UID/GID in use'
@@ -105,6 +107,12 @@ hermes-gateway-nosupervise:
 
 hermes-shell:
 	@docker exec -it hermes sh
+
+messaging-api-logs:
+	@$(COMPOSE) logs --tail=150 messaging-api
+
+messaging-api-shell:
+	@$(COMPOSE) exec messaging-api sh
 
 deploy:
 	@$(ANSIBLE) deploy.yml
