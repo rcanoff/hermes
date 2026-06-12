@@ -30,7 +30,7 @@ export function listMessages(db: Database.Database, conversationId: string): Mes
       SELECT id, conversation_id, role, content, created_at
       FROM messages
       WHERE conversation_id = ?
-      ORDER BY created_at ASC, id ASC
+      ORDER BY created_at ASC, rowid ASC
     `)
     .all(conversationId) as MessageRow[]
 }

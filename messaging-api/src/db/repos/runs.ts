@@ -17,10 +17,19 @@ export interface RunRow {
 
 export function createRun(db: Database.Database, conversationId: string, userMessageId: string): string {
   const id = randomUUID()
-  db.prepare(`
-    INSERT INTO message_runs (id, conversation_id, user_message_id, status)
-    VALUES (?, ?, ?, 'running')
-  `).run(id, conversationId, userMessageId)
+  try {
+    db.prepare(`
+      INSERT INTO message_runs (id, conversation_id, user_message_id, status)
+      VALUES (?, ?, ?, 'running')
+    `).run(id, conversationId, userMessageId)
+  } catch (error) {
+    if (isRunConflictError(error)) {
+      throw new Error('run_conflict')
+    }
+
+    throw error
+  }
+
   return id
 }
 
@@ -68,4 +77,8 @@ export function markRunFailed(
   `).run(errorCode, errorDetail, runId)
 
   return result.changes === 1
+}
+
+function isRunConflictError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('message_runs.conversation_id')
 }
