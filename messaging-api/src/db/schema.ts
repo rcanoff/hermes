@@ -76,18 +76,23 @@ export function initSchema(db: Database.Database): void {
         REFERENCES messages(conversation_id, id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS conversation_locations (
+    CREATE TABLE IF NOT EXISTS location_events (
       id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL UNIQUE,
+      user_id TEXT NOT NULL REFERENCES users(id),
       lat REAL NOT NULL,
       lon REAL NOT NULL,
       accuracy_m REAL NOT NULL,
       timestamp TEXT NOT NULL,
-      mode TEXT NOT NULL,
+      trigger TEXT NOT NULL,
       source TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+      address TEXT,
+      address_source TEXT,
+      address_status TEXT NOT NULL DEFAULT 'resolved',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE INDEX IF NOT EXISTS idx_location_events_user_timestamp
+      ON location_events (user_id, timestamp DESC);
   `)
 }
 

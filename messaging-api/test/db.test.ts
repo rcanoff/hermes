@@ -20,7 +20,7 @@ describe('schema', () => {
 
     expect(rows.map((row) => row.name)).toEqual(
       expect.arrayContaining([
-        'conversation_locations',
+        'location_events',
         'conversations',
         'message_process',
         'message_runs',
@@ -43,6 +43,7 @@ describe('schema', () => {
     expect(rows.map((row) => row.name)).toEqual(
       expect.arrayContaining([
         'conversations_user_created_idx',
+        'idx_location_events_user_timestamp',
         'message_runs_one_running_per_conversation',
         'messages_conversation_id_pair_idx',
         'messages_conversation_created_idx',
