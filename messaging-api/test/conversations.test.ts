@@ -183,4 +183,102 @@ describe('conversation routes', () => {
     expect(patch.statusCode).toBe(404)
     expect(patch.json()).toEqual({ error: 'not_found' })
   })
+
+  it('deletes a conversation and its related data for its owner', async () => {
+    const create = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    const conversation = create.json() as { id: string }
+
+    app!.db.exec(`
+      INSERT INTO messages (id, conversation_id, role, content)
+      VALUES ('m1', '${conversation.id}', 'user', 'hello');
+      INSERT INTO messages (id, conversation_id, role, content)
+      VALUES ('m2', '${conversation.id}', 'assistant', 'hi');
+      INSERT INTO message_runs (id, conversation_id, user_message_id, assistant_message_id, status, finished_at)
+      VALUES ('r1', '${conversation.id}', 'm1', 'm2', 'completed', datetime('now'));
+      INSERT INTO conversation_locations (id, conversation_id, lat, lon, accuracy_m, timestamp, mode, source)
+      VALUES ('loc1', '${conversation.id}', 38.7, -9.1, 10, '2026-06-13T10:00:00.000Z', 'once', 'ios');
+    `)
+
+    const del = await app!.inject({
+      method: 'DELETE',
+      url: `/conversations/${conversation.id}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(del.statusCode).toBe(204)
+    expect(del.body).toBe('')
+
+    const list = await app!.inject({
+      method: 'GET',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    expect(list.json()).toEqual([])
+
+    const fetch = await app!.inject({
+      method: 'GET',
+      url: `/conversations/${conversation.id}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    expect(fetch.statusCode).toBe(404)
+
+    expect(
+      app!.db.prepare('SELECT COUNT(*) AS count FROM messages WHERE conversation_id = ?').get(conversation.id),
+    ).toEqual({ count: 0 })
+    expect(
+      app!.db.prepare('SELECT COUNT(*) AS count FROM message_runs WHERE conversation_id = ?').get(conversation.id),
+    ).toEqual({ count: 0 })
+    expect(
+      app!.db
+        .prepare('SELECT COUNT(*) AS count FROM conversation_locations WHERE conversation_id = ?')
+        .get(conversation.id),
+    ).toEqual({ count: 0 })
+  })
+
+  it('returns 404 when deleting another user conversation', async () => {
+    const create = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    const conversation = create.json() as { id: string }
+
+    const del = await app!.inject({
+      method: 'DELETE',
+      url: `/conversations/${conversation.id}`,
+      headers: { authorization: `Bearer ${otherUserToken}` },
+    })
+
+    expect(del.statusCode).toBe(404)
+    expect(del.json()).toEqual({ error: 'not_found' })
+  })
+
+  it('returns run_conflict when deleting during an active assistant run', async () => {
+    const create = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    const conversation = create.json() as { id: string }
+
+    app!.db.exec(`
+      INSERT INTO messages (id, conversation_id, role, content)
+      VALUES ('m1', '${conversation.id}', 'user', 'pending');
+      INSERT INTO message_runs (id, conversation_id, user_message_id, status)
+      VALUES ('r1', '${conversation.id}', 'm1', 'running');
+    `)
+
+    const del = await app!.inject({
+      method: 'DELETE',
+      url: `/conversations/${conversation.id}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(del.statusCode).toBe(409)
+    expect(del.json()).toEqual({ error: 'run_conflict' })
+  })
 })

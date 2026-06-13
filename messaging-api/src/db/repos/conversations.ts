@@ -88,3 +88,23 @@ export function updateConversationTitle(
     `)
     .get(conversationId) as ConversationRow | undefined
 }
+
+export function deleteConversationForUser(
+  db: Database.Database,
+  userId: string,
+  conversationId: string,
+): boolean {
+  const conversation = getConversationForUser(db, userId, conversationId)
+  if (!conversation) {
+    return false
+  }
+
+  db.transaction(() => {
+    db.prepare('DELETE FROM message_runs WHERE conversation_id = ?').run(conversationId)
+    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conversationId)
+    db.prepare('DELETE FROM conversation_locations WHERE conversation_id = ?').run(conversationId)
+    db.prepare('DELETE FROM conversations WHERE id = ?').run(conversationId)
+  })()
+
+  return true
+}

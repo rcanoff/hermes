@@ -2,11 +2,13 @@ import { randomUUID } from 'node:crypto'
 import type { FastifyPluginAsync } from 'fastify'
 import {
   createConversation,
+  deleteConversationForUser,
   getConversationForUser,
   listConversations,
   normalizeConversationTitle,
   updateConversationTitle,
 } from '../db/repos/conversations.js'
+import { getActiveRun } from '../db/repos/runs.js'
 
 const conversationRoutes: FastifyPluginAsync = async (app) => {
   app.get('/conversations', { preHandler: app.authenticate }, async (request) => {
@@ -52,6 +54,21 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
 
     const updated = updateConversationTitle(app.db, conversationId, title)
     return updated
+  })
+
+  app.delete('/conversations/:id', { preHandler: app.authenticate }, async (request, reply) => {
+    const conversationId = (request.params as { id: string }).id
+    const existing = getConversationForUser(app.db, request.userId, conversationId)
+    if (!existing) {
+      return reply.code(404).send({ error: 'not_found' })
+    }
+
+    if (getActiveRun(app.db, conversationId)) {
+      return reply.code(409).send({ error: 'run_conflict' })
+    }
+
+    deleteConversationForUser(app.db, request.userId, conversationId)
+    return reply.code(204).send()
   })
 }
 

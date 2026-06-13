@@ -1,9 +1,12 @@
 openapi: 3.1.0
 info:
   title: Hermes Messaging API
-  version: 1.1.0
+  version: 1.2.0
   description: |
     Private API bridging mobile clients to Hermes.
+
+    **v1.2.0 changes:** `DELETE /conversations/{id}` removes a conversation and all
+    related messages, runs, and location data.
 
     **v1.1.0 changes:** auto-generated conversation titles (background, first message),
     `PATCH /conversations/{id}` for manual rename, new SSE `title` event.
@@ -406,6 +409,30 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: Not found or not owned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags: [conversations]
+      summary: Delete conversation
+      description: |
+        Permanently deletes the conversation and all related messages, run records,
+        and location data. Returns `409 run_conflict` if an assistant run is active.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Conversation deleted
+        '404':
+          description: Not found or not owned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Active assistant run in progress
           content:
             application/json:
               schema:
