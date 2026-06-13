@@ -3,9 +3,11 @@ import { getConversationForUser } from '../db/repos/conversations.js'
 import { insertMessage, listMessages } from '../db/repos/messages.js'
 import { createRun, getActiveRun } from '../db/repos/runs.js'
 import { executeAssistantRun } from '../services/run-executor.js'
+import { generateAndSaveTitle } from '../services/title-generator.js'
 import type { StreamEvent } from '../streams/hub.js'
 
 interface MessageBody {
+  text?: string
   content?: string
 }
 
@@ -29,7 +31,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    const content = request.body.content.trim()
+    const content = extractMessageText(request.body)
     if (!content) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
@@ -42,13 +44,18 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
           content,
         })
         const runId = createRun(app.db, conversation.id, messageId)
-        const message = listMessages(app.db, conversation.id).find((entry) => entry.id === messageId)
+        const messages = listMessages(app.db, conversation.id)
+        const message = messages.find((entry) => entry.id === messageId)
 
         if (!message) {
           throw new Error('message_not_found')
         }
 
-        return { message, runId }
+        return {
+          message,
+          runId,
+          shouldGenerateTitle: conversation.title === null && messages.length === 1,
+        }
       })()
 
       void executeAssistantRun({
@@ -62,6 +69,18 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       }).catch((error) => {
         app.log.error({ err: error, conversationId: conversation.id }, 'assistant run failed')
       })
+
+      if (created.shouldGenerateTitle) {
+        void generateAndSaveTitle({
+          db: app.db,
+          hermesClient: app.hermesClient,
+          hub: app.streamHub,
+          conversationId: conversation.id,
+          userMessageText: content,
+        }).catch((error) => {
+          app.log.warn({ err: error, conversationId: conversation.id }, 'title generation failed')
+        })
+      }
 
       return reply.code(202).send({ message: created.message })
     } catch (error) {
@@ -112,10 +131,16 @@ function getOwnedConversation(
   return getConversationForUser(app.db, userId, conversationId)
 }
 
-function isMessageBody(value: unknown): value is Required<MessageBody> {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as MessageBody).content === 'string'
-  )
+function isMessageBody(value: unknown): value is MessageBody {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const body = value as MessageBody
+  return typeof body.text === 'string' || typeof body.content === 'string'
+}
+
+function extractMessageText(body: MessageBody): string {
+  const raw = typeof body.text === 'string' ? body.text : body.content
+  return typeof raw === 'string' ? raw.trim() : ''
 }

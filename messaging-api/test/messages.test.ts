@@ -72,7 +72,7 @@ describe('message routes', () => {
       method: 'POST',
       url: `/conversations/${conversationId}/messages`,
       headers: { authorization: `Bearer ${operatorToken}` },
-      payload: { content: 'What time is it?' },
+      payload: { text: 'What time is it?' },
     })
 
     expect(postResponse.statusCode).toBe(202)
@@ -85,10 +85,11 @@ describe('message routes', () => {
       }),
     })
 
-    hermesClient.pushToken('It is')
-    hermesClient.pushToken(' noon')
-    hermesClient.pushDone()
-    hermesClient.closeWithoutDone()
+    completeTitleStream(hermesClient, 'Time check')
+    hermesClient.pushToken('It is', 0)
+    hermesClient.pushToken(' noon', 0)
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
 
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
 
@@ -98,12 +99,12 @@ describe('message routes', () => {
       expect.objectContaining({ role: 'assistant', content: 'It is noon' }),
     ])
     expect(getActiveRun(app!.db, conversationId)).toBeUndefined()
-    expect(hermesClient.requests).toEqual([
-      {
-        hermesSessionId: expect.any(String),
-        messages: [{ role: 'user', content: 'What time is it?' }],
-      },
-    ])
+    expect(hermesClient.requests).toHaveLength(2)
+    expect(hermesClient.requests[0]).toEqual({
+      hermesSessionId: expect.any(String),
+      messages: [{ role: 'user', content: 'What time is it?' }],
+    })
+    expect(hermesClient.requests[1]?.messages[0]?.role).toBe('system')
   })
 
   it('returns conflict when posting while a run is already active', async () => {
@@ -111,7 +112,7 @@ describe('message routes', () => {
       method: 'POST',
       url: `/conversations/${conversationId}/messages`,
       headers: { authorization: `Bearer ${operatorToken}` },
-      payload: { content: 'First' },
+      payload: { text: 'First' },
     })
 
     expect(firstResponse.statusCode).toBe(202)
@@ -120,7 +121,7 @@ describe('message routes', () => {
       method: 'POST',
       url: `/conversations/${conversationId}/messages`,
       headers: { authorization: `Bearer ${operatorToken}` },
-      payload: { content: 'Second' },
+      payload: { text: 'Second' },
     })
 
     expect(secondResponse.statusCode).toBe(409)
@@ -129,8 +130,28 @@ describe('message routes', () => {
       expect.objectContaining({ role: 'user', content: 'First' }),
     ])
 
-    hermesClient.pushDone()
-    hermesClient.closeWithoutDone()
+    completeTitleStream(hermesClient)
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
+    await waitFor(() => listMessages(app!.db, conversationId).length === 2)
+  })
+
+  it('accepts legacy content field for backward compatibility', async () => {
+    const response = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { content: 'Legacy payload' },
+    })
+
+    expect(response.statusCode).toBe(202)
+    expect(response.json()).toMatchObject({
+      message: expect.objectContaining({ role: 'user', content: 'Legacy payload' }),
+    })
+
+    completeTitleStream(hermesClient)
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
   })
 
@@ -139,7 +160,7 @@ describe('message routes', () => {
       method: 'POST',
       url: `/conversations/${conversationId}/messages`,
       headers: { authorization: `Bearer ${operatorToken}` },
-      payload: { content: '   ' },
+      payload: { text: '   ' },
     })
 
     expect(response.statusCode).toBe(400)
@@ -176,7 +197,7 @@ describe('message routes', () => {
       method: 'POST',
       url: `/conversations/${conversationId}/messages`,
       headers: { authorization: `Bearer ${operatorToken}` },
-      payload: { content: 'Stream this' },
+      payload: { text: 'Stream this' },
     })
     expect(postResponse.statusCode).toBe(202)
 
@@ -190,10 +211,11 @@ describe('message routes', () => {
     const reader = response.body?.getReader()
     expect(reader).toBeTruthy()
 
-    hermesClient.pushToken('Hello')
-    hermesClient.pushTool('lookup_weather')
-    hermesClient.pushDone()
-    hermesClient.closeWithoutDone()
+    completeTitleStream(hermesClient)
+    hermesClient.pushToken('Hello', 0)
+    hermesClient.pushTool('lookup_weather', 0)
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
 
     const payload = await readUntilDone(reader!)
 
@@ -203,7 +225,101 @@ describe('message routes', () => {
 
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
   })
+
+  it('auto-generates a title from the first message and emits an SSE title event', async () => {
+    await app!.listen({ host: '127.0.0.1', port: 0 })
+    const address = app!.server.address() as AddressInfo
+
+    const postResponse = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Plan a weekend in Porto' },
+    })
+    expect(postResponse.statusCode).toBe(202)
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/conversations/${conversationId}/stream`, {
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    const reader = response.body?.getReader()
+    expect(reader).toBeTruthy()
+
+    completeTitleStream(hermesClient, 'Porto weekend')
+    hermesClient.pushToken('Here is', 0)
+    hermesClient.pushToken(' an idea', 0)
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
+
+    const payload = await readUntilTitleOrDone(reader!)
+    expect(payload).toContain('event: title\ndata: {"title":"Porto weekend"}')
+    expect(payload).toContain('event: done\ndata: {"messageId":')
+
+    await waitFor(() => {
+      const row = app!.db
+        .prepare('SELECT title FROM conversations WHERE id = ?')
+        .get(conversationId) as { title: string | null }
+      return row.title === 'Porto weekend'
+    })
+
+    expect(hermesClient.requests).toHaveLength(2)
+    expect(hermesClient.requests[1]?.messages[0]?.role).toBe('system')
+  })
+
+  it('does not auto-generate a title when one is already set', async () => {
+    app!.db
+      .prepare('UPDATE conversations SET title = ? WHERE id = ?')
+      .run('Existing title', conversationId)
+
+    const postResponse = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Follow up question' },
+    })
+    expect(postResponse.statusCode).toBe(202)
+
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
+    await waitFor(() => listMessages(app!.db, conversationId).length === 2)
+
+    expect(hermesClient.requests).toHaveLength(1)
+  })
+
+  it('does not overwrite a user title set before auto-generation finishes', async () => {
+    const postResponse = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Late title generation' },
+    })
+    expect(postResponse.statusCode).toBe(202)
+
+    const patch = await app!.inject({
+      method: 'PATCH',
+      url: `/conversations/${conversationId}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { title: 'User chosen title' },
+    })
+    expect(patch.statusCode).toBe(200)
+
+    completeTitleStream(hermesClient, 'Generated title')
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
+    await waitFor(() => listMessages(app!.db, conversationId).length === 2)
+
+    const row = app!.db
+      .prepare('SELECT title FROM conversations WHERE id = ?')
+      .get(conversationId) as { title: string | null }
+
+    expect(row.title).toBe('User chosen title')
+  })
 })
+
+function completeTitleStream(hermesClient: FakeHermesClient, title = 'Title'): void {
+  hermesClient.pushToken(title, 1)
+  hermesClient.pushDone(1)
+  hermesClient.closeWithoutDone(1)
+}
 
 async function waitFor(check: () => boolean, timeoutMs = 1000): Promise<void> {
   const startedAt = Date.now()
@@ -219,6 +335,10 @@ async function waitFor(check: () => boolean, timeoutMs = 1000): Promise<void> {
 }
 
 async function readUntilDone(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
+  return readUntilTitleOrDone(reader)
+}
+
+async function readUntilTitleOrDone(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
   const decoder = new TextDecoder()
   let payload = ''
 
