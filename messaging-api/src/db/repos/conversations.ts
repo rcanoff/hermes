@@ -43,6 +43,16 @@ export function getConversationForUser(
     .get(userId, conversationId) as ConversationRow | undefined
 }
 
+const MAX_CONVERSATION_TITLE_CHARS = 120
+
+export function normalizeConversationTitle(raw: string): string | null {
+  const trimmed = raw.trim()
+  if (!trimmed || trimmed.length > MAX_CONVERSATION_TITLE_CHARS) {
+    return null
+  }
+  return trimmed
+}
+
 export function updateConversationTitleIfNull(
   db: Database.Database,
   conversationId: string,
@@ -57,4 +67,24 @@ export function updateConversationTitleIfNull(
     .run(title, conversationId)
 
   return result.changes === 1
+}
+
+export function updateConversationTitle(
+  db: Database.Database,
+  conversationId: string,
+  title: string,
+): ConversationRow | undefined {
+  db.prepare(`
+    UPDATE conversations
+    SET title = ?
+    WHERE id = ?
+  `).run(title, conversationId)
+
+  return db
+    .prepare(`
+      SELECT id, user_id, hermes_session_id, title, created_at
+      FROM conversations
+      WHERE id = ?
+    `)
+    .get(conversationId) as ConversationRow | undefined
 }

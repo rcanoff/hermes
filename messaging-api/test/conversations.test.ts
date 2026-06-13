@@ -106,4 +106,81 @@ describe('conversation routes', () => {
     expect(list.statusCode).toBe(401)
     expect(create.statusCode).toBe(401)
   })
+
+  it('patches a conversation title for its owner', async () => {
+    const create = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    const conversation = create.json() as { id: string }
+
+    const patch = await app!.inject({
+      method: 'PATCH',
+      url: `/conversations/${conversation.id}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { title: '  My thread  ' },
+    })
+
+    expect(patch.statusCode).toBe(200)
+    expect(patch.json()).toMatchObject({
+      id: conversation.id,
+      title: 'My thread',
+    })
+
+    const list = await app!.inject({
+      method: 'GET',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(list.json()).toEqual([patch.json()])
+  })
+
+  it('rejects empty or oversized titles', async () => {
+    const create = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    const conversation = create.json() as { id: string }
+
+    const empty = await app!.inject({
+      method: 'PATCH',
+      url: `/conversations/${conversation.id}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { title: '   ' },
+    })
+
+    const oversized = await app!.inject({
+      method: 'PATCH',
+      url: `/conversations/${conversation.id}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { title: 'a'.repeat(121) },
+    })
+
+    expect(empty.statusCode).toBe(400)
+    expect(empty.json()).toEqual({ error: 'invalid_request' })
+    expect(oversized.statusCode).toBe(400)
+    expect(oversized.json()).toEqual({ error: 'invalid_request' })
+  })
+
+  it('returns 404 when patching another user conversation', async () => {
+    const create = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    const conversation = create.json() as { id: string }
+
+    const patch = await app!.inject({
+      method: 'PATCH',
+      url: `/conversations/${conversation.id}`,
+      headers: { authorization: `Bearer ${otherUserToken}` },
+      payload: { title: 'Nope' },
+    })
+
+    expect(patch.statusCode).toBe(404)
+    expect(patch.json()).toEqual({ error: 'not_found' })
+  })
 })
