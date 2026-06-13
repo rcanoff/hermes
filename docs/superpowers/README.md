@@ -15,7 +15,11 @@ When work ships, move its spec and plan from `specs/` / `plans/` into `implement
 
 ## Current active work
 
-- Companion user-data vault + MCP (location redesign) — `specs/2026-06-13-companion-user-data-vault-design.md`
+- Companion user-data vault + MCP (location redesign)
+  - Design: `specs/2026-06-13-companion-user-data-vault-design.md`
+  - OpenAPI v1.5.0: `specs/messaging-api.openapi.yaml`
+  - Backend plan: `plans/2026-06-13-companion-user-data-vault-backend.md`
+  - iOS plan: `plans/2026-06-13-companion-user-data-vault-ios.md`
 
 ## Implemented (2026-06-13)
 
