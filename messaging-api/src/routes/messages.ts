@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify'
 import { getConversationForUser } from '../db/repos/conversations.js'
 import { insertMessage, listMessages } from '../db/repos/messages.js'
+import { getProcessByAssistantMessageIds } from '../db/repos/process.js'
 import { createRun, getActiveRun } from '../db/repos/runs.js'
 import { applyMessageEdit, MessageEditError } from '../services/message-editor.js'
 import { executeAssistantRun } from '../services/run-executor.js'
@@ -19,7 +20,18 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ error: 'not_found' })
     }
 
-    return listMessages(app.db, conversation.id)
+    const rows = listMessages(app.db, conversation.id)
+    const assistantIds = rows.filter((message) => message.role === 'assistant').map((message) => message.id)
+    const processMap = getProcessByAssistantMessageIds(app.db, assistantIds)
+
+    return rows.map((message) => {
+      if (message.role !== 'assistant') {
+        return message
+      }
+
+      const process = processMap.get(message.id)
+      return process ? { ...message, process } : message
+    })
   })
 
   app.post('/conversations/:id/messages', { preHandler: app.authenticate }, async (request, reply) => {

@@ -178,6 +178,50 @@ describe('message routes', () => {
     expect(response.json()).toEqual({ error: 'not_found' })
   })
 
+  it('returns persisted process lines on assistant messages after a tool-heavy run', async () => {
+    const postResponse = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Check weather in Lisbon' },
+    })
+    expect(postResponse.statusCode).toBe(202)
+
+    completeTitleStream(hermesClient)
+    hermesClient.pushReasoning('Looking up weather…', 0)
+    hermesClient.pushToolCall('lookup_weather', '{"query":"Lisbon"}', 0)
+    hermesClient.pushAnswerToken('It is sunny', 0)
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
+
+    await waitFor(() => listMessages(app!.db, conversationId).length === 2)
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(response.statusCode).toBe(200)
+    const messages = response.json() as Array<{
+      role: string
+      content: string
+      process?: { lines: Array<{ kind: string; text: string }> }
+    }>
+    expect(messages).toHaveLength(2)
+    expect(messages[0]).toMatchObject({ role: 'user', content: 'Check weather in Lisbon' })
+    expect(messages[1]).toMatchObject({
+      role: 'assistant',
+      content: 'It is sunny',
+      process: {
+        lines: [
+          { kind: 'reasoning', text: 'Looking up weather…' },
+          { kind: 'tool', text: expect.stringContaining('lookup weather') },
+        ],
+      },
+    })
+  })
+
   it('returns no_active_run when opening the stream without a current run', async () => {
     const response = await app!.inject({
       method: 'GET',
@@ -212,15 +256,18 @@ describe('message routes', () => {
     expect(reader).toBeTruthy()
 
     completeTitleStream(hermesClient)
+    hermesClient.pushReasoning('Thinking…', 0)
+    hermesClient.pushToolCall('lookup_weather', '{"query":"Lisbon"}', 0)
     hermesClient.pushAnswerToken('Hello', 0)
-    hermesClient.pushToolCall('lookup_weather', '{}', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
 
     const payload = await readUntilDone(reader!)
 
+    expect(payload).toContain('event: process\ndata: {"kind":"reasoning","text":"Thinking…"}')
+    expect(payload).toContain('event: process\ndata: {"kind":"tool","text":')
+    expect(payload).toContain('event: process_complete\ndata: {}')
     expect(payload).toContain('event: token\ndata: {"text":"Hello"}')
-    expect(payload).toContain('event: process\ndata: {"kind":"tool","text":"Running lookup weather"}')
     expect(payload).toContain('event: done\ndata: {"messageId":')
 
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
