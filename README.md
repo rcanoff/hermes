@@ -265,6 +265,27 @@ Safe read-first verification:
 - Run `docker exec -it hermes hermes mcp test apple_calendar` to confirm transport and auth.
 - In a fresh Hermes session or after `/reload-mcp`, ask read-only questions first, such as listing calendars or showing events for a date range, before attempting creates or updates.
 
+## Trip records vault
+
+Hermes keeps a centralized memory of personal records — currently trips — in an
+Obsidian-compatible markdown vault at `data/vault/` (mounted in the container at
+`/opt/data/vault`, resolved by skills via `OBSIDIAN_VAULT_PATH`).
+
+One note per trip lives in `Trips/` (named `YYYY-MM Origin-Destination.md`) and holds
+canonical booking facts: trip span, flight numbers, confirmation codes, lodging and
+car rental references. Enriched detail (terminal, address, when to leave) lives on
+the linked calendar event, and each event's UID is written back onto the note's fact
+line to prevent duplicates.
+
+The workflow is defined by the `productivity/trip-records` skill in `data/skills/`,
+which composes the existing `note-taking/obsidian` and
+`productivity/travel-bookings-to-calendar` skills. Design spec:
+`docs/superpowers/specs/2026-06-12-obsidian-trip-records-vault-design.md`.
+
+The vault is plain markdown — open the folder in Obsidian later for browsing on
+Mac/iPhone (sync is deferred; the vault is local-only on the Pi for now). It is part
+of `data/`, so the existing backup procedure covers it.
+
 ## macOS validation steps
 
 1. Copy `.env.example` to `.env` and set your UID/GID values.
@@ -283,11 +304,14 @@ The iOS companion talks to a private `messaging-api` service running alongside H
 Add these variables to `.env`:
 
 ```dotenv
+HERMES_API_SERVER_KEY=replace-this
 MESSAGING_API_PORT=3000
 MESSAGING_API_JWT_SECRET=replace-this
 MESSAGING_API_BOOTSTRAP_USERNAME=operator
 MESSAGING_API_BOOTSTRAP_PASSWORD=replace-this
 ```
+
+`HERMES_API_SERVER_KEY` enables Hermes's OpenAI-compatible API server on port `8642` inside the Docker network and authenticates `messaging-api` when it calls Hermes.
 
 Start or update the stack:
 
@@ -301,6 +325,40 @@ Verify the service:
 curl http://<tailscale-ip>:3000/health
 make messaging-api-logs
 ```
+
+### Assistant process stream
+
+The messaging API streams Hermes reasoning and tool activity over SSE while a reply is in progress, then persists it on the assistant message for scroll-back.
+
+Live stream events (in order):
+
+- `process` — one event per reasoning or tool line (`{"kind":"reasoning"|"tool","text":"..."}`)
+- `process_complete` — signals the process section is finished (`{}`)
+- `token` — answer text chunks
+- `done` — final assistant message id
+
+After the run completes, `GET /conversations/:id/messages` includes an optional `process` field on assistant messages:
+
+```json
+{
+  "role": "assistant",
+  "content": "It is sunny in Lisbon.",
+  "process": {
+    "lines": [
+      { "kind": "reasoning", "text": "Looking up weather…" },
+      { "kind": "tool", "text": "Running lookup weather" }
+    ]
+  }
+}
+```
+
+Process lines require Hermes to emit reasoning and tool deltas on `/v1/chat/completions`. If reasoning lines are missing, enable them in `data/config.yaml`:
+
+```yaml
+show_reasoning: true
+```
+
+Restart Hermes after changing that setting. Tool-only process lines still work without reasoning enabled.
 
 ## Persistence check
 
