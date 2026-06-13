@@ -65,6 +65,17 @@ export function initSchema(db: Database.Database): void {
       ON message_runs (conversation_id)
       WHERE status = 'running';
 
+    CREATE TABLE IF NOT EXISTS message_process (
+      id TEXT PRIMARY KEY,
+      assistant_message_id TEXT NOT NULL UNIQUE,
+      conversation_id TEXT NOT NULL,
+      lines_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id),
+      FOREIGN KEY (conversation_id, assistant_message_id)
+        REFERENCES messages(conversation_id, id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS conversation_locations (
       id TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL UNIQUE,

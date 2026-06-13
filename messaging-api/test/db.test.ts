@@ -22,6 +22,7 @@ describe('schema', () => {
       expect.arrayContaining([
         'conversation_locations',
         'conversations',
+        'message_process',
         'message_runs',
         'messages',
         'sessions',
