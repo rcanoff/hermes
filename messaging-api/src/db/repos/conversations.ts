@@ -112,7 +112,6 @@ export function deleteConversationForUser(
   db.transaction(() => {
     db.prepare('DELETE FROM message_runs WHERE conversation_id = ?').run(conversationId)
     db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conversationId)
-    db.prepare('DELETE FROM conversation_locations WHERE conversation_id = ?').run(conversationId)
     db.prepare('DELETE FROM conversations WHERE id = ?').run(conversationId)
   })()
 

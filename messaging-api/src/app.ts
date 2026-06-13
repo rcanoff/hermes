@@ -9,7 +9,7 @@ import ssePlugin from './plugins/sse.js'
 import authRoutes from './routes/auth.js'
 import conversationRoutes from './routes/conversations.js'
 import messageRoutes from './routes/messages.js'
-import locationRoutes from './routes/locations.js'
+import dataLocationRoutes from './routes/data-location.js'
 import { OpenAiHermesClient } from './services/hermes-client.js'
 import { hashPassword, verifyPassword } from './services/password.js'
 import { StreamHub } from './streams/hub.js'
@@ -38,7 +38,7 @@ export function buildApp(options: AppOptions) {
   app.register(authRoutes)
   app.register(conversationRoutes)
   app.register(messageRoutes)
-  app.register(locationRoutes)
+  app.register(dataLocationRoutes)
 
   app.addHook('onReady', async () => {
     // MVP contract: the configured bootstrap credentials remain authoritative at startup

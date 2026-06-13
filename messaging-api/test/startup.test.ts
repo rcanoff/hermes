@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
 import { createRun } from '../src/db/repos/runs.js'
-import { getConversationLocation, upsertConversationLocation } from '../src/db/repos/locations.js'
+import { insertLocationEvent } from '../src/db/repos/location-events.js'
 import { listMessages } from '../src/db/repos/messages.js'
 import { getActiveRun } from '../src/db/repos/runs.js'
 import { initSchema, reconcileRunningRuns } from '../src/db/schema.js'
@@ -70,13 +70,13 @@ describe('durable run execution', () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedConversation(db)
-    upsertConversationLocation(db, {
-      conversationId: 'c1',
+    insertLocationEvent(db, {
+      userId: 'u1',
       lat: 40.7128,
       lon: -74.006,
       accuracyM: 15,
-      timestamp: '2026-06-13T10:00:00Z',
-      mode: 'gps',
+      timestamp: '2026-06-13T10:00:00.000Z',
+      trigger: 'manual',
       source: 'ios',
     })
 
@@ -136,19 +136,20 @@ describe('durable run execution', () => {
           {
             role: 'system',
             content:
-              "User's current location: lat 40.7128, lon -74.006, accuracy 15m (as of 2026-06-13T10:00:00Z)",
+              "User's current location: lat 40.7128, lon -74.006, accuracy 15m (as of 2026-06-13T10:00:00.000Z)",
           },
           { role: 'user', content: 'hello' },
         ],
       },
     ])
-    expect(getConversationLocation(db, 'c1')).toEqual(
-      expect.objectContaining({
-        conversation_id: 'c1',
-        lat: 40.7128,
-        lon: -74.006,
-      }),
-    )
+    expect(
+      db
+        .prepare('SELECT lat, lon FROM location_events WHERE user_id = ? ORDER BY timestamp DESC LIMIT 1')
+        .get('u1'),
+    ).toEqual({
+      lat: 40.7128,
+      lon: -74.006,
+    })
   })
 
   it('marks the run failed and does not persist a fake assistant message when Hermes fails', async () => {
