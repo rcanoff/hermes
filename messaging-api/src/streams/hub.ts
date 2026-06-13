@@ -1,6 +1,7 @@
 export type StreamEvent =
   | { event: 'token'; data: { text: string } }
   | { event: 'tool'; data: { name: string } }
+  | { event: 'title'; data: { title: string } }
   | { event: 'done'; data: { messageId: string } }
   | { event: 'error'; data: { code: string } }
 

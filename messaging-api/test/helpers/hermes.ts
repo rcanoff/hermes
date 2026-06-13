@@ -8,34 +8,43 @@ type QueueEntry =
 export class FakeHermesClient implements HermesClient {
   readonly requests: StreamChatInput[] = []
 
-  private readonly queue: QueueEntry[] = []
-  private waiters: Array<() => void> = []
+  private readonly queues = new Map<number, QueueEntry[]>()
+  private readonly waiters = new Map<number, Array<() => void>>()
+  private readonly preStartQueue: QueueEntry[] = []
+  private nextStreamId = 0
 
-  pushToken(text: string): void {
-    this.push({ kind: 'event', event: { type: 'token', text } })
+  pushToken(text: string, streamId = 0): void {
+    this.enqueue(streamId, { kind: 'event', event: { type: 'token', text } })
   }
 
-  pushTool(name: string): void {
-    this.push({ kind: 'event', event: { type: 'tool', name } })
+  pushTool(name: string, streamId = 0): void {
+    this.enqueue(streamId, { kind: 'event', event: { type: 'tool', name } })
   }
 
-  pushDone(): void {
-    this.push({ kind: 'event', event: { type: 'done' } })
+  pushDone(streamId = 0): void {
+    this.enqueue(streamId, { kind: 'event', event: { type: 'done' } })
   }
 
-  closeWithoutDone(): void {
-    this.push({ kind: 'close' })
+  closeWithoutDone(streamId = 0): void {
+    this.enqueue(streamId, { kind: 'close' })
   }
 
-  fail(error: Error): void {
-    this.push({ kind: 'error', error })
+  fail(error: Error, streamId = 0): void {
+    this.enqueue(streamId, { kind: 'error', error })
   }
 
   async *streamChat(input: StreamChatInput): AsyncIterable<HermesStreamEvent> {
+    const streamId = this.nextStreamId++
     this.requests.push(input)
+    const initialQueue = streamId === 0 && this.preStartQueue.length > 0 ? [...this.preStartQueue] : []
+    if (streamId === 0) {
+      this.preStartQueue.length = 0
+    }
+    this.queues.set(streamId, initialQueue)
+    this.waiters.set(streamId, [])
 
     while (true) {
-      const entry = await this.nextEntry()
+      const entry = await this.nextEntry(streamId)
 
       if (entry.kind === 'event') {
         yield entry.event
@@ -50,21 +59,36 @@ export class FakeHermesClient implements HermesClient {
     }
   }
 
-  private push(entry: QueueEntry): void {
-    this.queue.push(entry)
-    const waiter = this.waiters.shift()
+  private enqueue(streamId: number, entry: QueueEntry): void {
+    if (streamId === 0 && !this.queues.has(0)) {
+      this.preStartQueue.push(entry)
+      return
+    }
+
+    const queue = this.queues.get(streamId)
+    if (!queue) {
+      throw new Error(`Unknown stream id ${streamId}`)
+    }
+
+    queue.push(entry)
+    const waiter = this.waiters.get(streamId)?.shift()
     waiter?.()
   }
 
-  private async nextEntry(): Promise<QueueEntry> {
-    if (this.queue.length > 0) {
-      return this.queue.shift() as QueueEntry
+  private async nextEntry(streamId: number): Promise<QueueEntry> {
+    const queue = this.queues.get(streamId)
+    if (!queue) {
+      throw new Error(`Unknown stream id ${streamId}`)
+    }
+
+    if (queue.length > 0) {
+      return queue.shift() as QueueEntry
     }
 
     await new Promise<void>((resolve) => {
-      this.waiters.push(resolve)
+      this.waiters.get(streamId)?.push(resolve)
     })
 
-    return this.queue.shift() as QueueEntry
+    return queue.shift() as QueueEntry
   }
 }
