@@ -360,6 +360,37 @@ show_reasoning: true
 
 Restart Hermes after changing that setting. Tool-only process lines still work without reasoning enabled.
 
+### User location vault
+
+The companion app writes location events to a user-scoped vault. Hermes reads location only through the companion MCP skill — not Home Assistant and not conversation routes.
+
+**API (v1.5.0):** `POST /data/location/events`, `GET /data/location/events`, and `GET /data/location/latest`. Full contract: [`docs/superpowers/specs/messaging-api.openapi.yaml`](docs/superpowers/specs/messaging-api.openapi.yaml).
+
+Conversation-scoped `/conversations/{id}/location/*` routes were removed. Location is available to Hermes via the `companion-user-location` skill and companion MCP tools only.
+
+Add to `.env`:
+
+```dotenv
+COMPANION_MCP_BEARER_TOKEN=replace-with-long-random-token
+ADDRESS_ENRICHMENT_SESSION_ID=companion-address-enrichment
+```
+
+`COMPANION_MCP_BEARER_TOKEN` secures `POST /mcp` for Hermes. Generate a long random token (same pattern as `CALDAV_MCP_BEARER_TOKEN`).
+
+Register the companion MCP server in `data/config.yaml`:
+
+```yaml
+mcp_servers:
+  companion:
+    url: http://messaging-api:3000/mcp
+    headers:
+      Authorization: "Bearer <COMPANION_MCP_BEARER_TOKEN>"
+```
+
+Replace `<COMPANION_MCP_BEARER_TOKEN>` with the same value from `.env`. Reload MCPs with `/reload-mcp` in an active Hermes session, or restart the stack.
+
+The `companion-user-location` skill in `data/skills/` calls `get_user_location` and `get_location_history` on this MCP server.
+
 ## Persistence check
 
 Hermes state is stored on the host at `./data` and mounted into the container at `/opt/data`.
