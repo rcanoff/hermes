@@ -15,6 +15,7 @@ export function readConfig(env: NodeJS.ProcessEnv): AppOptions {
     dbPath: env.DB_PATH ?? '/opt/data/messaging-api.sqlite',
     jwtSecret: requireEnv(env, 'JWT_SECRET'),
     hermesBaseUrl: env.HERMES_BASE_URL ?? 'http://localhost:8642',
+    hermesApiKey: env.HERMES_API_KEY ?? '',
     bootstrapUsername: env.BOOTSTRAP_USERNAME ?? 'operator',
     bootstrapPassword: requireEnv(env, 'BOOTSTRAP_PASSWORD'),
   }

@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify'
 import { getConversationForUser } from '../db/repos/conversations.js'
 import { insertMessage, listMessages } from '../db/repos/messages.js'
 import { createRun, getActiveRun } from '../db/repos/runs.js'
+import { applyMessageEdit, MessageEditError } from '../services/message-editor.js'
 import { executeAssistantRun } from '../services/run-executor.js'
 import { generateAndSaveTitle } from '../services/title-generator.js'
 import type { StreamEvent } from '../streams/hub.js'
@@ -84,6 +85,61 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
 
       return reply.code(202).send({ message: created.message })
     } catch (error) {
+      if (error instanceof Error && error.message === 'run_conflict') {
+        return reply.code(409).send({ error: 'run_conflict' })
+      }
+
+      throw error
+    }
+  })
+
+  app.patch('/conversations/:id/messages/:messageId', { preHandler: app.authenticate }, async (request, reply) => {
+    const conversation = getOwnedConversation(app, request.userId, (request.params as { id: string }).id)
+    if (!conversation) {
+      return reply.code(404).send({ error: 'not_found' })
+    }
+
+    if (getActiveRun(app.db, conversation.id)) {
+      return reply.code(409).send({ error: 'run_conflict' })
+    }
+
+    if (!isMessageBody(request.body)) {
+      return reply.code(400).send({ error: 'invalid_request' })
+    }
+
+    const content = extractMessageText(request.body)
+    if (!content) {
+      return reply.code(400).send({ error: 'invalid_request' })
+    }
+
+    const messageId = (request.params as { messageId: string }).messageId
+
+    try {
+      const edited = applyMessageEdit(app.db, conversation.id, messageId, content)
+
+      void executeAssistantRun({
+        db: app.db,
+        hermesClient: app.hermesClient,
+        hub: app.streamHub,
+        conversationId: conversation.id,
+        hermesSessionId: edited.hermesSessionId,
+        userMessageId: edited.message.id,
+        runId: edited.runId,
+        rewindMessageIds: [edited.removedAssistantMessageId],
+      }).catch((error) => {
+        app.log.error({ err: error, conversationId: conversation.id }, 'assistant rerun after edit failed')
+      })
+
+      return reply.code(202).send({ message: edited.message })
+    } catch (error) {
+      if (error instanceof MessageEditError) {
+        if (error.code === 'not_found') {
+          return reply.code(404).send({ error: 'not_found' })
+        }
+
+        return reply.code(400).send({ error: 'edit_not_allowed' })
+      }
+
       if (error instanceof Error && error.message === 'run_conflict') {
         return reply.code(409).send({ error: 'run_conflict' })
       }

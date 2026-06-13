@@ -79,6 +79,17 @@ export function markRunFailed(
   return result.changes === 1
 }
 
+export function deleteRunsForUserMessage(
+  db: Database.Database,
+  conversationId: string,
+  userMessageId: string,
+): void {
+  db.prepare(`
+    DELETE FROM message_runs
+    WHERE conversation_id = ? AND user_message_id = ?
+  `).run(conversationId, userMessageId)
+}
+
 function isRunConflictError(error: unknown): boolean {
   return error instanceof Error && error.message.includes('message_runs.conversation_id')
 }

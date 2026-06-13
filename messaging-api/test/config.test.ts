@@ -28,6 +28,7 @@ describe('readConfig', () => {
       dbPath: '/opt/data/messaging-api.sqlite',
       jwtSecret: 'test-secret',
       hermesBaseUrl: 'http://hermes:8642',
+      hermesApiKey: '',
       bootstrapUsername: 'operator',
       bootstrapPassword: 'test-password',
     })

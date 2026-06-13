@@ -14,6 +14,7 @@ export interface ExecuteAssistantRunInput {
   hermesSessionId: string
   userMessageId: string
   runId?: string
+  rewindMessageIds?: string[]
 }
 
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
@@ -24,6 +25,14 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
   let assistantText = ''
   let sawDone = false
+
+  if (input.rewindMessageIds && input.rewindMessageIds.length > 0) {
+    input.hub.setPendingRewind(input.conversationId, input.rewindMessageIds)
+    input.hub.publish(input.conversationId, {
+      event: 'rewind',
+      data: { removedMessageIds: input.rewindMessageIds },
+    })
+  }
 
   try {
     for await (const event of input.hermesClient.streamChat({

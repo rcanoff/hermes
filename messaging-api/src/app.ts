@@ -28,7 +28,10 @@ export function buildApp(options: AppOptions) {
 
   app.register(jwt, { secret: options.jwtSecret })
   app.decorate('db', getDb(options.dbPath))
-  app.decorate('hermesClient', options.hermesClient ?? new OpenAiHermesClient(options.hermesBaseUrl))
+  app.decorate(
+    'hermesClient',
+    options.hermesClient ?? new OpenAiHermesClient(options.hermesBaseUrl, options.hermesApiKey),
+  )
   app.decorate('streamHub', options.streamHub ?? new StreamHub())
   app.register(authPlugin)
   app.register(ssePlugin)

@@ -29,17 +29,27 @@ interface OpenAiChatChunk {
 }
 
 export class OpenAiHermesClient implements HermesClient {
-  constructor(private readonly baseUrl: string) {}
+  constructor(
+    private readonly baseUrl: string,
+    private readonly apiKey = '',
+  ) {}
 
   async *streamChat(input: StreamChatInput): AsyncIterable<HermesStreamEvent> {
+    const headers: Record<string, string> = {
+      accept: 'text/event-stream',
+      'content-type': 'application/json',
+      'x-hermes-session-id': input.hermesSessionId,
+    }
+
+    if (this.apiKey) {
+      headers.authorization = `Bearer ${this.apiKey}`
+    }
+
     const response = await fetch(new URL('/v1/chat/completions', this.baseUrl), {
       method: 'POST',
-      headers: {
-        accept: 'text/event-stream',
-        'content-type': 'application/json',
-        'x-session-id': input.hermesSessionId,
-      },
+      headers,
       body: JSON.stringify({
+        model: 'hermes-agent',
         messages: input.messages,
         stream: true,
       }),

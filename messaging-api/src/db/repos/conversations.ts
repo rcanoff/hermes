@@ -89,6 +89,16 @@ export function updateConversationTitle(
     .get(conversationId) as ConversationRow | undefined
 }
 
+export function rotateHermesSessionId(db: Database.Database, conversationId: string): string {
+  const hermesSessionId = randomUUID()
+  db.prepare(`
+    UPDATE conversations
+    SET hermes_session_id = ?
+    WHERE id = ?
+  `).run(hermesSessionId, conversationId)
+  return hermesSessionId
+}
+
 export function deleteConversationForUser(
   db: Database.Database,
   userId: string,

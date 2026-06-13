@@ -5,6 +5,7 @@ export interface AppOptions {
   dbPath: string
   jwtSecret: string
   hermesBaseUrl: string
+  hermesApiKey: string
   bootstrapUsername: string
   bootstrapPassword: string
   hermesClient?: HermesClient

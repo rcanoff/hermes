@@ -6,6 +6,7 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
     dbPath: ':memory:',
     jwtSecret: 'test-secret',
     hermesBaseUrl: 'http://hermes.test',
+    hermesApiKey: 'test-api-key',
     bootstrapUsername: 'operator',
     bootstrapPassword: 'password123',
     ...overrides,

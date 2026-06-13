@@ -313,6 +313,116 @@ describe('message routes', () => {
 
     expect(row.title).toBe('User chosen title')
   })
+
+  it('edits the latest user message, emits rewind, and persists a new assistant reply', async () => {
+    await app!.listen({ host: '127.0.0.1', port: 0 })
+    const address = app!.server.address() as AddressInfo
+
+    const postResponse = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'What time is it in Lisbon?' },
+    })
+    expect(postResponse.statusCode).toBe(202)
+    const userMessageId = (postResponse.json() as { message: { id: string } }).message.id
+
+    completeTitleStream(hermesClient)
+    hermesClient.pushToken('Lisbon time', 0)
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
+    await waitFor(() => listMessages(app!.db, conversationId).length === 2)
+
+    const oldSessionId = (
+      app!.db
+        .prepare('SELECT hermes_session_id FROM conversations WHERE id = ?')
+        .get(conversationId) as { hermes_session_id: string }
+    ).hermes_session_id
+
+    const editResponse = await app!.inject({
+      method: 'PATCH',
+      url: `/conversations/${conversationId}/messages/${userMessageId}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'What time is it in Porto?' },
+    })
+    expect(editResponse.statusCode).toBe(202)
+    expect(editResponse.json()).toMatchObject({
+      message: { id: userMessageId, content: 'What time is it in Porto?' },
+    })
+
+    const streamResponse = await fetch(`http://127.0.0.1:${address.port}/conversations/${conversationId}/stream`, {
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    const reader = streamResponse.body?.getReader()
+    const rerunStreamId = hermesClient.requests.length - 1
+
+    hermesClient.pushToken('Porto time', rerunStreamId)
+    hermesClient.pushDone(rerunStreamId)
+    hermesClient.closeWithoutDone(rerunStreamId)
+
+    const payload = await readUntilTitleOrDone(reader!)
+    expect(payload).toContain('event: rewind\ndata: {"removedMessageIds":')
+    expect(payload).toContain('event: done\ndata: {"messageId":')
+
+    await waitFor(() => listMessages(app!.db, conversationId).length === 2)
+    const messages = listMessages(app!.db, conversationId)
+    expect(messages).toEqual([
+      expect.objectContaining({ id: userMessageId, role: 'user', content: 'What time is it in Porto?' }),
+      expect.objectContaining({ role: 'assistant', content: 'Porto time' }),
+    ])
+
+    const newSessionId = (
+      app!.db
+        .prepare('SELECT hermes_session_id FROM conversations WHERE id = ?')
+        .get(conversationId) as { hermes_session_id: string }
+    ).hermes_session_id
+    expect(newSessionId).not.toBe(oldSessionId)
+  })
+
+  it('returns edit_not_allowed for non-latest user messages', async () => {
+    app!.db.exec(`
+      INSERT INTO messages (id, conversation_id, role, content) VALUES ('u1', '${conversationId}', 'user', 'first');
+      INSERT INTO messages (id, conversation_id, role, content) VALUES ('a1', '${conversationId}', 'assistant', 'one');
+      INSERT INTO messages (id, conversation_id, role, content) VALUES ('u2', '${conversationId}', 'user', 'second');
+      INSERT INTO messages (id, conversation_id, role, content) VALUES ('a2', '${conversationId}', 'assistant', 'two');
+    `)
+
+    const response = await app!.inject({
+      method: 'PATCH',
+      url: `/conversations/${conversationId}/messages/u1`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'edited first' },
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toEqual({ error: 'edit_not_allowed' })
+  })
+
+  it('returns run_conflict when editing during an active assistant run', async () => {
+    const postResponse = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Still running' },
+    })
+    expect(postResponse.statusCode).toBe(202)
+    const userMessageId = (postResponse.json() as { message: { id: string } }).message.id
+
+    const response = await app!.inject({
+      method: 'PATCH',
+      url: `/conversations/${conversationId}/messages/${userMessageId}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Edited while running' },
+    })
+
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toEqual({ error: 'run_conflict' })
+
+    completeTitleStream(hermesClient)
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
+    await waitFor(() => listMessages(app!.db, conversationId).length === 2)
+  })
 })
 
 function completeTitleStream(hermesClient: FakeHermesClient, title = 'Title'): void {

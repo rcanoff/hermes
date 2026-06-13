@@ -1,4 +1,5 @@
 export type StreamEvent =
+  | { event: 'rewind'; data: { removedMessageIds: string[] } }
   | { event: 'token'; data: { text: string } }
   | { event: 'tool'; data: { name: string } }
   | { event: 'title'; data: { title: string } }
@@ -9,11 +10,22 @@ export type StreamListener = (event: StreamEvent) => void
 
 export class StreamHub {
   private readonly listeners = new Map<string, Set<StreamListener>>()
+  private readonly pendingRewinds = new Map<string, string[]>()
+
+  setPendingRewind(conversationId: string, removedMessageIds: string[]): void {
+    this.pendingRewinds.set(conversationId, removedMessageIds)
+  }
 
   subscribe(conversationId: string, listener: StreamListener): () => void {
     const listeners = this.listeners.get(conversationId) ?? new Set<StreamListener>()
     listeners.add(listener)
     this.listeners.set(conversationId, listeners)
+
+    const pendingRewind = this.pendingRewinds.get(conversationId)
+    if (pendingRewind) {
+      this.pendingRewinds.delete(conversationId)
+      listener({ event: 'rewind', data: { removedMessageIds: pendingRewind } })
+    }
 
     return () => {
       listeners.delete(listener)
