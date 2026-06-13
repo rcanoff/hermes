@@ -1,5 +1,4 @@
 import type Database from 'better-sqlite3'
-import { getLatestLocationEvent } from '../db/repos/location-events.js'
 import { insertMessage, listMessages } from '../db/repos/messages.js'
 import { insertMessageProcess, type ProcessLine } from '../db/repos/process.js'
 import { createRun, markRunCompleted, markRunFailed } from '../db/repos/runs.js'
@@ -22,8 +21,7 @@ export interface ExecuteAssistantRunInput {
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
   const runId = input.runId ?? createRun(input.db, input.conversationId, input.userMessageId)
   const history = listMessages(input.db, input.conversationId)
-  const location = getUserLocationContext(input.db, input.conversationId)
-  const hermesMessages = buildHermesMessages(history, location)
+  const hermesMessages = buildHermesMessages(history)
 
   let assistantText = ''
   let sawDone = false
@@ -124,26 +122,4 @@ function persistCompletedRun(
 
     return assistantMessageId
   })()
-}
-
-function getUserLocationContext(db: Database.Database, conversationId: string) {
-  const conversation = db
-    .prepare('SELECT user_id FROM conversations WHERE id = ?')
-    .get(conversationId) as { user_id: string } | undefined
-
-  if (!conversation) {
-    return undefined
-  }
-
-  const event = getLatestLocationEvent(db, conversation.user_id)
-  if (!event) {
-    return undefined
-  }
-
-  return {
-    lat: event.lat,
-    lon: event.lon,
-    accuracy_m: event.accuracy_m,
-    timestamp: event.timestamp,
-  }
 }

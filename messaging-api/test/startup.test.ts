@@ -1,7 +1,6 @@
 import Database from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
 import { createRun } from '../src/db/repos/runs.js'
-import { insertLocationEvent } from '../src/db/repos/location-events.js'
 import { listMessages } from '../src/db/repos/messages.js'
 import { getActiveRun } from '../src/db/repos/runs.js'
 import { initSchema, reconcileRunningRuns } from '../src/db/schema.js'
@@ -31,26 +30,13 @@ describe('startup reconciliation', () => {
 })
 
 describe('prompt builder', () => {
-  it('prepends silent location context ahead of stored transcript history', () => {
-    const messages = buildHermesMessages(
-      [
-        { role: 'user', content: 'Where am I?' },
-        { role: 'assistant', content: 'You are outdoors.' },
-      ],
-      {
-        lat: 52.52,
-        lon: 13.405,
-        accuracy_m: 8,
-        timestamp: '2026-06-13T09:30:00Z',
-      },
-    )
+  it('returns stored transcript history without injected context', () => {
+    const messages = buildHermesMessages([
+      { role: 'user', content: 'Where am I?' },
+      { role: 'assistant', content: 'You are outdoors.' },
+    ])
 
     expect(messages).toEqual([
-      {
-        role: 'system',
-        content:
-          "User's current location: lat 52.52, lon 13.405, accuracy 8m (as of 2026-06-13T09:30:00Z)",
-      },
       { role: 'user', content: 'Where am I?' },
       { role: 'assistant', content: 'You are outdoors.' },
     ])
@@ -70,15 +56,6 @@ describe('durable run execution', () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedConversation(db)
-    insertLocationEvent(db, {
-      userId: 'u1',
-      lat: 40.7128,
-      lon: -74.006,
-      accuracyM: 15,
-      timestamp: '2026-06-13T10:00:00.000Z',
-      trigger: 'manual',
-      source: 'ios',
-    })
 
     const hermesClient = new FakeHermesClient()
     hermesClient.pushAnswerToken('Hi')
@@ -132,24 +109,9 @@ describe('durable run execution', () => {
     expect(hermesClient.requests).toEqual([
       {
         hermesSessionId: 'hs1',
-        messages: [
-          {
-            role: 'system',
-            content:
-              "User's current location: lat 40.7128, lon -74.006, accuracy 15m (as of 2026-06-13T10:00:00.000Z)",
-          },
-          { role: 'user', content: 'hello' },
-        ],
+        messages: [{ role: 'user', content: 'hello' }],
       },
     ])
-    expect(
-      db
-        .prepare('SELECT lat, lon FROM location_events WHERE user_id = ? ORDER BY timestamp DESC LIMIT 1')
-        .get('u1'),
-    ).toEqual({
-      lat: 40.7128,
-      lon: -74.006,
-    })
   })
 
   it('marks the run failed and does not persist a fake assistant message when Hermes fails', async () => {
