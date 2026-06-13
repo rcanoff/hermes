@@ -42,3 +42,19 @@ export function getConversationForUser(
     `)
     .get(userId, conversationId) as ConversationRow | undefined
 }
+
+export function updateConversationTitleIfNull(
+  db: Database.Database,
+  conversationId: string,
+  title: string,
+): boolean {
+  const result = db
+    .prepare(`
+      UPDATE conversations
+      SET title = ?
+      WHERE id = ? AND title IS NULL
+    `)
+    .run(title, conversationId)
+
+  return result.changes === 1
+}
