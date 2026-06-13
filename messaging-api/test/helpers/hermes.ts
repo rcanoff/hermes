@@ -13,12 +13,16 @@ export class FakeHermesClient implements HermesClient {
   private readonly preStartQueue: QueueEntry[] = []
   private nextStreamId = 0
 
-  pushToken(text: string, streamId = 0): void {
-    this.enqueue(streamId, { kind: 'event', event: { type: 'token', text } })
+  pushReasoning(text: string, streamId = 0): void {
+    this.enqueue(streamId, { kind: 'event', event: { type: 'reasoning', text } })
   }
 
-  pushTool(name: string, streamId = 0): void {
-    this.enqueue(streamId, { kind: 'event', event: { type: 'tool', name } })
+  pushToolCall(name: string, args: string, streamId = 0): void {
+    this.enqueue(streamId, { kind: 'event', event: { type: 'tool', name, arguments: args } })
+  }
+
+  pushAnswerToken(text: string, streamId = 0): void {
+    this.enqueue(streamId, { kind: 'event', event: { type: 'answer_token', text } })
   }
 
   pushDone(streamId = 0): void {

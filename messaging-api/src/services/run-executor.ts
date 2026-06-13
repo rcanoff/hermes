@@ -1,10 +1,12 @@
 import type Database from 'better-sqlite3'
 import { getConversationLocation } from '../db/repos/locations.js'
 import { insertMessage, listMessages } from '../db/repos/messages.js'
+import { insertMessageProcess, type ProcessLine } from '../db/repos/process.js'
 import { createRun, markRunCompleted, markRunFailed } from '../db/repos/runs.js'
 import type { StreamHub } from '../streams/hub.js'
 import { buildHermesMessages } from './prompt-builder.js'
 import type { HermesClient } from './hermes-client.js'
+import { formatToolProcessLine } from './process-labeler.js'
 
 export interface ExecuteAssistantRunInput {
   db: Database.Database
@@ -25,6 +27,8 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
   let assistantText = ''
   let sawDone = false
+  const processLines: ProcessLine[] = []
+  let inReplyPhase = false
 
   if (input.rewindMessageIds && input.rewindMessageIds.length > 0) {
     input.hub.setPendingRewind(input.conversationId, input.rewindMessageIds)
@@ -39,13 +43,31 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       hermesSessionId: input.hermesSessionId,
       messages: hermesMessages,
     })) {
-      if (event.type === 'token' && event.text) {
-        assistantText += event.text
-        input.hub.publish(input.conversationId, { event: 'token', data: { text: event.text } })
+      if (event.type === 'reasoning' && event.text?.trim()) {
+        const line = { kind: 'reasoning' as const, text: event.text.trim() }
+        processLines.push(line)
+        input.hub.publish(input.conversationId, { event: 'process', data: line })
+        continue
       }
 
       if (event.type === 'tool' && event.name) {
-        input.hub.publish(input.conversationId, { event: 'tool', data: { name: event.name } })
+        const text = formatToolProcessLine(event.name, event.arguments)
+        const line = { kind: 'tool' as const, text }
+        processLines.push(line)
+        input.hub.publish(input.conversationId, { event: 'process', data: line })
+        continue
+      }
+
+      if (event.type === 'answer_token' && event.text) {
+        if (!inReplyPhase) {
+          inReplyPhase = true
+          if (processLines.length > 0) {
+            input.hub.publish(input.conversationId, { event: 'process_complete', data: {} })
+          }
+        }
+        assistantText += event.text
+        input.hub.publish(input.conversationId, { event: 'token', data: { text: event.text } })
+        continue
       }
 
       if (event.type === 'done') {
@@ -57,7 +79,13 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       throw new Error('Hermes stream ended without a done event')
     }
 
-    const assistantMessageId = persistCompletedRun(input.db, runId, input.conversationId, assistantText)
+    const assistantMessageId = persistCompletedRun(
+      input.db,
+      runId,
+      input.conversationId,
+      assistantText,
+      processLines,
+    )
     input.hub.publish(input.conversationId, { event: 'done', data: { messageId: assistantMessageId } })
     return assistantMessageId
   } catch (error) {
@@ -73,6 +101,7 @@ function persistCompletedRun(
   runId: string,
   conversationId: string,
   assistantText: string,
+  processLines: ProcessLine[],
 ): string {
   return db.transaction(() => {
     const assistantMessageId = insertMessage(db, {
@@ -80,6 +109,14 @@ function persistCompletedRun(
       role: 'assistant',
       content: assistantText,
     })
+
+    if (processLines.length > 0) {
+      insertMessageProcess(db, {
+        assistantMessageId,
+        conversationId,
+        lines: processLines,
+      })
+    }
 
     if (!markRunCompleted(db, runId, assistantMessageId)) {
       throw new Error('run_not_running')

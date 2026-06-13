@@ -86,8 +86,8 @@ describe('message routes', () => {
     })
 
     completeTitleStream(hermesClient, 'Time check')
-    hermesClient.pushToken('It is', 0)
-    hermesClient.pushToken(' noon', 0)
+    hermesClient.pushAnswerToken('It is', 0)
+    hermesClient.pushAnswerToken(' noon', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
 
@@ -212,15 +212,15 @@ describe('message routes', () => {
     expect(reader).toBeTruthy()
 
     completeTitleStream(hermesClient)
-    hermesClient.pushToken('Hello', 0)
-    hermesClient.pushTool('lookup_weather', 0)
+    hermesClient.pushAnswerToken('Hello', 0)
+    hermesClient.pushToolCall('lookup_weather', '{}', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
 
     const payload = await readUntilDone(reader!)
 
     expect(payload).toContain('event: token\ndata: {"text":"Hello"}')
-    expect(payload).toContain('event: tool\ndata: {"name":"lookup_weather"}')
+    expect(payload).toContain('event: process\ndata: {"kind":"tool","text":"Running lookup weather"}')
     expect(payload).toContain('event: done\ndata: {"messageId":')
 
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
@@ -245,8 +245,8 @@ describe('message routes', () => {
     expect(reader).toBeTruthy()
 
     completeTitleStream(hermesClient, 'Porto weekend')
-    hermesClient.pushToken('Here is', 0)
-    hermesClient.pushToken(' an idea', 0)
+    hermesClient.pushAnswerToken('Here is', 0)
+    hermesClient.pushAnswerToken(' an idea', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
 
@@ -328,7 +328,7 @@ describe('message routes', () => {
     const userMessageId = (postResponse.json() as { message: { id: string } }).message.id
 
     completeTitleStream(hermesClient)
-    hermesClient.pushToken('Lisbon time', 0)
+    hermesClient.pushAnswerToken('Lisbon time', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
@@ -356,7 +356,7 @@ describe('message routes', () => {
     const reader = streamResponse.body?.getReader()
     const rerunStreamId = hermesClient.requests.length - 1
 
-    hermesClient.pushToken('Porto time', rerunStreamId)
+    hermesClient.pushAnswerToken('Porto time', rerunStreamId)
     hermesClient.pushDone(rerunStreamId)
     hermesClient.closeWithoutDone(rerunStreamId)
 
@@ -426,7 +426,7 @@ describe('message routes', () => {
 })
 
 function completeTitleStream(hermesClient: FakeHermesClient, title = 'Title'): void {
-  hermesClient.pushToken(title, 1)
+  hermesClient.pushAnswerToken(title, 1)
   hermesClient.pushDone(1)
   hermesClient.closeWithoutDone(1)
 }

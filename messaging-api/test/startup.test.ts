@@ -81,9 +81,9 @@ describe('durable run execution', () => {
     })
 
     const hermesClient = new FakeHermesClient()
-    hermesClient.pushToken('Hi')
-    hermesClient.pushTool('lookup_weather')
-    hermesClient.pushToken(' there')
+    hermesClient.pushAnswerToken('Hi')
+    hermesClient.pushToolCall('lookup_weather', '{}')
+    hermesClient.pushAnswerToken(' there')
     hermesClient.pushDone()
     hermesClient.closeWithoutDone()
 
@@ -125,7 +125,7 @@ describe('durable run execution', () => {
     )
     expect(events).toEqual([
       { event: 'token', data: { text: 'Hi' } },
-      { event: 'tool', data: { name: 'lookup_weather' } },
+      { event: 'process', data: { kind: 'tool', text: 'Running lookup weather' } },
       { event: 'token', data: { text: ' there' } },
       { event: 'done', data: { messageId: assistantMessageId } },
     ])
@@ -157,7 +157,7 @@ describe('durable run execution', () => {
     seedConversation(db)
 
     const hermesClient = new FakeHermesClient()
-    hermesClient.pushToken('partial')
+    hermesClient.pushAnswerToken('partial')
     hermesClient.fail(new Error('Hermes exploded'))
 
     const hub = new StreamHub()
@@ -202,7 +202,7 @@ describe('durable run execution', () => {
     seedConversation(db)
 
     const hermesClient = new FakeHermesClient()
-    hermesClient.pushToken('safe')
+    hermesClient.pushAnswerToken('safe')
     hermesClient.pushDone()
     hermesClient.closeWithoutDone()
 
@@ -279,7 +279,7 @@ describe('durable run execution', () => {
     seedConversation(db)
 
     const hermesClient = new FakeHermesClient()
-    hermesClient.pushToken('partial')
+    hermesClient.pushAnswerToken('partial')
     hermesClient.closeWithoutDone()
 
     const hub = new StreamHub()
@@ -341,7 +341,7 @@ describe('OpenAiHermesClient', () => {
       }
 
       expect(events).toEqual([
-        { type: 'token', text: 'Hello' },
+        { type: 'answer_token', text: 'Hello' },
         { type: 'done' },
       ])
     } finally {

@@ -36,7 +36,7 @@ export async function generateConversationTitle(
       hermesSessionId: randomUUID(),
       messages: buildTitlePromptMessages(userMessageText),
     })) {
-      if (event.type === 'token' && event.text) {
+      if (event.type === 'answer_token' && event.text) {
         raw += event.text
       }
     }

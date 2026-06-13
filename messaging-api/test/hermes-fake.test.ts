@@ -11,7 +11,7 @@ describe('FakeHermesClient concurrent streams', () => {
         hermesSessionId: 'assistant-session',
         messages: [{ role: 'user', content: 'Hello' }],
       })) {
-        if (event.type === 'token' && event.text) {
+        if (event.type === 'answer_token' && event.text) {
           text += event.text
         }
         if (event.type === 'done') {
@@ -30,7 +30,7 @@ describe('FakeHermesClient concurrent streams', () => {
           { role: 'user', content: 'Hello' },
         ],
       })) {
-        if (event.type === 'token' && event.text) {
+        if (event.type === 'answer_token' && event.text) {
           text += event.text
         }
         if (event.type === 'done') {
@@ -42,11 +42,11 @@ describe('FakeHermesClient concurrent streams', () => {
 
     expect(client.requests).toHaveLength(2)
 
-    client.pushToken('Hi', 0)
+    client.pushAnswerToken('Hi', 0)
     client.pushDone(0)
     client.closeWithoutDone(0)
 
-    client.pushToken('Greetings', 1)
+    client.pushAnswerToken('Greetings', 1)
     client.pushDone(1)
     client.closeWithoutDone(1)
 
