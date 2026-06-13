@@ -1,9 +1,13 @@
 openapi: 3.1.0
 info:
   title: Hermes Messaging API
-  version: 1.2.0
+  version: 1.3.0
   description: |
     Private API bridging mobile clients to Hermes.
+
+    **v1.3.0 changes:** `PATCH /conversations/{id}/messages/{messageId}` edits the
+    latest user message in a completed pair, discards the assistant reply, rotates
+    the Hermes session, and re-runs. New SSE `rewind` event.
 
     **v1.2.0 changes:** `DELETE /conversations/{id}` removes a conversation and all
     related messages, runs, and location data.
@@ -46,6 +50,7 @@ components:
             - not_found
             - run_conflict
             - no_active_run
+            - edit_not_allowed
 
     LoginRequest:
       type: object
@@ -132,6 +137,17 @@ components:
           type: string
 
     CreateMessageRequest:
+      type: object
+      description: Provide `text` (preferred) or `content` (legacy alias).
+      properties:
+        text:
+          type: string
+          minLength: 1
+        content:
+          type: string
+          minLength: 1
+
+    EditMessageRequest:
       type: object
       description: Provide `text` (preferred) or `content` (legacy alias).
       properties:
@@ -246,6 +262,17 @@ components:
           type: string
           maxLength: 80
           description: Auto-generated title saved to the conversation
+
+    SseRewindEvent:
+      type: object
+      required: [removedMessageIds]
+      properties:
+        removedMessageIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Message IDs removed from the transcript (e.g. superseded assistant reply)
 
 paths:
   /health:
@@ -511,6 +538,76 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /conversations/{id}/messages/{messageId}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: messageId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    patch:
+      tags: [messages]
+      summary: Edit latest user message and re-run assistant
+      description: |
+        Edits a user message **in place** when it is the second-to-last message in
+        the transcript and the last message is a completed assistant reply. No active
+        run may be in progress.
+
+        Atomically:
+        - deletes the superseded assistant message and its run record
+        - updates the user message content (same message id)
+        - rotates `hermes_session_id` to discard Hermes session context
+        - starts a new assistant run
+
+        Returns `202` immediately. Client opens `GET /conversations/{id}/stream`
+        to receive `rewind`, then `token` / `done` as usual.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditMessageRequest'
+      responses:
+        '202':
+          description: Message updated, replacement run started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateMessageResponse'
+        '400':
+          description: Invalid text or message not in editable position
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_request:
+                  value: { error: invalid_request }
+                edit_not_allowed:
+                  value: { error: edit_not_allowed }
+        '404':
+          description: Not found or not owned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Active run already in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /conversations/{id}/stream:
     parameters:
       - name: id
@@ -531,6 +628,7 @@ paths:
 
         | event | data schema | when |
         |-------|-------------|------|
+        | `rewind` | `SseRewindEvent` | Messages removed before a replacement run (message edit) |
         | `token` | `SseTokenEvent` | Assistant text chunk |
         | `tool` | `SseToolEvent` | Tool invocation |
         | `title` | `SseTitleEvent` | Auto-generated title saved (first message only) |
@@ -539,6 +637,8 @@ paths:
       security:
         - bearerAuth: []
       x-sse-events:
+        rewind:
+          $ref: '#/components/schemas/SseRewindEvent'
         token:
           $ref: '#/components/schemas/SseTokenEvent'
         tool:
