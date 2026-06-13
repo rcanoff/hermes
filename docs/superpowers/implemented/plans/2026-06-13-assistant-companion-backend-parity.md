@@ -8,13 +8,13 @@
 
 **Tech Stack:** SwiftUI, Swift Concurrency, URLSession, XCTest
 
-**Prerequisite:** Base app implemented per `docs/superpowers/plans/2026-06-12-assistant-companion-plan.md` (auth, list, chat, location, basic SSE `token`/`done`).
+**Prerequisite:** Base app implemented per `docs/superpowers/implemented/plans/2026-06-12-assistant-companion-plan.md` (auth, list, chat, location, basic SSE `token`/`done`).
 
 **Backend specs:**
-- `docs/superpowers/specs/2026-06-13-conversation-title-generation-design.md`
-- `docs/superpowers/specs/2026-06-13-message-edit-design.md`
-- `docs/superpowers/specs/2026-06-13-assistant-process-stream-design.md`
-- `docs/superpowers/specs/messaging-api.openapi.yaml` (v1.4.0)
+- `docs/superpowers/implemented/specs/2026-06-13-conversation-title-generation-design.md`
+- `docs/superpowers/implemented/specs/2026-06-13-message-edit-design.md`
+- `docs/superpowers/implemented/specs/2026-06-13-assistant-process-stream-design.md`
+- `docs/superpowers/implemented/specs/messaging-api.openapi.yaml` (v1.4.0)
 
 **App root (assumed):** `assistant-companion/assistant-companion/`
 
@@ -783,7 +783,7 @@ git commit -m "test(companion): ChatViewModel SSE state machine"
 
 - [ ] **Update companion design spec** (optional doc commit):
 
-Add section to `docs/superpowers/specs/2026-06-12-hermes-assistant-companion-design.md` referencing v1.4 SSE contract and process UI — or keep plan as source of truth.
+Add section to `docs/superpowers/implemented/specs/2026-06-12-hermes-assistant-companion-design.md` referencing v1.4 SSE contract and process UI — or keep plan as source of truth.
 
 - [ ] **Final commit if spec updated**
 

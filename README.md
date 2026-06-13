@@ -280,7 +280,7 @@ line to prevent duplicates.
 The workflow is defined by the `productivity/trip-records` skill in `data/skills/`,
 which composes the existing `note-taking/obsidian` and
 `productivity/travel-bookings-to-calendar` skills. Design spec:
-`docs/superpowers/specs/2026-06-12-obsidian-trip-records-vault-design.md`.
+`docs/superpowers/implemented/specs/2026-06-12-obsidian-trip-records-vault-design.md`.
 
 The vault is plain markdown — open the folder in Obsidian later for browsing on
 Mac/iPhone (sync is deferred; the vault is local-only on the Pi for now). It is part

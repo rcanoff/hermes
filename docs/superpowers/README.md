@@ -1,0 +1,26 @@
+# Superpowers Docs
+
+Design notes and implementation plans for this workspace.
+
+## Layout
+
+| Path | Purpose |
+|------|---------|
+| `specs/` | Active design specs (in progress or planned) |
+| `plans/` | Active implementation plans |
+| `implemented/specs/` | Shipped design specs |
+| `implemented/plans/` | Completed implementation plans |
+
+When work ships, move its spec and plan from `specs/` / `plans/` into `implemented/` and set **Status: Implemented** on the design doc.
+
+## Current active work
+
+- Companion user-data vault + MCP (location redesign) — spec TBD in `specs/`
+
+## Implemented (2026-06-13)
+
+- `messaging-api` — Hermes mobile channel (auth, conversations, messages, SSE, process stream, title generation, message edit)
+- `assistant-companion` iOS app — implemented on a separate machine; see `implemented/plans/2026-06-12-assistant-companion-plan.md`
+- Apple Calendar CalDAV MCP, Todoist MCP, Raspberry Pi Ansible deploy, Obsidian trip records vault
+
+See `implemented/README.md` for the full index.

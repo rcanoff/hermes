@@ -1,6 +1,6 @@
 # Conversation Title Generation — Design Spec
 **Date:** 2026-06-13  
-**Status:** Approved  
+**Status:** Implemented  
 **Companion spec:** `2026-06-12-hermes-messaging-api-design.md`  
 **API contract:** `messaging-api.openapi.yaml` (same directory)
 

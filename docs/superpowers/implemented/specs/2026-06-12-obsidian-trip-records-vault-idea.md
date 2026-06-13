@@ -1,6 +1,7 @@
 # Obsidian Trip Records Vault Idea
 
-**Date:** 2026-06-12
+**Date:** 2026-06-12  
+**Status:** Archived (superseded by design spec)
 
 ## Goal
 

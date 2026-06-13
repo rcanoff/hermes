@@ -1,6 +1,6 @@
 # Assistant Process Stream — Design Spec
 **Date:** 2026-06-13  
-**Status:** Approved  
+**Status:** Implemented  
 **Companion spec:** `2026-06-12-hermes-messaging-api-design.md`  
 **API contract:** `messaging-api.openapi.yaml` (same directory)
 
@@ -195,7 +195,7 @@ If JSON args are incomplete, fall back to the default template.
 - `src/db/repos/messages.ts` or list handler — join `process` onto assistant rows
 - `src/streams/hub.ts` — `process`, `process_complete` in `StreamEvent`; remove `tool`
 - `src/routes/messages.ts` — history response shape
-- `docs/superpowers/specs/messaging-api.openapi.yaml` — v1.4.0
+- `docs/superpowers/implemented/specs/messaging-api.openapi.yaml` — v1.4.0
 
 ### Out of scope (this spec)
 

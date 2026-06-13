@@ -1,6 +1,7 @@
 # Raspberry Pi Ansible Deploy Design
 
-**Date:** 2026-06-10
+**Date:** 2026-06-10  
+**Status:** Implemented
 
 ## Goal
 

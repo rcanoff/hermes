@@ -1,7 +1,7 @@
 # Trip Records Vault — Design
 
 **Date:** 2026-06-12
-**Status:** Approved
+**Status:** Implemented
 **Idea doc:** `2026-06-12-obsidian-trip-records-vault-idea.md`
 
 ## Concept: Hub and Spoke
