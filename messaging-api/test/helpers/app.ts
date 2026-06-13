@@ -9,6 +9,8 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
     hermesApiKey: 'test-api-key',
     bootstrapUsername: 'operator',
     bootstrapPassword: 'password123',
+    companionMcpBearerToken: 'test-mcp-token',
+    addressEnrichmentSessionId: 'companion-address-enrichment',
     ...overrides,
   })
 }

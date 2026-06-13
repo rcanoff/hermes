@@ -5,6 +5,11 @@ export interface StreamChatInput {
   messages: HermesPromptMessage[]
 }
 
+export interface CompleteChatInput {
+  hermesSessionId: string
+  messages: HermesPromptMessage[]
+}
+
 export interface HermesStreamEvent {
   type: 'reasoning' | 'tool' | 'answer_token' | 'done'
   text?: string
@@ -14,6 +19,15 @@ export interface HermesStreamEvent {
 
 export interface HermesClient {
   streamChat(input: StreamChatInput): AsyncIterable<HermesStreamEvent>
+  completeChat(input: CompleteChatInput): Promise<string>
+}
+
+interface OpenAiChatCompletion {
+  choices?: Array<{
+    message?: {
+      content?: string | Array<{ type?: string; text?: string }> | null
+    }
+  }>
 }
 
 interface OpenAiChatChunk {
@@ -89,6 +103,35 @@ export class OpenAiHermesClient implements HermesClient {
     private readonly baseUrl: string,
     private readonly apiKey = '',
   ) {}
+
+  async completeChat(input: CompleteChatInput): Promise<string> {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      'x-hermes-session-id': input.hermesSessionId,
+    }
+
+    if (this.apiKey) {
+      headers.authorization = `Bearer ${this.apiKey}`
+    }
+
+    const response = await fetch(new URL('/v1/chat/completions', this.baseUrl), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: 'hermes-agent',
+        messages: input.messages,
+        stream: false,
+      }),
+    })
+
+    if (!response.ok) {
+      throw new Error(`Hermes request failed with status ${response.status}`)
+    }
+
+    const payload = (await response.json()) as OpenAiChatCompletion
+    const content = payload.choices?.[0]?.message?.content
+    return extractCompletionText(content)
+  }
 
   async *streamChat(input: StreamChatInput): AsyncIterable<HermesStreamEvent> {
     const headers: Record<string, string> = {
@@ -221,6 +264,24 @@ function* parseContentDelta(
       yield { type: 'answer_token', text: part.text }
     }
   }
+}
+
+function extractCompletionText(
+  content: string | Array<{ type?: string; text?: string }> | null | undefined,
+): string {
+  if (typeof content === 'string') {
+    return content.trim()
+  }
+
+  if (!Array.isArray(content)) {
+    return ''
+  }
+
+  return content
+    .filter((part) => part.type === 'text' && typeof part.text === 'string')
+    .map((part) => part.text as string)
+    .join('')
+    .trim()
 }
 
 function extractSseFrame(buffer: string): { frame: string; rest: string } | null {

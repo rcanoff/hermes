@@ -26,7 +26,7 @@ const dataLocationRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const body = request.body
-    insertLocationEvent(app.db, {
+    const event = insertLocationEvent(app.db, {
       userId: request.userId,
       lat: body.lat,
       lon: body.lon,
@@ -36,6 +36,10 @@ const dataLocationRoutes: FastifyPluginAsync = async (app) => {
       source: body.source,
       address: body.address,
     })
+
+    if (event.address_status === 'pending') {
+      app.addressEnrichmentQueue.enqueue(event.id)
+    }
 
     return reply.code(204).send()
   })

@@ -1,4 +1,9 @@
-import type { HermesClient, HermesStreamEvent, StreamChatInput } from '../../src/services/hermes-client.js'
+import type {
+  CompleteChatInput,
+  HermesClient,
+  HermesStreamEvent,
+  StreamChatInput,
+} from '../../src/services/hermes-client.js'
 
 type QueueEntry =
   | { kind: 'event'; event: HermesStreamEvent }
@@ -7,6 +12,7 @@ type QueueEntry =
 
 export class FakeHermesClient implements HermesClient {
   readonly requests: StreamChatInput[] = []
+  readonly completeRequests: CompleteChatInput[] = []
 
   private readonly queues = new Map<number, QueueEntry[]>()
   private readonly waiters = new Map<number, Array<() => void>>()
@@ -35,6 +41,11 @@ export class FakeHermesClient implements HermesClient {
 
   fail(error: Error, streamId = 0): void {
     this.enqueue(streamId, { kind: 'error', error })
+  }
+
+  async completeChat(input: CompleteChatInput): Promise<string> {
+    this.completeRequests.push(input)
+    return ''
   }
 
   async *streamChat(input: StreamChatInput): AsyncIterable<HermesStreamEvent> {

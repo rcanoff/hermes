@@ -31,6 +31,8 @@ describe('readConfig', () => {
       hermesApiKey: '',
       bootstrapUsername: 'operator',
       bootstrapPassword: 'test-password',
+      companionMcpBearerToken: '',
+      addressEnrichmentSessionId: 'companion-address-enrichment',
     })
   })
 })

@@ -18,5 +18,7 @@ export function readConfig(env: NodeJS.ProcessEnv): AppOptions {
     hermesApiKey: env.HERMES_API_KEY ?? '',
     bootstrapUsername: env.BOOTSTRAP_USERNAME ?? 'operator',
     bootstrapPassword: requireEnv(env, 'BOOTSTRAP_PASSWORD'),
+    companionMcpBearerToken: env.COMPANION_MCP_BEARER_TOKEN ?? '',
+    addressEnrichmentSessionId: env.ADDRESS_ENRICHMENT_SESSION_ID ?? 'companion-address-enrichment',
   }
 }

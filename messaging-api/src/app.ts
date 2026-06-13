@@ -10,16 +10,22 @@ import authRoutes from './routes/auth.js'
 import conversationRoutes from './routes/conversations.js'
 import messageRoutes from './routes/messages.js'
 import dataLocationRoutes from './routes/data-location.js'
+import mcpRoutes from './routes/mcp.js'
+import { AddressEnrichmentQueue } from './services/address-enrichment.js'
 import { OpenAiHermesClient } from './services/hermes-client.js'
 import { hashPassword, verifyPassword } from './services/password.js'
 import { StreamHub } from './streams/hub.js'
 import type { HermesClient } from './services/hermes-client.js'
+import type { AddressEnrichmentQueue as AddressEnrichmentQueueType } from './services/address-enrichment.js'
 
 declare module 'fastify' {
   interface FastifyInstance {
     db: Database.Database
     hermesClient: HermesClient
     streamHub: StreamHub
+    addressEnrichmentQueue: AddressEnrichmentQueueType
+    companionMcpBearerToken: string
+    bootstrapUsername: string
   }
 }
 
@@ -33,12 +39,24 @@ export function buildApp(options: AppOptions) {
     options.hermesClient ?? new OpenAiHermesClient(options.hermesBaseUrl, options.hermesApiKey),
   )
   app.decorate('streamHub', options.streamHub ?? new StreamHub())
+  app.decorate('companionMcpBearerToken', options.companionMcpBearerToken)
+  app.decorate('bootstrapUsername', options.bootstrapUsername)
+  app.decorate(
+    'addressEnrichmentQueue',
+    options.addressEnrichmentQueue ??
+      new AddressEnrichmentQueue(
+        app.db,
+        app.hermesClient,
+        options.addressEnrichmentSessionId,
+      ),
+  )
   app.register(authPlugin)
   app.register(ssePlugin)
   app.register(authRoutes)
   app.register(conversationRoutes)
   app.register(messageRoutes)
   app.register(dataLocationRoutes)
+  app.register(mcpRoutes)
 
   app.addHook('onReady', async () => {
     // MVP contract: the configured bootstrap credentials remain authoritative at startup
