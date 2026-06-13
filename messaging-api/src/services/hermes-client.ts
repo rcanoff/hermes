@@ -6,9 +6,10 @@ export interface StreamChatInput {
 }
 
 export interface HermesStreamEvent {
-  type: 'token' | 'tool' | 'done'
+  type: 'reasoning' | 'tool' | 'answer_token' | 'done'
   text?: string
   name?: string
+  arguments?: string
 }
 
 export interface HermesClient {
@@ -18,14 +19,69 @@ export interface HermesClient {
 interface OpenAiChatChunk {
   choices?: Array<{
     delta?: {
+      reasoning_content?: string
       content?: string | Array<{ type?: string; text?: string }>
       tool_calls?: Array<{
+        index?: number
         function?: {
           name?: string
+          arguments?: string
         }
       }>
     }
   }>
+}
+
+interface ToolCallBuffer {
+  name?: string
+  arguments: string
+}
+
+export class ToolCallAccumulator {
+  private readonly buffers = new Map<number, ToolCallBuffer>()
+
+  ingest(
+    toolCalls: Array<{
+      index?: number
+      function?: {
+        name?: string
+        arguments?: string
+      }
+    }>,
+  ): HermesStreamEvent[] {
+    const events: HermesStreamEvent[] = []
+
+    for (const toolCall of toolCalls) {
+      const index = toolCall.index ?? 0
+      const buffer = this.buffers.get(index) ?? { arguments: '' }
+
+      if (toolCall.function?.name) {
+        buffer.name = toolCall.function.name
+      }
+
+      if (toolCall.function?.arguments) {
+        buffer.arguments += toolCall.function.arguments
+      }
+
+      this.buffers.set(index, buffer)
+
+      if (buffer.name && buffer.arguments) {
+        try {
+          JSON.parse(buffer.arguments)
+          events.push({
+            type: 'tool',
+            name: buffer.name,
+            arguments: buffer.arguments,
+          })
+          this.buffers.delete(index)
+        } catch {
+          // Incomplete JSON; keep buffering.
+        }
+      }
+    }
+
+    return events
+  }
 }
 
 export class OpenAiHermesClient implements HermesClient {
@@ -62,6 +118,7 @@ export class OpenAiHermesClient implements HermesClient {
     const decoder = new TextDecoder()
     let buffer = ''
     let sawDone = false
+    const toolCallAccumulator = new ToolCallAccumulator()
 
     for await (const chunk of response.body) {
       buffer += decoder.decode(chunk, { stream: true })
@@ -74,7 +131,7 @@ export class OpenAiHermesClient implements HermesClient {
 
         buffer = extraction.rest
 
-        for (const event of parseSseEvent(extraction.frame)) {
+        for (const event of parseSseEvent(extraction.frame, toolCallAccumulator)) {
           if (event.type === 'done') {
             sawDone = true
           }
@@ -95,7 +152,17 @@ export class OpenAiHermesClient implements HermesClient {
   }
 }
 
-function* parseSseEvent(rawEvent: string): Generator<HermesStreamEvent> {
+export function parseHermesSsePayload(
+  rawEvent: string,
+  accumulator: ToolCallAccumulator = new ToolCallAccumulator(),
+): HermesStreamEvent[] {
+  return [...parseSseEvent(rawEvent, accumulator)]
+}
+
+function* parseSseEvent(
+  rawEvent: string,
+  toolCallAccumulator: ToolCallAccumulator,
+): Generator<HermesStreamEvent> {
   const dataLines = rawEvent
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
@@ -114,35 +181,46 @@ function* parseSseEvent(rawEvent: string): Generator<HermesStreamEvent> {
 
   const parsed = JSON.parse(payload) as OpenAiChatChunk
   for (const choice of parsed.choices ?? []) {
-    const content = normalizeContent(choice.delta?.content)
-    if (content) {
-      yield { type: 'token', text: content }
+    const delta = choice.delta
+    if (!delta) {
+      continue
     }
 
-    for (const toolCall of choice.delta?.tool_calls ?? []) {
-      const name = toolCall.function?.name
-      if (name) {
-        yield { type: 'tool', name }
-      }
+    if (delta.reasoning_content) {
+      yield { type: 'reasoning', text: delta.reasoning_content }
+    }
+
+    if (delta.content !== undefined) {
+      yield* parseContentDelta(delta.content)
+    }
+
+    for (const toolEvent of toolCallAccumulator.ingest(delta.tool_calls ?? [])) {
+      yield toolEvent
     }
   }
 }
 
-function normalizeContent(
-  content: string | Array<{ type?: string; text?: string }> | undefined,
-): string {
+function* parseContentDelta(
+  content: string | Array<{ type?: string; text?: string }>,
+): Generator<HermesStreamEvent> {
   if (typeof content === 'string') {
-    return content
+    if (content) {
+      yield { type: 'answer_token', text: content }
+    }
+    return
   }
 
   if (!Array.isArray(content)) {
-    return ''
+    return
   }
 
-  return content
-    .filter((part) => part.type === 'text' && typeof part.text === 'string')
-    .map((part) => part.text)
-    .join('')
+  for (const part of content) {
+    if (part.type === 'reasoning' && typeof part.text === 'string' && part.text) {
+      yield { type: 'reasoning', text: part.text }
+    } else if (part.type === 'text' && typeof part.text === 'string' && part.text) {
+      yield { type: 'answer_token', text: part.text }
+    }
+  }
 }
 
 function extractSseFrame(buffer: string): { frame: string; rest: string } | null {
