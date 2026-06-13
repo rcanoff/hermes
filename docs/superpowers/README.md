@@ -15,7 +15,7 @@ When work ships, move its spec and plan from `specs/` / `plans/` into `implement
 
 ## Current active work
 
-- Companion user-data vault + MCP (location redesign) — spec TBD in `specs/`
+- Companion user-data vault + MCP (location redesign) — `specs/2026-06-13-companion-user-data-vault-design.md`
 
 ## Implemented (2026-06-13)
 
