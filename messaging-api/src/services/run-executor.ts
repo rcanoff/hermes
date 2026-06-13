@@ -49,7 +49,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       }
 
       if (event.type === 'tool' && event.name) {
-        const text = formatToolProcessLine(event.name, event.arguments)
+        const text = formatToolProcessLine(event.name, event.arguments, event.label)
         const line = { kind: 'tool' as const, text }
         processLines.push(line)
         input.hub.publish(input.conversationId, { event: 'process', data: line })

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { parseHermesSsePayload, ToolCallAccumulator } from '../src/services/hermes-client.js'
+import {
+  HermesToolProgressTracker,
+  parseHermesSsePayload,
+  ToolCallAccumulator,
+} from '../src/services/hermes-client.js'
 
 describe('parseHermesSsePayload', () => {
   it('emits reasoning events from reasoning_content deltas', () => {
@@ -43,5 +47,35 @@ describe('parseHermesSsePayload', () => {
 
   it('emits done for [DONE]', () => {
     expect(parseHermesSsePayload('data: [DONE]\n\n')).toEqual([{ type: 'done' }])
+  })
+
+  it('emits tool events from hermes.tool.progress running frames', () => {
+    const tracker = new HermesToolProgressTracker()
+    const events = parseHermesSsePayload(
+      'event: hermes.tool.progress\ndata: {"tool":"skill_view","label":"companion-user-location","toolCallId":"call_1","status":"running"}\n\n',
+      new ToolCallAccumulator(),
+      tracker,
+    )
+
+    expect(events).toEqual([
+      { type: 'tool', name: 'skill_view', label: 'companion-user-location' },
+    ])
+  })
+
+  it('ignores duplicate hermes.tool.progress completed frames', () => {
+    const tracker = new HermesToolProgressTracker()
+    const running = parseHermesSsePayload(
+      'event: hermes.tool.progress\ndata: {"tool":"skill_view","label":"demo","toolCallId":"call_1","status":"running"}\n\n',
+      new ToolCallAccumulator(),
+      tracker,
+    )
+    const completed = parseHermesSsePayload(
+      'event: hermes.tool.progress\ndata: {"tool":"skill_view","toolCallId":"call_1","status":"completed"}\n\n',
+      new ToolCallAccumulator(),
+      tracker,
+    )
+
+    expect(running).toHaveLength(1)
+    expect(completed).toEqual([])
   })
 })

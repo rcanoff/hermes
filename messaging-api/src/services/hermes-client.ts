@@ -15,6 +15,7 @@ export interface HermesStreamEvent {
   text?: string
   name?: string
   arguments?: string
+  label?: string
 }
 
 export interface HermesClient {
@@ -49,6 +50,36 @@ interface OpenAiChatChunk {
 interface ToolCallBuffer {
   name?: string
   arguments: string
+}
+
+interface HermesToolProgressPayload {
+  tool?: string
+  label?: string
+  toolCallId?: string
+  status?: string
+}
+
+export class HermesToolProgressTracker {
+  private readonly emitted = new Set<string>()
+
+  ingest(payload: HermesToolProgressPayload): HermesStreamEvent[] {
+    if (payload.status !== 'running' || !payload.tool || !payload.toolCallId) {
+      return []
+    }
+
+    if (this.emitted.has(payload.toolCallId)) {
+      return []
+    }
+
+    this.emitted.add(payload.toolCallId)
+    return [
+      {
+        type: 'tool',
+        name: payload.tool,
+        label: typeof payload.label === 'string' ? payload.label : undefined,
+      },
+    ]
+  }
 }
 
 export class ToolCallAccumulator {
@@ -162,6 +193,7 @@ export class OpenAiHermesClient implements HermesClient {
     let buffer = ''
     let sawDone = false
     const toolCallAccumulator = new ToolCallAccumulator()
+    const toolProgressTracker = new HermesToolProgressTracker()
 
     for await (const chunk of response.body) {
       buffer += decoder.decode(chunk, { stream: true })
@@ -174,7 +206,7 @@ export class OpenAiHermesClient implements HermesClient {
 
         buffer = extraction.rest
 
-        for (const event of parseSseEvent(extraction.frame, toolCallAccumulator)) {
+        for (const event of parseSseEvent(extraction.frame, toolCallAccumulator, toolProgressTracker)) {
           if (event.type === 'done') {
             sawDone = true
           }
@@ -198,27 +230,32 @@ export class OpenAiHermesClient implements HermesClient {
 export function parseHermesSsePayload(
   rawEvent: string,
   accumulator: ToolCallAccumulator = new ToolCallAccumulator(),
+  progressTracker: HermesToolProgressTracker = new HermesToolProgressTracker(),
 ): HermesStreamEvent[] {
-  return [...parseSseEvent(rawEvent, accumulator)]
+  return [...parseSseEvent(rawEvent, accumulator, progressTracker)]
 }
 
 function* parseSseEvent(
   rawEvent: string,
   toolCallAccumulator: ToolCallAccumulator,
+  toolProgressTracker: HermesToolProgressTracker,
 ): Generator<HermesStreamEvent> {
-  const dataLines = rawEvent
-    .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.slice(5).trim())
-
-  if (dataLines.length === 0) {
+  const frame = parseSseFrame(rawEvent)
+  if (!frame.dataPayload) {
     return
   }
 
-  const payload = dataLines.join('\n')
+  const payload = frame.dataPayload
   if (payload === '[DONE]') {
     yield { type: 'done' }
+    return
+  }
+
+  if (frame.eventType === 'hermes.tool.progress') {
+    const progress = JSON.parse(payload) as HermesToolProgressPayload
+    for (const toolEvent of toolProgressTracker.ingest(progress)) {
+      yield toolEvent
+    }
     return
   }
 
@@ -282,6 +319,25 @@ function extractCompletionText(
     .map((part) => part.text as string)
     .join('')
     .trim()
+}
+
+function parseSseFrame(rawEvent: string): { eventType?: string; dataPayload?: string } {
+  const lines = rawEvent.split(/\r?\n/).map((line) => line.trimEnd())
+  let eventType: string | undefined
+  const dataLines: string[] = []
+
+  for (const line of lines) {
+    if (line.startsWith('event:')) {
+      eventType = line.slice(6).trim()
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trim())
+    }
+  }
+
+  return {
+    eventType,
+    dataPayload: dataLines.length > 0 ? dataLines.join('\n') : undefined,
+  }
 }
 
 function extractSseFrame(buffer: string): { frame: string; rest: string } | null {

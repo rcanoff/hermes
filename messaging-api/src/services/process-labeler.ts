@@ -20,8 +20,40 @@ function stringArg(args: Record<string, unknown>, key: string): string | undefin
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-export function formatToolProcessLine(name: string, argumentsJson?: string): string {
+function synthesizeArgsFromLabel(name: string, label: string): string | undefined {
+  if (name === 'skill_view') {
+    return JSON.stringify({ name: label })
+  }
+
+  if (name === 'skills_list') {
+    return JSON.stringify({ category: label })
+  }
+
+  if (name === 'tool_search' || name === 'web_search') {
+    return JSON.stringify({ query: label })
+  }
+
+  if (name === 'read_file') {
+    return JSON.stringify({ path: label })
+  }
+
+  return undefined
+}
+
+export function formatToolProcessLine(name: string, argumentsJson?: string, label?: string): string {
+  if (label?.trim()) {
+    const syntheticArgs = synthesizeArgsFromLabel(name, label.trim())
+    if (syntheticArgs) {
+      return formatToolProcessLine(name, syntheticArgs)
+    }
+  }
+
   const args = parseArgs(argumentsJson)
+
+  if (name === 'skills_list') {
+    const category = stringArg(args, 'category')
+    return category ? `Listing skills: ${category}` : 'Listing skills'
+  }
 
   if (name === 'skill_view') {
     const skill = stringArg(args, 'name')

@@ -25,4 +25,14 @@ describe('formatToolProcessLine', () => {
   it('does not expose terminal command args', () => {
     expect(formatToolProcessLine('terminal', '{"command":"rm -rf /"}')).toBe('Running command')
   })
+
+  it('formats hermes progress labels for skill_view', () => {
+    expect(formatToolProcessLine('skill_view', undefined, 'companion-user-location')).toBe(
+      'Loading skill: companion-user-location',
+    )
+  })
+
+  it('formats hermes progress labels for skills_list', () => {
+    expect(formatToolProcessLine('skills_list', undefined, 'productivity')).toBe('Listing skills: productivity')
+  })
 })
