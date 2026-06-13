@@ -201,6 +201,8 @@ describe('conversation routes', () => {
       VALUES ('r1', '${conversation.id}', 'm1', 'm2', 'completed', datetime('now'));
       INSERT INTO conversation_locations (id, conversation_id, lat, lon, accuracy_m, timestamp, mode, source)
       VALUES ('loc1', '${conversation.id}', 38.7, -9.1, 10, '2026-06-13T10:00:00.000Z', 'once', 'ios');
+      INSERT INTO message_process (id, assistant_message_id, conversation_id, lines_json)
+      VALUES ('p1', 'm2', '${conversation.id}', '[{"kind":"tool","text":"Running lookup weather"}]');
     `)
 
     const del = await app!.inject({
@@ -235,6 +237,11 @@ describe('conversation routes', () => {
     expect(
       app!.db
         .prepare('SELECT COUNT(*) AS count FROM conversation_locations WHERE conversation_id = ?')
+        .get(conversation.id),
+    ).toEqual({ count: 0 })
+    expect(
+      app!.db
+        .prepare('SELECT COUNT(*) AS count FROM message_process WHERE conversation_id = ?')
         .get(conversation.id),
     ).toEqual({ count: 0 })
   })

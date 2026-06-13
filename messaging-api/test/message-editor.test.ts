@@ -1,7 +1,11 @@
 import Database from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
 import { initSchema } from '../src/db/schema.js'
+import { getProcessByAssistantMessageIds, insertMessageProcess } from '../src/db/repos/process.js'
 import { findEditablePair, MessageEditError, applyMessageEdit } from '../src/services/message-editor.js'
+import { executeAssistantRun } from '../src/services/run-executor.js'
+import { StreamHub } from '../src/streams/hub.js'
+import { FakeHermesClient } from './helpers/hermes.js'
 
 describe('findEditablePair', () => {
   const messages = [
@@ -59,5 +63,41 @@ describe('applyMessageEdit', () => {
       .prepare('SELECT status, user_message_id FROM message_runs WHERE conversation_id = ?')
       .get('c1') as { status: string; user_message_id: string }
     expect(run).toEqual({ status: 'running', user_message_id: 'u1' })
+  })
+
+  it('removes process rows for the deleted assistant message and allows a fresh process on rerun', async () => {
+    const db = seedDb()
+    insertMessageProcess(db, {
+      assistantMessageId: 'a1',
+      conversationId: 'c1',
+      lines: [{ kind: 'tool', text: 'Running lookup weather' }],
+    })
+
+    const result = applyMessageEdit(db, 'c1', 'u1', 'new text')
+    expect(getProcessByAssistantMessageIds(db, ['a1']).size).toBe(0)
+
+    const hermes = new FakeHermesClient()
+    const hub = new StreamHub()
+    const runPromise = executeAssistantRun({
+      db,
+      hermesClient: hermes,
+      hub,
+      conversationId: 'c1',
+      hermesSessionId: result.hermesSessionId,
+      userMessageId: 'u1',
+      runId: result.runId,
+    })
+
+    hermes.pushToolCall('lookup_weather', '{"query":"Porto"}')
+    hermes.pushAnswerToken('Porto is cloudy')
+    hermes.pushDone()
+    hermes.closeWithoutDone()
+
+    const assistantMessageId = await runPromise
+    const process = getProcessByAssistantMessageIds(db, [assistantMessageId]).get(assistantMessageId)
+    expect(process?.lines).toEqual([
+      { kind: 'tool', text: expect.stringContaining('lookup weather') },
+    ])
+    expect(assistantMessageId).not.toBe('a1')
   })
 })
