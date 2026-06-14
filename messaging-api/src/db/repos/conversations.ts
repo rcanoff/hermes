@@ -7,6 +7,15 @@ export interface ConversationRow {
   hermes_session_id: string
   title: string | null
   created_at: string
+  updated_at: string
+}
+
+export function touchConversationUpdatedAt(db: Database.Database, conversationId: string): void {
+  db.prepare(`
+    UPDATE conversations
+    SET updated_at = datetime('now')
+    WHERE id = ?
+  `).run(conversationId)
 }
 
 export function createConversation(db: Database.Database, userId: string, hermesSessionId: string): string {
@@ -21,10 +30,10 @@ export function createConversation(db: Database.Database, userId: string, hermes
 export function listConversations(db: Database.Database, userId: string): ConversationRow[] {
   return db
     .prepare(`
-      SELECT id, user_id, hermes_session_id, title, created_at
+      SELECT id, user_id, hermes_session_id, title, created_at, updated_at
       FROM conversations
       WHERE user_id = ?
-      ORDER BY created_at DESC, id DESC
+      ORDER BY updated_at DESC, id DESC
     `)
     .all(userId) as ConversationRow[]
 }
@@ -36,7 +45,7 @@ export function getConversationForUser(
 ): ConversationRow | undefined {
   return db
     .prepare(`
-      SELECT id, user_id, hermes_session_id, title, created_at
+      SELECT id, user_id, hermes_session_id, title, created_at, updated_at
       FROM conversations
       WHERE user_id = ? AND id = ?
     `)
@@ -82,7 +91,7 @@ export function updateConversationTitle(
 
   return db
     .prepare(`
-      SELECT id, user_id, hermes_session_id, title, created_at
+      SELECT id, user_id, hermes_session_id, title, created_at, updated_at
       FROM conversations
       WHERE id = ?
     `)

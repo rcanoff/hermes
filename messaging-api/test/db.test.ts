@@ -27,6 +27,15 @@ describe('schema', () => {
     expect(columns.map((c) => c.name)).toContain('password_changed_at')
   })
 
+  it('includes updated_at on conversations', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const columns = db
+      .prepare(`PRAGMA table_info(conversations)`)
+      .all() as Array<{ name: string }>
+    expect(columns.map((c) => c.name)).toContain('updated_at')
+  })
+
   it('creates the durable run tables', () => {
     const db = new Database(':memory:')
 
@@ -60,7 +69,7 @@ describe('schema', () => {
 
     expect(rows.map((row) => row.name)).toEqual(
       expect.arrayContaining([
-        'conversations_user_created_idx',
+        'conversations_user_updated_idx',
         'idx_location_events_user_timestamp',
         'message_runs_one_running_per_conversation',
         'messages_conversation_id_pair_idx',

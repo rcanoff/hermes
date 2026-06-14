@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
+import { insertMessage } from '../src/db/repos/messages.js'
 import { createTestApp } from './helpers/app.js'
 import { seedTestUser } from './helpers/users.js'
 
@@ -45,6 +46,7 @@ describe('conversation routes', () => {
       hermes_session_id: expect.any(String),
       title: null,
       created_at: expect.any(String),
+      updated_at: expect.any(String),
     })
 
     const list = await app!.inject({
@@ -56,6 +58,57 @@ describe('conversation routes', () => {
     expect(list.statusCode).toBe(200)
     expect(list.json()).toHaveLength(1)
     expect(list.json()).toEqual([create.json()])
+  })
+
+  it('orders conversations by updated_at so recently messaged threads rise to the top', async () => {
+    const first = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    const second = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    const firstId = (first.json() as { id: string }).id
+    const secondId = (second.json() as { id: string }).id
+
+    app!.db
+      .prepare(`UPDATE conversations SET updated_at = datetime('now', '-2 hours') WHERE id = ?`)
+      .run(firstId)
+    app!.db
+      .prepare(`UPDATE conversations SET updated_at = datetime('now', '-1 hour') WHERE id = ?`)
+      .run(secondId)
+
+    const beforeMessage = await app!.inject({
+      method: 'GET',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect((beforeMessage.json() as Array<{ id: string }>).map((row) => row.id)).toEqual([
+      secondId,
+      firstId,
+    ])
+
+    insertMessage(app!.db, {
+      conversationId: firstId,
+      role: 'user',
+      content: 'bump',
+    })
+
+    const afterMessage = await app!.inject({
+      method: 'GET',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect((afterMessage.json() as Array<{ id: string }>).map((row) => row.id)).toEqual([
+      firstId,
+      secondId,
+    ])
   })
 
   it('gets a conversation for its owner and returns 404 for missing or unauthorized access', async () => {

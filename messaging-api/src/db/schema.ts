@@ -26,11 +26,12 @@ export function initSchema(db: Database.Database): void {
       hermes_session_id TEXT NOT NULL,
       title TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
 
-    CREATE INDEX IF NOT EXISTS conversations_user_created_idx
-      ON conversations (user_id, created_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS conversations_user_updated_idx
+      ON conversations (user_id, updated_at DESC, id DESC);
 
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY,
@@ -115,6 +116,22 @@ export function initSchema(db: Database.Database): void {
   `)
 
   ensureLegacyUserColumns(db)
+  ensureLegacyConversationColumns(db)
+}
+
+function ensureLegacyConversationColumns(db: Database.Database): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(conversations)`)
+    .all() as Array<{ name: string }>
+  if (!columns.some((column) => column.name === 'updated_at')) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN updated_at TEXT`)
+    db.exec(`UPDATE conversations SET updated_at = created_at WHERE updated_at IS NULL`)
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS conversations_user_updated_idx
+      ON conversations (user_id, updated_at DESC, id DESC)
+  `)
 }
 
 function ensureLegacyUserColumns(db: Database.Database): void {

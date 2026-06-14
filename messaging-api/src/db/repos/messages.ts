@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
+import { touchConversationUpdatedAt } from './conversations.js'
 
 export interface InsertMessageInput {
   conversationId: string
@@ -21,6 +22,7 @@ export function insertMessage(db: Database.Database, input: InsertMessageInput):
     INSERT INTO messages (id, conversation_id, role, content)
     VALUES (?, ?, ?, ?)
   `).run(id, input.conversationId, input.role, input.content)
+  touchConversationUpdatedAt(db, input.conversationId)
   return id
 }
 
@@ -61,6 +63,7 @@ export function updateMessageContent(
     WHERE conversation_id = ? AND id = ? AND role = 'user'
   `).run(content, conversationId, messageId)
 
+  touchConversationUpdatedAt(db, conversationId)
   return getMessage(db, conversationId, messageId)
 }
 
