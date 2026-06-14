@@ -1,24 +1,22 @@
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
-import { closeDb } from '../src/db/index.js'
 import { createTestApp } from './helpers/app.js'
+import { seedTestUser } from './helpers/users.js'
 
 describe('auth routes', () => {
   let app: FastifyInstance
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     app = await createTestApp()
     await app.ready()
   })
 
-  afterAll(async () => {
+  afterEach(async () => {
     await app.close()
   })
 
-  it('logs in the bootstrap user and returns a JWT', async () => {
+  it('logs in a seeded user and returns a JWT', async () => {
+    await seedTestUser(app, 'operator', 'password123')
     const response = await app.inject({
       method: 'POST',
       url: '/auth/login',
@@ -30,6 +28,7 @@ describe('auth routes', () => {
   })
 
   it('rejects invalid credentials', async () => {
+    await seedTestUser(app, 'operator', 'password123')
     const response = await app.inject({
       method: 'POST',
       url: '/auth/login',
@@ -75,6 +74,7 @@ describe('auth routes', () => {
   })
 
   it('returns the current user and denies the token after logout', async () => {
+    await seedTestUser(app, 'operator', 'password123')
     const login = await app.inject({
       method: 'POST',
       url: '/auth/login',
@@ -113,16 +113,11 @@ describe('auth routes', () => {
   })
 
   it('rejects tokens for users that no longer exist', async () => {
-    const login = await app.inject({
-      method: 'POST',
-      url: '/auth/login',
-      payload: { username: 'operator', password: 'password123' },
-    })
-    const { token } = login.json() as { token: string }
+    const seeded = await seedTestUser(app, 'operator', 'password123')
     const me = await app.inject({
       method: 'GET',
       url: '/auth/me',
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${seeded.token}` },
     })
     const { id } = me.json() as { id: string }
 
@@ -132,53 +127,26 @@ describe('auth routes', () => {
     const deletedUserResponse = await app.inject({
       method: 'GET',
       url: '/auth/me',
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${seeded.token}` },
     })
 
     expect(deletedUserResponse.statusCode).toBe(401)
   })
-})
 
-describe('bootstrap user reconciliation', () => {
-  it('updates the bootstrap user password on restart when config changes', async () => {
-    const dbPath = path.join(os.tmpdir(), `messaging-api-auth-${Date.now()}.sqlite`)
+  it('rejects JWTs issued before password_changed_at', async () => {
+    const { id, token } = await seedTestUser(app, 'operator', 'password123')
 
-    try {
-      const firstApp = await createTestApp({ dbPath, bootstrapPassword: 'first-password' })
-      await firstApp.ready()
+    app.db.prepare(`UPDATE users SET password_changed_at = ? WHERE id = ?`).run(
+      new Date(Date.now() + 60_000).toISOString(),
+      id,
+    )
 
-      const firstLogin = await firstApp.inject({
-        method: 'POST',
-        url: '/auth/login',
-        payload: { username: 'operator', password: 'first-password' },
-      })
+    const me = await app.inject({
+      method: 'GET',
+      url: '/auth/me',
+      headers: { authorization: `Bearer ${token}` },
+    })
 
-      expect(firstLogin.statusCode).toBe(200)
-
-      await firstApp.close()
-      closeDb()
-
-      const secondApp = await createTestApp({ dbPath, bootstrapPassword: 'second-password' })
-      await secondApp.ready()
-
-      const oldPasswordLogin = await secondApp.inject({
-        method: 'POST',
-        url: '/auth/login',
-        payload: { username: 'operator', password: 'first-password' },
-      })
-      const newPasswordLogin = await secondApp.inject({
-        method: 'POST',
-        url: '/auth/login',
-        payload: { username: 'operator', password: 'second-password' },
-      })
-
-      expect(oldPasswordLogin.statusCode).toBe(401)
-      expect(newPasswordLogin.statusCode).toBe(200)
-
-      await secondApp.close()
-      closeDb()
-    } finally {
-      fs.rmSync(dbPath, { force: true })
-    }
+    expect(me.statusCode).toBe(401)
   })
 })

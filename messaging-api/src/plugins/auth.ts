@@ -6,6 +6,7 @@ import { findUserById } from '../db/repos/users.js'
 interface JwtClaims {
   sub: string
   username: string
+  iat?: number
   exp?: number
 }
 
@@ -45,6 +46,14 @@ const authPlugin: FastifyPluginAsync = async (app) => {
       const user = findUserById(app.db, claims.sub)
       if (!user) {
         return reply.code(401).send({ error: 'unauthorized' })
+      }
+
+      if (user.password_changed_at) {
+        const issuedAt = claims.iat
+        const changedAt = Math.floor(new Date(user.password_changed_at).getTime() / 1000)
+        if (issuedAt !== undefined && issuedAt < changedAt) {
+          return reply.code(401).send({ error: 'unauthorized' })
+        }
       }
 
       request.userId = user.id
