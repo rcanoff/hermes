@@ -30,9 +30,6 @@ export function initSchema(db: Database.Database): void {
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
 
-    CREATE INDEX IF NOT EXISTS conversations_user_updated_idx
-      ON conversations (user_id, updated_at DESC, id DESC);
-
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL,
