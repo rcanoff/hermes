@@ -26,6 +26,7 @@ declare module 'fastify' {
     addressEnrichmentQueue: AddressEnrichmentQueueType
     companionMcpBearerToken: string
     bootstrapUsername: string
+    streamWaitMs: number
   }
 }
 
@@ -39,6 +40,7 @@ export function buildApp(options: AppOptions) {
     options.hermesClient ?? new OpenAiHermesClient(options.hermesBaseUrl, options.hermesApiKey),
   )
   app.decorate('streamHub', options.streamHub ?? new StreamHub())
+  app.decorate('streamWaitMs', options.streamWaitMs ?? 30_000)
   app.decorate('companionMcpBearerToken', options.companionMcpBearerToken)
   app.decorate('bootstrapUsername', options.bootstrapUsername)
   app.decorate(

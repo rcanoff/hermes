@@ -166,25 +166,49 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ error: 'not_found' })
     }
 
-    const activeRun = getActiveRun(app.db, conversation.id)
-    if (!activeRun) {
-      return reply.code(409).send({ error: 'no_active_run' })
-    }
-
     reply.sseInit()
 
+    let closed = false
+    let waitTimeout: NodeJS.Timeout | undefined
+
+    const closeStream = () => {
+      if (closed) {
+        return
+      }
+
+      closed = true
+      if (waitTimeout) {
+        clearTimeout(waitTimeout)
+        waitTimeout = undefined
+      }
+      unsubscribe()
+      reply.sseEnd()
+    }
+
     const unsubscribe = app.streamHub.subscribe(conversation.id, (event) => {
+      if (waitTimeout) {
+        clearTimeout(waitTimeout)
+        waitTimeout = undefined
+      }
+
       reply.sseSend(event.event, event.data)
 
       if (event.event === 'done' || event.event === 'error') {
-        unsubscribe()
-        reply.sseEnd()
+        closeStream()
       }
     })
 
+    if (!getActiveRun(app.db, conversation.id)) {
+      waitTimeout = setTimeout(() => {
+        if (!closed) {
+          reply.sseSend('error', { code: 'no_active_run' })
+          closeStream()
+        }
+      }, app.streamWaitMs)
+    }
+
     request.raw.on('close', () => {
-      unsubscribe()
-      reply.sseEnd()
+      closeStream()
     })
   })
 }

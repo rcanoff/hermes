@@ -14,4 +14,5 @@ export interface AppOptions {
   hermesClient?: HermesClient
   streamHub?: StreamHub
   addressEnrichmentQueue?: AddressEnrichmentQueue
+  streamWaitMs?: number
 }

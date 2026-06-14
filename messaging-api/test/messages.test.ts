@@ -222,15 +222,76 @@ describe('message routes', () => {
     })
   })
 
-  it('returns no_active_run when opening the stream without a current run', async () => {
-    const response = await app!.inject({
-      method: 'GET',
-      url: `/conversations/${conversationId}/stream`,
+  it('streams events on the same connection when opened before the message post', async () => {
+    await app!.listen({ host: '127.0.0.1', port: 0 })
+    const address = app!.server.address() as AddressInfo
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/conversations/${conversationId}/stream`, {
       headers: { authorization: `Bearer ${operatorToken}` },
     })
 
-    expect(response.statusCode).toBe(409)
-    expect(response.json()).toEqual({ error: 'no_active_run' })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('text/event-stream')
+
+    const reader = response.body?.getReader()
+    expect(reader).toBeTruthy()
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    const postResponse = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Stream this early' },
+    })
+    expect(postResponse.statusCode).toBe(202)
+
+    completeTitleStream(hermesClient)
+    hermesClient.pushAnswerToken('Hello', 0)
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
+
+    const payload = await readUntilDone(reader!)
+    expect(payload).toContain('event: token\ndata: {"text":"Hello"}')
+    expect(payload).toContain('event: done\ndata: {"messageId":')
+
+    await waitFor(() => listMessages(app!.db, conversationId).length === 2)
+  })
+
+  it('emits no_active_run error when no run starts within the wait window', async () => {
+    await app?.close()
+    app = await createTestApp({ hermesClient, streamWaitMs: 100 })
+    await app.ready()
+
+    const login = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { username: 'operator', password: 'password123' },
+    })
+    const token = (login.json() as { token: string }).token
+
+    const createConversation = await app.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    const timeoutConversationId = (createConversation.json() as { id: string }).id
+
+    await app.listen({ host: '127.0.0.1', port: 0 })
+    const address = app.server.address() as AddressInfo
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/conversations/${timeoutConversationId}/stream`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('text/event-stream')
+
+    const reader = response.body?.getReader()
+    expect(reader).toBeTruthy()
+
+    const payload = await readUntilError(reader!)
+    expect(payload).toContain('event: error\ndata: {"code":"no_active_run"}')
   })
 
   it('streams live events for the current active run only', async () => {
@@ -504,6 +565,26 @@ async function readUntilTitleOrDone(reader: ReadableStreamDefaultReader<Uint8Arr
     if (value) {
       payload += decoder.decode(value, { stream: !done })
       if (payload.includes('event: done')) {
+        await reader.cancel()
+        return payload
+      }
+    }
+
+    if (done) {
+      return payload + decoder.decode()
+    }
+  }
+}
+
+async function readUntilError(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<string> {
+  const decoder = new TextDecoder()
+  let payload = ''
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (value) {
+      payload += decoder.decode(value, { stream: !done })
+      if (payload.includes('event: error')) {
         await reader.cancel()
         return payload
       }
