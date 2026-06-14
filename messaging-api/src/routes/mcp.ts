@@ -32,7 +32,7 @@ const mcpRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(401).send({ error: 'Unauthorized' })
     }
 
-    const toolHandlers = buildMcpToolHandlers(app.db, app.bootstrapUsername)
+    const toolHandlers = buildMcpToolHandlers(app.db, 'operator')
     const mcpServer = createMcpServer(toolHandlers)
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,

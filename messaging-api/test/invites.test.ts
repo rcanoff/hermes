@@ -97,6 +97,20 @@ describe('invite routes', () => {
     expect(denied.statusCode).toBe(401)
   })
 
+  it('does not create users on startup', async () => {
+    const count = app.db.prepare('SELECT COUNT(*) AS count FROM users').get() as { count: number }
+    expect(count.count).toBe(0)
+  })
+
+  it('rejects login when no users exist', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { username: 'nobody', password: 'secure-password1' },
+    })
+    expect(response.statusCode).toBe(401)
+  })
+
   it('redirects invite landing to app deep link', async () => {
     const { rawToken } = createInviteRecord(app.db, { type: 'activation', expiryHours: 48 })
 

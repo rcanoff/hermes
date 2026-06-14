@@ -55,25 +55,3 @@ export function updateUserPassword(
   `).run(passwordHash, passwordChangedAt, id)
 }
 
-export function ensureBootstrapUser(db: Database.Database, username: string, passwordHash: string): UserRow {
-  const existing = findUserByUsername(db, username)
-  if (existing) {
-    return existing
-  }
-
-  const id = randomUUID()
-  db.prepare(`
-    INSERT INTO users (id, username, password_hash)
-    VALUES (?, ?, ?)
-  `).run(id, username, passwordHash)
-
-  return findUserById(db, id)!
-}
-
-export function updateUserPasswordHash(db: Database.Database, id: string, passwordHash: string): void {
-  db.prepare(`
-    UPDATE users
-    SET password_hash = ?
-    WHERE id = ?
-  `).run(passwordHash, id)
-}

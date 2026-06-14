@@ -120,9 +120,12 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_token' })
     }
 
-    const jwtToken = await reply.jwtSign(
+    const jwtToken = await app.jwt.sign(
       { sub: user.id, username: user.username },
-      { sign: { expiresIn: ONE_YEAR_IN_SECONDS, iat: passwordChangedAtSec } },
+      { expiresIn: ONE_YEAR_IN_SECONDS, iat: passwordChangedAtSec } as {
+        expiresIn: number
+        iat: number
+      },
     )
 
     return { token: jwtToken }
