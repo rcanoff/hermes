@@ -4,6 +4,7 @@ import { getLocationEventById } from '../src/db/repos/location-events.js'
 import type { CompleteChatInput } from '../src/services/hermes-client.js'
 import { FakeHermesClient } from './helpers/hermes.js'
 import { createTestApp } from './helpers/app.js'
+import { seedTestUser } from './helpers/users.js'
 
 class GeocodeFakeHermesClient extends FakeHermesClient {
   readonly completeRequests: CompleteChatInput[] = []
@@ -35,12 +36,8 @@ describe('AddressEnrichmentQueue', () => {
     })
     await app.ready()
 
-    const login = await app.inject({
-      method: 'POST',
-      url: '/auth/login',
-      payload: { username: 'operator', password: 'password123' },
-    })
-    operatorToken = (login.json() as { token: string }).token
+    const seeded = await seedTestUser(app, 'operator', 'password123')
+    operatorToken = seeded.token
   })
 
   afterEach(async () => {
@@ -101,12 +98,8 @@ describe('AddressEnrichmentQueue', () => {
     })
     await app.ready()
 
-    const login = await app.inject({
-      method: 'POST',
-      url: '/auth/login',
-      payload: { username: 'operator', password: 'password123' },
-    })
-    operatorToken = (login.json() as { token: string }).token
+    const seeded = await seedTestUser(app, 'operator', 'password123')
+    operatorToken = seeded.token
 
     await app.inject({
       method: 'POST',

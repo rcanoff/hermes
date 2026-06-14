@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { createTestApp } from './helpers/app.js'
+import { seedTestUser } from './helpers/users.js'
 
 function validPayload(overrides: Record<string, unknown> = {}) {
   return {
@@ -25,15 +26,9 @@ describe('data location routes', () => {
     app = await createTestApp()
     await app.ready()
 
-    const login = await app.inject({
-      method: 'POST',
-      url: '/auth/login',
-      payload: { username: 'operator', password: 'password123' },
-    })
-    operatorToken = (login.json() as { token: string }).token
-    operatorUserId = (
-      app.db.prepare('SELECT id FROM users WHERE username = ?').get('operator') as { id: string }
-    ).id
+    const seeded = await seedTestUser(app, 'operator', 'password123')
+    operatorToken = seeded.token
+    operatorUserId = seeded.id
 
     const otherUserId = randomUUID()
     app.db

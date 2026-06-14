@@ -6,6 +6,7 @@ import { listMessages } from '../src/db/repos/messages.js'
 import { getActiveRun } from '../src/db/repos/runs.js'
 import { FakeHermesClient } from './helpers/hermes.js'
 import { createTestApp } from './helpers/app.js'
+import { seedTestUser } from './helpers/users.js'
 
 describe('message routes', () => {
   let app: FastifyInstance | undefined
@@ -19,12 +20,8 @@ describe('message routes', () => {
     app = await createTestApp({ hermesClient })
     await app.ready()
 
-    const login = await app.inject({
-      method: 'POST',
-      url: '/auth/login',
-      payload: { username: 'operator', password: 'password123' },
-    })
-    operatorToken = (login.json() as { token: string }).token
+    const seeded = await seedTestUser(app, 'operator', 'password123')
+    operatorToken = seeded.token
 
     const otherUserId = randomUUID()
     app.db
@@ -263,12 +260,8 @@ describe('message routes', () => {
     app = await createTestApp({ hermesClient, streamWaitMs: 100 })
     await app.ready()
 
-    const login = await app.inject({
-      method: 'POST',
-      url: '/auth/login',
-      payload: { username: 'operator', password: 'password123' },
-    })
-    const token = (login.json() as { token: string }).token
+    const seeded = await seedTestUser(app, 'operator', 'password123')
+    const token = seeded.token
 
     const createConversation = await app.inject({
       method: 'POST',

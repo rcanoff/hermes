@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { createTestApp } from './helpers/app.js'
+import { seedTestUser } from './helpers/users.js'
 
 describe('conversation routes', () => {
   let app: FastifyInstance | undefined
@@ -12,12 +13,8 @@ describe('conversation routes', () => {
     app = await createTestApp()
     await app.ready()
 
-    const login = await app.inject({
-      method: 'POST',
-      url: '/auth/login',
-      payload: { username: 'operator', password: 'password123' },
-    })
-    operatorToken = (login.json() as { token: string }).token
+    const seeded = await seedTestUser(app, 'operator', 'password123')
+    operatorToken = seeded.token
 
     const otherUserId = randomUUID()
     app.db
