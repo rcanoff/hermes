@@ -7,6 +7,7 @@ export function initSchema(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
+      password_changed_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -93,7 +94,36 @@ export function initSchema(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_location_events_user_timestamp
       ON location_events (user_id, timestamp DESC);
+
+    CREATE TABLE IF NOT EXISTS account_invites (
+      id TEXT PRIMARY KEY,
+      token_hash TEXT NOT NULL UNIQUE,
+      type TEXT NOT NULL CHECK (type IN ('activation', 'password_reset')),
+      label TEXT,
+      user_id TEXT,
+      revoked_at TEXT,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_account_invites_token_hash
+      ON account_invites (token_hash);
+    CREATE INDEX IF NOT EXISTS idx_account_invites_active
+      ON account_invites (used_at, revoked_at, expires_at);
   `)
+
+  ensureLegacyUserColumns(db)
+}
+
+function ensureLegacyUserColumns(db: Database.Database): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(users)`)
+    .all() as Array<{ name: string }>
+  if (!columns.some((column) => column.name === 'password_changed_at')) {
+    db.exec(`ALTER TABLE users ADD COLUMN password_changed_at TEXT`)
+  }
 }
 
 export function reconcileRunningRuns(db: Database.Database): number {

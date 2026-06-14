@@ -5,13 +5,14 @@ export interface UserRow {
   id: string
   username: string
   password_hash: string
+  password_changed_at: string | null
   created_at: string
 }
 
 export function findUserByUsername(db: Database.Database, username: string): UserRow | undefined {
   return db
     .prepare(`
-      SELECT id, username, password_hash, created_at
+      SELECT id, username, password_hash, password_changed_at, created_at
       FROM users
       WHERE username = ?
     `)
@@ -21,11 +22,37 @@ export function findUserByUsername(db: Database.Database, username: string): Use
 export function findUserById(db: Database.Database, id: string): UserRow | undefined {
   return db
     .prepare(`
-      SELECT id, username, password_hash, created_at
+      SELECT id, username, password_hash, password_changed_at, created_at
       FROM users
       WHERE id = ?
     `)
     .get(id) as UserRow | undefined
+}
+
+export function createUser(
+  db: Database.Database,
+  input: { username: string; passwordHash: string; passwordChangedAt: string },
+): UserRow {
+  const id = randomUUID()
+  db.prepare(`
+    INSERT INTO users (id, username, password_hash, password_changed_at)
+    VALUES (?, ?, ?, ?)
+  `).run(id, input.username, input.passwordHash, input.passwordChangedAt)
+
+  return findUserById(db, id)!
+}
+
+export function updateUserPassword(
+  db: Database.Database,
+  id: string,
+  passwordHash: string,
+  passwordChangedAt: string,
+): void {
+  db.prepare(`
+    UPDATE users
+    SET password_hash = ?, password_changed_at = ?
+    WHERE id = ?
+  `).run(passwordHash, passwordChangedAt, id)
 }
 
 export function ensureBootstrapUser(db: Database.Database, username: string, passwordHash: string): UserRow {
@@ -40,13 +67,7 @@ export function ensureBootstrapUser(db: Database.Database, username: string, pas
     VALUES (?, ?, ?)
   `).run(id, username, passwordHash)
 
-  return db
-    .prepare(`
-      SELECT id, username, password_hash, created_at
-      FROM users
-      WHERE id = ?
-    `)
-    .get(id) as UserRow
+  return findUserById(db, id)!
 }
 
 export function updateUserPasswordHash(db: Database.Database, id: string, passwordHash: string): void {

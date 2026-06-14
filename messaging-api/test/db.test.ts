@@ -9,6 +9,24 @@ import { initSchema, reconcileRunningRuns } from '../src/db/schema.js'
 import { closeDb, getDb } from '../src/db/index.js'
 
 describe('schema', () => {
+  it('creates account_invites table', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const tables = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
+      .all() as Array<{ name: string }>
+    expect(tables.map((t) => t.name)).toContain('account_invites')
+  })
+
+  it('adds password_changed_at column to users', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const columns = db
+      .prepare(`PRAGMA table_info(users)`)
+      .all() as Array<{ name: string }>
+    expect(columns.map((c) => c.name)).toContain('password_changed_at')
+  })
+
   it('creates the durable run tables', () => {
     const db = new Database(':memory:')
 
