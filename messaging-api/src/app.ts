@@ -3,7 +3,6 @@ import type Database from 'better-sqlite3'
 import jwt from '@fastify/jwt'
 import type { AppOptions } from './types.js'
 import { getDb } from './db/index.js'
-import { ensureBootstrapUser, findUserByUsername, updateUserPasswordHash } from './db/repos/users.js'
 import authPlugin from './plugins/auth.js'
 import ssePlugin from './plugins/sse.js'
 import authRoutes from './routes/auth.js'
@@ -13,7 +12,6 @@ import dataLocationRoutes from './routes/data-location.js'
 import mcpRoutes from './routes/mcp.js'
 import { AddressEnrichmentQueue } from './services/address-enrichment.js'
 import { OpenAiHermesClient } from './services/hermes-client.js'
-import { hashPassword, verifyPassword } from './services/password.js'
 import { StreamHub } from './streams/hub.js'
 import type { HermesClient } from './services/hermes-client.js'
 import type { AddressEnrichmentQueue as AddressEnrichmentQueueType } from './services/address-enrichment.js'
@@ -25,7 +23,9 @@ declare module 'fastify' {
     streamHub: StreamHub
     addressEnrichmentQueue: AddressEnrichmentQueueType
     companionMcpBearerToken: string
-    bootstrapUsername: string
+    messagingApiHost: string
+    inviteExpiryHours: number
+    minPasswordLength: number
     streamWaitMs: number
   }
 }
@@ -42,7 +42,9 @@ export function buildApp(options: AppOptions) {
   app.decorate('streamHub', options.streamHub ?? new StreamHub())
   app.decorate('streamWaitMs', options.streamWaitMs ?? 30_000)
   app.decorate('companionMcpBearerToken', options.companionMcpBearerToken)
-  app.decorate('bootstrapUsername', options.bootstrapUsername)
+  app.decorate('messagingApiHost', options.messagingApiHost)
+  app.decorate('inviteExpiryHours', options.inviteExpiryHours)
+  app.decorate('minPasswordLength', options.minPasswordLength)
   app.decorate(
     'addressEnrichmentQueue',
     options.addressEnrichmentQueue ??
@@ -59,23 +61,6 @@ export function buildApp(options: AppOptions) {
   app.register(messageRoutes)
   app.register(dataLocationRoutes)
   app.register(mcpRoutes)
-
-  app.addHook('onReady', async () => {
-    // MVP contract: the configured bootstrap credentials remain authoritative at startup
-    // until real account-management flows exist, so restarts reconcile the stored hash.
-    const existingUser = findUserByUsername(app.db, options.bootstrapUsername)
-    if (!existingUser) {
-      const passwordHash = await hashPassword(options.bootstrapPassword)
-      ensureBootstrapUser(app.db, options.bootstrapUsername, passwordHash)
-      return
-    }
-
-    const passwordMatches = await verifyPassword(options.bootstrapPassword, existingUser.password_hash)
-    if (!passwordMatches) {
-      const passwordHash = await hashPassword(options.bootstrapPassword)
-      updateUserPasswordHash(app.db, existingUser.id, passwordHash)
-    }
-  })
 
   app.get('/health', async () => ({ ok: true }))
 

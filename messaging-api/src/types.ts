@@ -7,8 +7,9 @@ export interface AppOptions {
   jwtSecret: string
   hermesBaseUrl: string
   hermesApiKey: string
-  bootstrapUsername: string
-  bootstrapPassword: string
+  messagingApiHost: string
+  inviteExpiryHours: number
+  minPasswordLength: number
   companionMcpBearerToken: string
   addressEnrichmentSessionId: string
   hermesClient?: HermesClient

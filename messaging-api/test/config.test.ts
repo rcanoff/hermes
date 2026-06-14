@@ -2,35 +2,38 @@ import { describe, expect, it } from 'vitest'
 import { readConfig } from '../src/config.js'
 
 describe('readConfig', () => {
-  it('fails when required secrets are missing', () => {
+  it('fails when JWT_SECRET is missing', () => {
     expect(() =>
       readConfig({
         HERMES_BASE_URL: 'http://hermes:8642',
       }),
     ).toThrow('JWT_SECRET is required')
+  })
 
+  it('fails when MESSAGING_API_HOST is missing', () => {
     expect(() =>
       readConfig({
         JWT_SECRET: 'test-secret',
         HERMES_BASE_URL: 'http://hermes:8642',
       }),
-    ).toThrow('BOOTSTRAP_PASSWORD is required')
+    ).toThrow('MESSAGING_API_HOST is required')
   })
 
-  it('returns config when required secrets are present', () => {
+  it('returns config when required values are present', () => {
     expect(
       readConfig({
         JWT_SECRET: 'test-secret',
         HERMES_BASE_URL: 'http://hermes:8642',
-        BOOTSTRAP_PASSWORD: 'test-password',
+        MESSAGING_API_HOST: '100.64.0.1:3000',
       }),
     ).toEqual({
       dbPath: '/opt/data/messaging-api.sqlite',
       jwtSecret: 'test-secret',
       hermesBaseUrl: 'http://hermes:8642',
       hermesApiKey: '',
-      bootstrapUsername: 'operator',
-      bootstrapPassword: 'test-password',
+      messagingApiHost: '100.64.0.1:3000',
+      inviteExpiryHours: 48,
+      minPasswordLength: 12,
       companionMcpBearerToken: '',
       addressEnrichmentSessionId: 'companion-address-enrichment',
     })
