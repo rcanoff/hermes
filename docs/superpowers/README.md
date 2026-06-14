@@ -15,6 +15,9 @@ When work ships, move its spec and plan from `specs/` / `plans/` into `implement
 
 ## Current active work
 
+- Companion auth — invite-based account management
+  - Design: `specs/2026-06-14-companion-auth-invites-design.md`
+  - OpenAPI v1.6.0: `specs/messaging-api.openapi.yaml` (to be drafted)
 - Companion user-data vault + MCP (location redesign)
   - Design: `specs/2026-06-13-companion-user-data-vault-design.md`
   - OpenAPI v1.5.0: `specs/messaging-api.openapi.yaml`
