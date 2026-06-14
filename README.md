@@ -307,11 +307,23 @@ Add these variables to `.env`:
 HERMES_API_SERVER_KEY=replace-this
 MESSAGING_API_PORT=3000
 MESSAGING_API_JWT_SECRET=replace-this
-MESSAGING_API_BOOTSTRAP_USERNAME=operator
-MESSAGING_API_BOOTSTRAP_PASSWORD=replace-this
+MESSAGING_API_HOST=100.x.x.x:3000
+INVITE_EXPIRY_HOURS=48
+MIN_PASSWORD_LENGTH=12
+COMPANION_MCP_BEARER_TOKEN=replace-with-long-random-token
 ```
 
 `HERMES_API_SERVER_KEY` enables Hermes's OpenAI-compatible API server on port `8642` inside the Docker network and authenticates `messaging-api` when it calls Hermes.
+
+`MESSAGING_API_HOST` must be the Tailscale-reachable IP and port of the messaging API (used in magic-link URLs). Set it to your Pi's Tailscale address, e.g. `100.x.x.x:3000`.
+
+### Account setup (invite-based)
+
+On a **cold start**, the messaging API has **no users**. Create the first companion account through Hermes using the `companion-account-management` skill (MCP tools `create_companion_invite`, etc.). Share the magic link with the user to complete activation in the iOS app.
+
+To reset a password, use `create_password_reset_invite` via the same skill.
+
+**Upgrading** from the bootstrap model: existing `operator` (or other) users in the SQLite database are preserved. You can keep using them or reset passwords via invite.
 
 Start or update the stack:
 
