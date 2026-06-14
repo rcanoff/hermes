@@ -1,9 +1,18 @@
 openapi: 3.1.0
 info:
   title: Hermes Messaging API
-  version: 1.5.0
+  version: 1.6.0
   description: |
     Private API bridging mobile clients to Hermes.
+
+    **v1.6.0 changes:** invite-based account provisioning. Bootstrap user removed.
+    New routes: `GET /invite/{token}`, `GET /auth/invite/{token}`,
+    `POST /auth/activate`, `POST /auth/reset-password`. Invites are created by
+    Hermes via companion MCP (`create_companion_invite`, `create_password_reset_invite`,
+    `list_companion_accounts`, `revoke_companion_invite`). MCP location tools
+    (`get_user_location`, `get_location_history`) now require a `username` argument.
+    MCP is not described in this OpenAPI document.
+    See `2026-06-14-companion-auth-invites-backend-design.md`.
 
     **v1.5.0 changes:** user-scoped location data vault under `/data/location/*`.
     Replaces conversation-scoped `/conversations/{id}/location/*`. Location events
@@ -27,7 +36,9 @@ info:
     **v1.1.0 changes:** auto-generated conversation titles (background, first message),
     `PATCH /conversations/{id}` for manual rename, new SSE `title` event.
 
-    All routes except `POST /auth/login` require `Authorization: Bearer <jwt>`.
+    Routes that do not require a JWT: `GET /health`, `POST /auth/login`,
+    `GET /invite/{token}`, `GET /auth/invite/{token}`, `POST /auth/activate`,
+    `POST /auth/reset-password`. All other routes require `Authorization: Bearer <jwt>`.
 
 servers:
   - url: http://localhost:3000
@@ -59,10 +70,70 @@ components:
           enum:
             - invalid_request
             - invalid_credentials
+            - invalid_token
+            - weak_password
+            - username_taken
             - not_found
             - run_conflict
             - no_active_run
             - edit_not_allowed
+
+    InviteMetadataValid:
+      type: object
+      required: [valid, type, expires_at]
+      properties:
+        valid:
+          type: boolean
+          const: true
+        type:
+          type: string
+          enum: [activation, password_reset]
+        expires_at:
+          type: string
+          format: date-time
+
+    InviteMetadataInvalid:
+      type: object
+      required: [valid, reason]
+      properties:
+        valid:
+          type: boolean
+          const: false
+        reason:
+          type: string
+          enum: [expired, used, not_found, revoked]
+
+    InviteMetadata:
+      oneOf:
+        - $ref: '#/components/schemas/InviteMetadataValid'
+        - $ref: '#/components/schemas/InviteMetadataInvalid'
+
+    ActivateRequest:
+      type: object
+      required: [token, username, password]
+      properties:
+        token:
+          type: string
+          description: Raw invite token from the magic link URL
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+          pattern: '^[a-zA-Z0-9_-]+$'
+        password:
+          type: string
+          minLength: 12
+
+    ResetPasswordRequest:
+      type: object
+      required: [token, password]
+      properties:
+        token:
+          type: string
+          description: Raw invite token from the magic link URL
+        password:
+          type: string
+          minLength: 12
 
     LoginRequest:
       type: object
@@ -362,6 +433,126 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+
+  /invite/{token}:
+    get:
+      tags: [auth]
+      summary: Invite landing page
+      description: |
+        Public landing route for magic links. Redirects to the iOS app deep link
+        (`hermes-companion://invite/{token}`) or returns minimal HTML with an
+        "Open in Companion" action. Does not return invite metadata — use
+        `GET /auth/invite/{token}` for that.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to app deep link
+          headers:
+            Location:
+              schema:
+                type: string
+        '200':
+          description: HTML fallback when app is not installed
+          content:
+            text/html:
+              schema:
+                type: string
+        '404':
+          description: Token not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/invite/{token}:
+    get:
+      tags: [auth]
+      summary: Invite metadata
+      description: |
+        Returns invite type and validity for the mobile client to choose the
+        correct onboarding screen. Does not require authentication.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Invite metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteMetadata'
+
+  /auth/activate:
+    post:
+      tags: [auth]
+      summary: Complete activation invite
+      description: |
+        Creates a new user account. Invitee chooses username and password.
+        Marks the activation invite as used and returns a JWT.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivateRequest'
+      responses:
+        '200':
+          description: Account created; JWT issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Invalid token or weak password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Username already taken
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/reset-password:
+    post:
+      tags: [auth]
+      summary: Complete password-reset invite
+      description: |
+        Sets a new password for an existing user. Marks the reset invite as used,
+        invalidates JWTs issued before the password change, and returns a new JWT.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '200':
+          description: Password updated; JWT issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Invalid token or weak password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /auth/login:
     post:
