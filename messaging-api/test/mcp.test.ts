@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { createInviteRecord } from '../src/services/invites.js'
 import { createTestApp } from './helpers/app.js'
+import { seedTestUser } from './helpers/users.js'
 
 async function createMcpClient(app: FastifyInstance, bearerToken: string) {
   const address = await app.listen({ port: 0, host: '127.0.0.1' })
@@ -32,12 +34,8 @@ describe('companion MCP routes', () => {
     app = await createTestApp()
     await app.ready()
 
-    const login = await app.inject({
-      method: 'POST',
-      url: '/auth/login',
-      payload: { username: 'operator', password: 'password123' },
-    })
-    operatorToken = (login.json() as { token: string }).token
+    const seeded = await seedTestUser(app, 'operator', 'password123')
+    operatorToken = seeded.token
   })
 
   afterEach(async () => {
@@ -68,7 +66,10 @@ describe('companion MCP routes', () => {
   it('returns unavailable location when vault is empty', async () => {
     const { client, transport } = await createMcpClient(app!, 'test-mcp-token')
 
-    const result = await client.callTool({ name: 'get_user_location', arguments: {} })
+    const result = await client.callTool({
+      name: 'get_user_location',
+      arguments: { username: 'operator' },
+    })
     const payload = parseToolResult(result)
 
     expect(payload).toEqual({ available: false })
@@ -77,7 +78,7 @@ describe('companion MCP routes', () => {
     await client.close()
   })
 
-  it('returns latest location with freshness for bootstrap user', async () => {
+  it('returns latest location with freshness for a seeded user', async () => {
     await app!.inject({
       method: 'POST',
       url: '/data/location/events',
@@ -94,7 +95,10 @@ describe('companion MCP routes', () => {
     })
 
     const { client, transport } = await createMcpClient(app!, 'test-mcp-token')
-    const result = await client.callTool({ name: 'get_user_location', arguments: {} })
+    const result = await client.callTool({
+      name: 'get_user_location',
+      arguments: { username: 'operator' },
+    })
     const payload = parseToolResult(result)
 
     expect(payload).toMatchObject({
@@ -146,7 +150,7 @@ describe('companion MCP routes', () => {
 
     const firstPage = await client.callTool({
       name: 'get_location_history',
-      arguments: { limit: 2 },
+      arguments: { username: 'operator', limit: 2 },
     })
     const firstPayload = parseToolResult(firstPage) as { events: Array<{ id: string; timestamp: string }> }
 
@@ -156,13 +160,36 @@ describe('companion MCP routes', () => {
 
     const secondPage = await client.callTool({
       name: 'get_location_history',
-      arguments: { limit: 2, before: createdIds[1] },
+      arguments: { username: 'operator', limit: 2, before: createdIds[1] },
     })
     const secondPayload = parseToolResult(secondPage) as { events: Array<{ id: string; timestamp: string }> }
 
     expect(secondPayload.events).toHaveLength(1)
     expect(secondPayload.events[0]).toMatchObject({ id: createdIds[0], timestamp: timestamps[0] })
 
+    await transport.close()
+    await client.close()
+  })
+
+  it('creates an activation invite via MCP', async () => {
+    const { client, transport } = await createMcpClient(app!, 'test-mcp-token')
+    const result = await client.callTool({
+      name: 'create_companion_invite',
+      arguments: { label: 'Roberto' },
+    })
+    const payload = parseToolResult(result) as { invite_id: string; url: string; expires_at: string }
+    expect(payload.url).toMatch(/^http:\/\/127\.0\.0\.1:3000\/invite\//)
+    await transport.close()
+    await client.close()
+  })
+
+  it('lists users and pending invites', async () => {
+    const { rawToken } = createInviteRecord(app!.db, { type: 'activation', expiryHours: 48 })
+    void rawToken
+    const { client, transport } = await createMcpClient(app!, 'test-mcp-token')
+    const result = await client.callTool({ name: 'list_companion_accounts', arguments: {} })
+    const payload = parseToolResult(result) as { pending_invites: unknown[]; users: unknown[] }
+    expect(payload.pending_invites.length).toBe(1)
     await transport.close()
     await client.close()
   })
