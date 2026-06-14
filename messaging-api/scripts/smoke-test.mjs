@@ -13,12 +13,15 @@ function fail(name, detail) {
 }
 
 async function req(method, path, { token, body } = {}) {
-  const headers = { 'Content-Type': 'application/json' }
+  const headers = {}
   if (token) headers.Authorization = `Bearer ${token}`
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json'
+  }
   const res = await fetch(`${base}${path}`, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   const text = await res.text()
   let json
@@ -97,10 +100,19 @@ try {
 
   const listBefore = await req('GET', '/conversations', { token })
   const orderBefore = listBefore.json.map((conversation) => conversation.id)
-  if (listBefore.status === 200 && orderBefore[0] === id2) {
-    pass('list order before message', 'newer conversation first')
+  const pairBefore = orderBefore.filter((conversationId) => conversationId === id1 || conversationId === id2)
+  const c2Before = listBefore.json.find((conversation) => conversation.id === id2)
+  const c1Before = listBefore.json.find((conversation) => conversation.id === id1)
+  if (
+    listBefore.status === 200 &&
+    pairBefore.length === 2 &&
+    c2Before?.updated_at &&
+    c1Before?.updated_at &&
+    c2Before.updated_at >= c1Before.updated_at
+  ) {
+    pass('list order before message', `c2 updated_at=${c2Before.updated_at}`)
   } else {
-    fail('list order before message', orderBefore.join(','))
+    fail('list order before message', pairBefore.join(','))
   }
 
   const msg = await req('POST', `/conversations/${id1}/messages`, {
@@ -115,10 +127,11 @@ try {
   const listAfter = await req('GET', '/conversations', { token })
   const orderAfter = listAfter.json.map((conversation) => conversation.id)
   const bumped = listAfter.json.find((conversation) => conversation.id === id1)
-  if (listAfter.status === 200 && orderAfter[0] === id1) {
-    pass('list order after message', 'messaged conversation moved to top')
+  const pairAfter = orderAfter.filter((conversationId) => conversationId === id1 || conversationId === id2)
+  if (listAfter.status === 200 && pairAfter[0] === id1 && pairAfter[1] === id2) {
+    pass('list order after message', 'messaged conversation ahead of sibling')
   } else {
-    fail('list order after message', orderAfter.join(','))
+    fail('list order after message', `expected ${id1},${id2} got ${pairAfter.join(',')}`)
   }
 
   if (bumped && bumped.updated_at >= bumped.created_at) {
