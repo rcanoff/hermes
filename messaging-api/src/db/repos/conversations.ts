@@ -21,8 +21,8 @@ export function touchConversationUpdatedAt(db: Database.Database, conversationId
 export function createConversation(db: Database.Database, userId: string, hermesSessionId: string): string {
   const id = randomUUID()
   db.prepare(`
-    INSERT INTO conversations (id, user_id, hermes_session_id)
-    VALUES (?, ?, ?)
+    INSERT INTO conversations (id, user_id, hermes_session_id, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
   `).run(id, userId, hermesSessionId)
   return id
 }

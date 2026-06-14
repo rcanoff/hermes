@@ -122,8 +122,9 @@ function ensureLegacyConversationColumns(db: Database.Database): void {
     .all() as Array<{ name: string }>
   if (!columns.some((column) => column.name === 'updated_at')) {
     db.exec(`ALTER TABLE conversations ADD COLUMN updated_at TEXT`)
-    db.exec(`UPDATE conversations SET updated_at = created_at WHERE updated_at IS NULL`)
   }
+
+  db.exec(`UPDATE conversations SET updated_at = created_at WHERE updated_at IS NULL`)
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS conversations_user_updated_idx
