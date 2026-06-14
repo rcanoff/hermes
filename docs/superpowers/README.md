@@ -18,6 +18,7 @@ When work ships, move its spec and plan from `specs/` / `plans/` into `implement
 - Companion auth — invite-based account management
   - Overview: `specs/2026-06-14-companion-auth-invites-design.md`
   - Backend: `specs/2026-06-14-companion-auth-invites-backend-design.md`
+  - Backend plan: `plans/2026-06-14-companion-auth-invites-backend.md`
   - iOS: `specs/2026-06-14-companion-auth-invites-ios-design.md`
   - OpenAPI v1.6.0: `specs/messaging-api.openapi.yaml`
 - Companion user-data vault + MCP (location redesign)
