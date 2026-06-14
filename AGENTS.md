@@ -49,6 +49,7 @@ Typical work includes:
 - Treat `data/` as runtime state, not hand-maintained source.
 - Preserve the documented single-container Hermes model unless there is a clear reason to change it.
 - When integration behavior changes, update `README.md` so the workspace remains operable by someone new to it.
+- **Companion skills:** every new Hermes skill for the companion app, `messaging-api`, or companion MCP must use the `companion-` prefix (e.g. `companion-user-location`, `companion-account-management`). Place them under `data/skills/`.
 
 ## Start Here
 
