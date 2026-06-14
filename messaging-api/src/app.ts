@@ -6,6 +6,7 @@ import { getDb } from './db/index.js'
 import authPlugin from './plugins/auth.js'
 import ssePlugin from './plugins/sse.js'
 import authRoutes from './routes/auth.js'
+import inviteLandingRoutes from './routes/invite-landing.js'
 import conversationRoutes from './routes/conversations.js'
 import messageRoutes from './routes/messages.js'
 import dataLocationRoutes from './routes/data-location.js'
@@ -56,6 +57,7 @@ export function buildApp(options: AppOptions) {
   )
   app.register(authPlugin)
   app.register(ssePlugin)
+  app.register(inviteLandingRoutes)
   app.register(authRoutes)
   app.register(conversationRoutes)
   app.register(messageRoutes)
