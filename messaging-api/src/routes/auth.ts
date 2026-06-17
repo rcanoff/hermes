@@ -28,7 +28,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const token = await reply.jwtSign(
-      { sub: user.id, username: user.username },
+      { sub: user.id, username: user.username, jti: randomUUID() },
       { sign: { expiresIn: ONE_YEAR_IN_SECONDS } },
     )
 
@@ -85,7 +85,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     markInviteUsed(app.db, lookup.invite.id)
 
     const jwtToken = await reply.jwtSign(
-      { sub: user.id, username: user.username },
+      { sub: user.id, username: user.username, jti: randomUUID() },
       { sign: { expiresIn: ONE_YEAR_IN_SECONDS } },
     )
 
@@ -121,7 +121,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const jwtToken = await app.jwt.sign(
-      { sub: user.id, username: user.username },
+      { sub: user.id, username: user.username, jti: randomUUID() },
       { expiresIn: ONE_YEAR_IN_SECONDS, iat: passwordChangedAtSec } as {
         expiresIn: number
         iat: number

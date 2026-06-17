@@ -6,6 +6,7 @@ import { findUserById } from '../db/repos/users.js'
 interface JwtClaims {
   sub: string
   username: string
+  jti?: string
   iat?: number
   exp?: number
 }
@@ -22,6 +23,7 @@ declare module 'fastify' {
     userId: string
     username: string
     bearerToken: string
+    sessionId: string | null
   }
 
   interface FastifyInstance {
@@ -59,6 +61,7 @@ const authPlugin: FastifyPluginAsync = async (app) => {
       request.userId = user.id
       request.username = user.username
       request.bearerToken = token
+      request.sessionId = claims.jti ?? null
     } catch {
       return reply.code(401).send({ error: 'unauthorized' })
     }
