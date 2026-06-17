@@ -313,7 +313,7 @@ MIN_PASSWORD_LENGTH=12
 COMPANION_MCP_BEARER_TOKEN=replace-with-long-random-token
 ```
 
-`HERMES_API_SERVER_KEY` enables Hermes's OpenAI-compatible API server on port `8642` inside the Docker network and authenticates `messaging-api` when it calls Hermes.
+`HERMES_API_SERVER_KEY` enables Hermes's OpenAI-compatible API server on port `8642` inside the Docker network and authenticates `messaging-api` when it calls Hermes. In this deployment that path is the **Companion App** channel: `messaging-api` sends `X-Hermes-Session-Key: companion-app` on every Hermes call. Skill routing is **not** hardcoded in the API — the iOS app sends a `bootstrap` prompt on the first message of each conversation; the API stores and forwards it. See `companion-app` skill and OpenAPI v1.9.0.
 
 `MESSAGING_API_HOST` must be the Tailscale-reachable IP and port of the messaging API (used in magic-link URLs). Set it to your Pi's Tailscale address, e.g. `100.x.x.x:3000`.
 
