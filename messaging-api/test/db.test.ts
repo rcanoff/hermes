@@ -36,6 +36,15 @@ describe('schema', () => {
     expect(columns.map((c) => c.name)).toContain('updated_at')
   })
 
+  it('includes bootstrap_prompt on conversations', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const columns = db
+      .prepare(`PRAGMA table_info(conversations)`)
+      .all() as Array<{ name: string }>
+    expect(columns.map((c) => c.name)).toContain('bootstrap_prompt')
+  })
+
   it('creates the durable run tables', () => {
     const db = new Database(':memory:')
 

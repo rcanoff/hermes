@@ -124,6 +124,10 @@ function ensureLegacyConversationColumns(db: Database.Database): void {
     db.exec(`ALTER TABLE conversations ADD COLUMN updated_at TEXT`)
   }
 
+  if (!columns.some((column) => column.name === 'bootstrap_prompt')) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN bootstrap_prompt TEXT`)
+  }
+
   db.exec(`UPDATE conversations SET updated_at = created_at WHERE updated_at IS NULL`)
 
   db.exec(`
