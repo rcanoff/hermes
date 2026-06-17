@@ -1,76 +1,109 @@
 ---
 name: companion-user-location
-description: Use when the user asks for their current location, coordinates, address, map links, travel or weather near them, or historical "where was I" questions. Read from the companion location vault via MCP — never Home Assistant.
-version: 1.0.0
+description: Data skill — fetch and normalize a companion user's location from the vault via MCP. Use for "where am I?", coordinates, address, travel near me, or historical location questions. Never Home Assistant.
+version: 1.1.0
 author: Hermes Agent
 license: MIT
 metadata:
   hermes:
-    tags: [companion, location, mcp, mobile, maps, travel]
-    related_skills: []
+    tags: [companion, location, mcp, mobile, maps, travel, data]
+    related_skills: [companion-replies, companion-map-preview, companion-links, companion-account-management]
 ---
 
 # Companion User Location
 
 ## Overview
 
-The companion location vault in `messaging-api` is the **only** source for the operator's location. All channels (iOS companion, Telegram, CLI, dashboard) read through this skill and the companion MCP server.
+This is a **data skill**. It fetches location from the companion vault in `messaging-api` and normalizes the result into a fixed internal record. It does **not** own reply formatting — delegate presentation to `companion-replies` and `companion-map-preview` on Companion App channels.
 
-**Never** call Home Assistant, `request_location_update`, or any HA location skill for personal location answers.
+The vault is the **only** source for companion user location. **Never** call Home Assistant, `request_location_update`, or any HA location skill.
 
 ## When to use
 
-- "where am I?", coordinates, address, map links
-- Travel, maps, weather-near-me, or any task needing the user's position
+- "where am I?", coordinates, address, or position for travel / weather / routing
 - "where was I …?", "when did I arrive …?", or other historical location questions
+- Any other skill needs the operator's current coordinates (e.g. route origin = "here")
 
-## Tools
+## Username resolution
 
-Use the **companion** MCP server:
+| Channel | Default `username` for MCP calls |
+|---------|----------------------------------|
+| Companion App | The authenticated user for this conversation (injected in the Companion App system prompt) |
+| Telegram / CLI / dashboard | The companion account the question refers to; ask if unclear |
 
-- `get_user_location` — latest location for a companion user; **requires `username`**
-- `get_location_history` — paginated event log; **requires `username`** (`limit` default 20, max 100; optional `before` cursor)
+Rules:
 
-For a single-operator household, the `username` is whichever companion account the question refers to. If unclear, ask the user or use `list_companion_accounts` from the `companion-account-management` skill to discover usernames.
+- On Companion App, **always** use the authenticated user's username unless the user explicitly asks about someone else.
+- For cross-user questions on non-app channels, call `list_companion_accounts` from `companion-account-management` to discover usernames.
+- Never guess a username.
 
-## Current location workflow
+## Tools (companion MCP)
 
-1. Call `get_user_location` with the target `username` via companion MCP.
-2. If `available: false` → tell the user location is not available; suggest sharing location from the companion app.
-3. If `available: true` → respond in this fixed four-line format (compact; no extra prose):
+- `get_user_location` — latest location; **requires `username`**
+- `get_location_history` — paginated event log with HAL `_links`; **requires `username`** (`limit` default 20, max 100; optional `before` or `after` UUID anchors)
 
-   ```
-   Address: ...
-   Coordinates: lat, lon
-   Accuracy: Xm
-   Updated: 12 min ago
-   ```
+## Internal data format
 
-   Use the `freshness` field for the "Updated" line when present. An optional Apple Maps link is fine.
+After every MCP call, normalize into a **LocationRecord** before passing data to presentation skills or other workflows.
 
-4. If `address_status: pending` → show coordinates and accuracy; omit the address line or note that the address is still resolving.
-5. If coordinates are stale, say so using `freshness` or `timestamp` — do not invent a fresher position.
+### Available
 
-## Historical location workflow
+```yaml
+available: true
+username: <string>
+lat: <number>
+lon: <number>
+accuracy_m: <number>
+address: <string | null>
+address_status: <string>          # e.g. resolved, pending
+timestamp: <ISO-8601 string>
+freshness: <string>               # e.g. "12 min ago"
+trigger: <string>                 # manual | significant_change | interval
+```
+
+### Unavailable
+
+```yaml
+available: false
+username: <string>
+```
+
+Do not emit user-facing prose from raw MCP JSON. Always normalize first.
+
+## Data workflow — current location
+
+1. Resolve `username` (see table above).
+2. Call `get_user_location` via companion MCP.
+3. Normalize the response into a LocationRecord.
+4. Hand off the LocationRecord to presentation skills (see Consumers). Keep it in working memory for downstream skills (e.g. `route-planner` using "here" as origin).
+
+## Data workflow — history
 
 For "where was I …?" or timeline questions:
 
-1. Call `get_location_history` with the target `username` and an appropriate `limit`.
-2. Summarize matching events by timestamp, coordinates, and address when resolved.
-3. Use `before` to paginate if the user needs older events.
+1. Resolve `username`.
+2. Call `get_location_history` with an appropriate `limit`.
+3. Normalize each event to the available LocationRecord shape (add `id` from the event when useful).
+4. Summarize matching events by timestamp, coordinates, and address when resolved.
+5. To load older events, re-call with `before` from `_links.next.href`. Use `after` for newer pages via `_links.prev`.
+
+## Consumers
+
+- **`companion-map-preview`** — renders an available LocationRecord as a `type: place` map block on Companion App channels.
+- **`companion-replies`** — owns plain-text location answers on non-app channels (Telegram, CLI, dashboard).
 
 ## Channel behavior
 
 | Channel | Writes to vault | Reads location |
 |---------|----------------|----------------|
-| iOS companion | Yes | skill → MCP |
-| Telegram | No | skill → MCP |
-| CLI / dashboard | No | skill → MCP |
+| iOS companion | Yes | this skill → MCP |
+| Telegram | No | this skill → MCP |
+| CLI / dashboard | No | this skill → MCP |
 
-Telegram does not ingest location. It reads whatever the app last shared. If the app has not posted recently, report last-known with staleness or unavailability.
+Telegram does not ingest location. It reads whatever the app last shared. Report last-known with staleness or unavailability.
 
 ## Do not use
 
-- `smart-home/home-assistant-mcp` or any Home Assistant entity for the operator's location
+- `smart-home/home-assistant-mcp` or any Home Assistant entity for personal location
 - Conversation location routes (removed; vault is user-scoped under `/data/location/*`)
-- Skills that refresh HA Companion App location (`roberto-location-source`, `generic-location-refresh`, `get-user-location`)
+- Legacy HA location skills (`roberto-location-source`, `generic-location-refresh`, `get-user-location`)
