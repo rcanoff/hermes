@@ -175,6 +175,10 @@ export function updateConversationTitleIfNull(
     `)
     .run(title, conversationId)
 
+  if (result.changes === 1) {
+    touchConversationUpdatedAt(db, conversationId)
+  }
+
   return result.changes === 1
 }
 
@@ -188,6 +192,8 @@ export function updateConversationTitle(
     SET title = ?
     WHERE id = ?
   `).run(title, conversationId)
+
+  touchConversationUpdatedAt(db, conversationId)
 
   return db
     .prepare(`

@@ -12,6 +12,10 @@ import {
 import { validateBootstrap } from '../lib/bootstrap.js'
 import { getActiveRun } from '../db/repos/runs.js'
 import { buildHalLinks, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
+import {
+  emitAccountConversationUpsert,
+  emitConversationDeleted,
+} from '../services/chat-sync-emitter.js'
 
 const conversationRoutes: FastifyPluginAsync = async (app) => {
   app.get('/conversations', { preHandler: app.authenticate }, async (request, reply) => {
@@ -60,6 +64,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const conversationId = createConversation(app.db, request.userId, randomUUID(), bootstrapPrompt)
+    emitAccountConversationUpsert(app.db, request.userId, conversationId)
     const conversation = getConversationForUser(app.db, request.userId, conversationId)
 
     return reply.code(201).send(toConversationResponse(conversation!))
@@ -96,6 +101,9 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const updated = updateConversationTitle(app.db, conversationId, title)
+    if (updated) {
+      emitAccountConversationUpsert(app.db, request.userId, conversationId)
+    }
     return updated ? toConversationResponse(updated) : updated
   })
 
@@ -110,6 +118,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(409).send({ error: 'run_conflict' })
     }
 
+    emitConversationDeleted(app.db, request.userId, conversationId)
     deleteConversationForUser(app.db, request.userId, conversationId)
     return reply.code(204).send()
   })

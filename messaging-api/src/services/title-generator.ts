@@ -4,6 +4,7 @@ import { updateConversationTitleIfNull } from '../db/repos/conversations.js'
 import type { HermesClient } from './hermes-client.js'
 import type { HermesPromptMessage } from './prompt-builder.js'
 import type { StreamHub } from '../streams/hub.js'
+import { emitAccountConversationUpsert } from './chat-sync-emitter.js'
 
 const TITLE_SYSTEM_PROMPT =
   "Generate a short conversation title (max 6 words) from the user's message. Reply with only the title — no quotes, no punctuation."
@@ -52,6 +53,7 @@ export async function generateAndSaveTitle(input: {
   hermesClient: HermesClient
   hub: StreamHub
   conversationId: string
+  userId: string
   userMessageText: string
 }): Promise<void> {
   const title = await generateConversationTitle(input.hermesClient, input.userMessageText)
@@ -61,6 +63,7 @@ export async function generateAndSaveTitle(input: {
 
   const updated = updateConversationTitleIfNull(input.db, input.conversationId, title)
   if (updated) {
+    emitAccountConversationUpsert(input.db, input.userId, input.conversationId)
     input.hub.publish(input.conversationId, { event: 'title', data: { title } })
   }
 }

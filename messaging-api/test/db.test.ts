@@ -45,6 +45,15 @@ describe('schema', () => {
     expect(columns.map((c) => c.name)).toContain('updated_at')
   })
 
+  it('includes chat_sync_events table', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const tables = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
+      .all() as Array<{ name: string }>
+    expect(tables.map((t) => t.name)).toContain('chat_sync_events')
+  })
+
   it('includes bootstrap_prompt on conversations', () => {
     const db = new Database(':memory:')
     initSchema(db)

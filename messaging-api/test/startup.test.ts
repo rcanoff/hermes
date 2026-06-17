@@ -106,6 +106,7 @@ describe('durable run execution', () => {
       conversationId: 'c1',
       hermesSessionId: 'hs1',
       userMessageId: 'm1',
+      userId: 'u1',
     })
 
     unsubscribe()
@@ -166,6 +167,7 @@ describe('durable run execution', () => {
         conversationId: 'c1',
         hermesSessionId: 'hs1',
         userMessageId: 'm1',
+        userId: 'u1',
       }),
     ).rejects.toThrow('Hermes exploded')
 
@@ -214,6 +216,7 @@ describe('durable run execution', () => {
       conversationId: 'c1',
       hermesSessionId: 'hs1',
       userMessageId: 'm1',
+      userId: 'u1',
     })
 
     expect(assistantMessageId).toEqual(expect.any(String))
@@ -243,6 +246,7 @@ describe('durable run execution', () => {
         conversationId: 'c1',
         hermesSessionId: 'hs1',
         userMessageId: 'm1',
+        userId: 'u1',
       }),
     ).rejects.toThrow('run_conflict')
 
@@ -288,6 +292,7 @@ describe('durable run execution', () => {
         conversationId: 'c1',
         hermesSessionId: 'hs1',
         userMessageId: 'm1',
+        userId: 'u1',
       }),
     ).rejects.toThrow('Hermes stream ended without a done event')
 

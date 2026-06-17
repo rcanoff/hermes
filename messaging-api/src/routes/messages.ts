@@ -8,6 +8,7 @@ import { createRun, getActiveRun } from '../db/repos/runs.js'
 import { applyMessageEdit, MessageEditError } from '../services/message-editor.js'
 import { executeAssistantRun } from '../services/run-executor.js'
 import { generateAndSaveTitle } from '../services/title-generator.js'
+import { emitConversationMessageUpsert } from '../services/chat-sync-emitter.js'
 import type { StreamEvent } from '../streams/hub.js'
 
 interface MessageBody {
@@ -130,6 +131,13 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         }
       })()
 
+      emitConversationMessageUpsert(
+        app.db,
+        request.userId,
+        conversation.id,
+        created.message,
+      )
+
       void executeAssistantRun({
         db: app.db,
         hermesClient: app.hermesClient,
@@ -137,6 +145,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         conversationId: conversation.id,
         hermesSessionId: conversation.hermes_session_id,
         userMessageId: created.message.id,
+        userId: request.userId,
         companionUsername: request.username,
         bootstrapPrompt,
         runId: created.runId,
@@ -150,6 +159,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
           hermesClient: app.hermesClient,
           hub: app.streamHub,
           conversationId: conversation.id,
+          userId: request.userId,
           userMessageText: content,
         }).catch((error) => {
           app.log.warn({ err: error, conversationId: conversation.id }, 'title generation failed')
@@ -192,7 +202,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     const messageId = (request.params as { messageId: string }).messageId
 
     try {
-      const edited = applyMessageEdit(app.db, conversation.id, messageId, content)
+      const edited = applyMessageEdit(app.db, request.userId, conversation.id, messageId, content)
 
       void executeAssistantRun({
         db: app.db,
@@ -201,6 +211,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         conversationId: conversation.id,
         hermesSessionId: edited.hermesSessionId,
         userMessageId: edited.message.id,
+        userId: request.userId,
         companionUsername: request.username,
         bootstrapPrompt: conversation.bootstrap_prompt,
         runId: edited.runId,

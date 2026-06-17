@@ -6,6 +6,7 @@ import type { StreamHub } from '../streams/hub.js'
 import { buildHermesMessages } from './prompt-builder.js'
 import type { HermesClient } from './hermes-client.js'
 import { formatToolProcessLine } from './process-labeler.js'
+import { emitConversationMessageUpsert } from './chat-sync-emitter.js'
 
 export interface ExecuteAssistantRunInput {
   db: Database.Database
@@ -18,6 +19,7 @@ export interface ExecuteAssistantRunInput {
   bootstrapPrompt?: string | null
   runId?: string
   rewindMessageIds?: string[]
+  userId: string
 }
 
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
@@ -117,6 +119,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
     const assistantMessageId = persistCompletedRun(
       input.db,
+      input.userId,
       runId,
       input.conversationId,
       assistantText,
@@ -134,6 +137,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
 function persistCompletedRun(
   db: Database.Database,
+  userId: string,
   runId: string,
   conversationId: string,
   assistantText: string,
@@ -146,17 +150,35 @@ function persistCompletedRun(
       content: assistantText,
     })
 
+    let process: { lines: ProcessLine[] } | undefined
     if (processLines.length > 0) {
       insertMessageProcess(db, {
         assistantMessageId,
         conversationId,
         lines: processLines,
       })
+      process = { lines: processLines }
     }
 
     if (!markRunCompleted(db, runId, assistantMessageId)) {
       throw new Error('run_not_running')
     }
+
+    const message = db
+      .prepare(`
+        SELECT id, conversation_id, role, content, created_at
+        FROM messages
+        WHERE conversation_id = ? AND id = ?
+      `)
+      .get(conversationId, assistantMessageId) as {
+      id: string
+      conversation_id: string
+      role: 'user' | 'assistant'
+      content: string
+      created_at: string
+    }
+
+    emitConversationMessageUpsert(db, userId, conversationId, message, process)
 
     return assistantMessageId
   })()

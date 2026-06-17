@@ -40,6 +40,7 @@ describe('executeAssistantRun process stream', () => {
       hermesSessionId: 'sess-1',
       userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
       runId: 'run-1',
+      userId: 'u1',
     })
 
     hermes.pushReasoning('Searching for tools…')
@@ -84,6 +85,7 @@ describe('executeAssistantRun process stream', () => {
       hermesSessionId: 'sess-1',
       userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
       runId: 'run-1',
+      userId: 'u1',
     })
 
     hermes.pushReasoning('Think')

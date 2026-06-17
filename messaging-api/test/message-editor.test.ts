@@ -48,7 +48,7 @@ describe('applyMessageEdit', () => {
 
   it('updates the user message, removes assistant reply, and rotates session', () => {
     const db = seedDb()
-    const result = applyMessageEdit(db, 'c1', 'u1', 'new text')
+    const result = applyMessageEdit(db, 'u1', 'c1', 'u1', 'new text')
 
     expect(result.message).toMatchObject({ id: 'u1', content: 'new text', role: 'user' })
     expect(result.removedAssistantMessageId).toBe('a1')
@@ -73,7 +73,7 @@ describe('applyMessageEdit', () => {
       lines: [{ kind: 'tool', text: 'Running lookup weather' }],
     })
 
-    const result = applyMessageEdit(db, 'c1', 'u1', 'new text')
+    const result = applyMessageEdit(db, 'u1', 'c1', 'u1', 'new text')
     expect(getProcessByAssistantMessageIds(db, ['a1']).size).toBe(0)
 
     const hermes = new FakeHermesClient()
@@ -85,6 +85,7 @@ describe('applyMessageEdit', () => {
       conversationId: 'c1',
       hermesSessionId: result.hermesSessionId,
       userMessageId: 'u1',
+      userId: 'u1',
       runId: result.runId,
     })
 

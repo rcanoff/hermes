@@ -1,9 +1,18 @@
 openapi: 3.1.0
 info:
   title: Hermes Messaging API
-  version: 2.0.0
+  version: 2.1.0
   description: |
     Private API bridging mobile clients to Hermes.
+
+    **v2.1.0 changes:** local-first chat sync feeds for the companion app.
+    `GET /conversations/sync` returns account-scoped conversation deltas;
+    `GET /conversations/{id}/sync` returns per-conversation committed-history
+    deltas. Both return ordered mutation events plus opaque `next_sync_marker`
+    and `has_more`. Existing HAL list/history routes and SSE streaming are
+    unchanged — sync is the durable reconciliation layer. See
+    `docs/superpowers/specs/2026-06-17-companion-chat-local-sync-backend-design.md`
+    and `docs/superpowers/plans/2026-06-17-companion-chat-local-sync-backend.md`.
 
     **v2.0.0 changes:** user-scoped health daily summary vault under
     `/data/health/daily-summaries`. `POST` upserts by local calendar day
@@ -78,6 +87,7 @@ servers:
 tags:
   - name: auth
   - name: conversations
+  - name: chat-sync
   - name: messages
   - name: data-location
   - name: data-health
@@ -108,6 +118,7 @@ components:
             - no_active_run
             - edit_not_allowed
             - day_finalized
+            - sync_marker_invalid
 
     InviteMetadataValid:
       type: object
@@ -433,6 +444,239 @@ components:
             $ref: '#/components/schemas/Conversation'
         _links:
           $ref: '#/components/schemas/HalLinks'
+
+    ConversationSyncEntry:
+      type: object
+      description: |
+        List-visible conversation row for sync. Includes latest committed message
+        pointers so the client can update conversation list rows without a follow-up
+        `GET /conversations/{id}`.
+      required:
+        - id
+        - hermes_session_id
+        - title
+        - created_at
+        - updated_at
+        - latest_message_id
+        - latest_message_created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        hermes_session_id:
+          type: string
+          format: uuid
+        title:
+          type: ["string", "null"]
+        created_at:
+          type: string
+          description: SQLite datetime string (e.g. `2026-06-13 12:00:00`)
+        updated_at:
+          type: string
+          description: SQLite datetime string
+        latest_message_id:
+          type: ["string", "null"]
+          format: uuid
+          description: Null when the conversation has no committed messages yet
+        latest_message_created_at:
+          type: ["string", "null"]
+          description: SQLite datetime of `latest_message_id`; null when no messages
+
+    ConversationSyncEventConversationUpsert:
+      type: object
+      required: [event_id, type, occurred_at, conversation]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: Opaque monotonic sync marker for this event
+        type:
+          type: string
+          const: conversation_upsert
+        occurred_at:
+          type: string
+          format: date-time
+          description: UTC ISO-8601 timestamp for the mutation
+        conversation:
+          $ref: '#/components/schemas/ConversationSyncEntry'
+
+    ConversationSyncEventConversationDeleted:
+      type: object
+      required: [event_id, type, occurred_at, conversation_id]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          const: conversation_deleted
+        occurred_at:
+          type: string
+          format: date-time
+        conversation_id:
+          type: string
+          format: uuid
+
+    ConversationSyncEvent:
+      oneOf:
+        - $ref: '#/components/schemas/ConversationSyncEventConversationUpsert'
+        - $ref: '#/components/schemas/ConversationSyncEventConversationDeleted'
+
+    SyncMarkerOrigin:
+      type: string
+      const: '00000000-0000-4000-8000-000000000000'
+      description: |
+        Reserved feed-tip marker returned when a scope has no retained events yet.
+        Valid as `since` (returns an empty page). Recognized by the server; not an
+        error. Distinct from `sync_marker_invalid`.
+
+    ConversationSyncResponse:
+      type: object
+      required: [events, next_sync_marker, has_more]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationSyncEvent'
+          description: Ordered oldest to newest within this page
+        next_sync_marker:
+          type: string
+          format: uuid
+          description: |
+            **Always present on `200`.** Current feed tip for this account scope.
+            When the page includes events, this is the `event_id` of the last event
+            in the page (even when `has_more` is true — paginate with `since` set to
+            this value before advancing the stored client marker). When the page is
+            empty, this is still the tip: the latest retained account `event_id`, or
+            `00000000-0000-4000-8000-000000000000` when no account events exist yet.
+            Persist after applying all pages.
+        has_more:
+          type: boolean
+          description: |
+            When true, call again with `since` set to `next_sync_marker` from this
+            response to fetch the next page before advancing the stored client marker.
+
+    ConversationMessageSyncSnapshot:
+      type: object
+      required: [id, hermes_session_id, title, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        hermes_session_id:
+          type: string
+          format: uuid
+        title:
+          type: ["string", "null"]
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    ConversationMessageSyncEventMessageUpsert:
+      type: object
+      required: [event_id, type, occurred_at, message]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          const: message_upsert
+        occurred_at:
+          type: string
+          format: date-time
+        message:
+          $ref: '#/components/schemas/Message'
+
+    ConversationMessageSyncEventMessageDeleted:
+      type: object
+      required: [event_id, type, occurred_at, message_id]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          const: message_deleted
+        occurred_at:
+          type: string
+          format: date-time
+        message_id:
+          type: string
+          format: uuid
+
+    ConversationMessageSyncEventMessagesRewound:
+      type: object
+      required: [event_id, type, occurred_at, removed_message_ids]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          const: messages_rewound
+        occurred_at:
+          type: string
+          format: date-time
+        removed_message_ids:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+
+    ConversationMessageSyncEventConversationDeleted:
+      type: object
+      required: [event_id, type, occurred_at, conversation_id]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          const: conversation_deleted
+        occurred_at:
+          type: string
+          format: date-time
+        conversation_id:
+          type: string
+          format: uuid
+
+    ConversationMessageSyncEvent:
+      oneOf:
+        - $ref: '#/components/schemas/ConversationMessageSyncEventMessageUpsert'
+        - $ref: '#/components/schemas/ConversationMessageSyncEventMessageDeleted'
+        - $ref: '#/components/schemas/ConversationMessageSyncEventMessagesRewound'
+        - $ref: '#/components/schemas/ConversationMessageSyncEventConversationDeleted'
+
+    ConversationMessageSyncResponse:
+      type: object
+      required: [conversation, events, next_sync_marker, has_more]
+      properties:
+        conversation:
+          $ref: '#/components/schemas/ConversationMessageSyncSnapshot'
+          description: |
+            Authoritative conversation metadata after applying `events` in order.
+            Also reflects title-only changes when `events` is empty (client applies
+            this snapshot to local conversation rows).
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationMessageSyncEvent'
+          description: Ordered oldest to newest within this page
+        next_sync_marker:
+          type: string
+          format: uuid
+          description: |
+            **Always present on `200`.** Current feed tip for this conversation
+            scope. When the page includes events, this is the `event_id` of the last
+            event in the page. When the page is empty, this is still the tip: the
+            latest retained conversation `event_id`, or
+            `00000000-0000-4000-8000-000000000000` when no conversation events exist
+            yet. Persist after applying all pages.
+        has_more:
+          type: boolean
 
     MessageListResponse:
       type: object
@@ -885,6 +1129,87 @@ paths:
               schema:
                 $ref: '#/components/schemas/Conversation'
 
+  /conversations/sync:
+    get:
+      tags: [chat-sync]
+      summary: Sync conversation list deltas
+      description: |
+        Returns account-scoped conversation mutations for the authenticated user
+        after an optional sync marker.
+
+        **Initial hydration (choose one):**
+        - **Sync-first (recommended for local-first):** call this route with `since`
+          omitted to replay retained account events (including backfill
+          `conversation_upsert` rows) and store `next_sync_marker` (always returned,
+          even when `events` is empty).
+        - **HAL-first (optional):** seed with `GET /conversations`, then call this
+          route to establish or advance the list cursor.
+
+        **Pagination:** when `has_more` is true, repeat the request with `since`
+        set to `next_sync_marker` from the prior response. Only persist the client
+        marker after all pages are applied.
+
+        **Markers:** `event_id` values are opaque UUIDs from a durable append-only
+        mutation log. `next_sync_marker` is **always** returned on `200`, including
+        empty pages (feed tip or origin sentinel
+        `00000000-0000-4000-8000-000000000000`). Repeating the same `since` is safe
+        and idempotent.
+
+        **Retention (v2.1.0):** account-scoped events are append-only and not
+        compacted. A `since` value that does not exist for this user returns
+        `400` with `error: sync_marker_invalid`.
+
+        **Missing marker recovery:** when the client has a cached conversation list
+        but no stored account marker, call this route with `since` omitted. The
+        response replays retained account events (including one-time backfill
+        `conversation_upsert` rows) so the client can self-heal idempotently, then
+        store `next_sync_marker`.
+
+        **Invalid marker recovery:** on `sync_marker_invalid`, clear the stored
+        account marker and repeat with `since` omitted (or HAL-reseed the list first
+        if local state may be corrupt).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: since
+          in: query
+          description: |
+            Opaque sync marker from a prior `next_sync_marker`. Omit to read from
+            the oldest retained account-scoped event (recovery path when no marker
+            is stored).
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        '200':
+          description: Conversation sync page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationSyncResponse'
+        '400':
+          description: Invalid query or unknown sync marker (`sync_marker_invalid`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                sync_marker_invalid:
+                  value: { error: sync_marker_invalid }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /conversations/{id}:
     parameters:
       - name: id
@@ -966,6 +1291,104 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: Active assistant run in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /conversations/{id}/sync:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags: [chat-sync]
+      summary: Sync committed history deltas for one conversation
+      description: |
+        Returns conversation-scoped committed-history mutations after an optional
+        sync marker, plus an authoritative `conversation` metadata snapshot.
+
+        **Initial hydration:** use existing `GET /conversations/{id}/messages` (HAL)
+        to seed local committed messages, then call this route to establish or
+        advance the per-conversation cursor. Omitting `since` does **not** replay
+        full message history — only events recorded after deployment or after the
+        client's HAL hydration.
+
+        **Rewinds:** Hermes edit/rerun emits `messages_rewound` with explicit
+        `removed_message_ids`, followed by replacement `message_upsert` events.
+
+        **Deleted conversation:** returns `200` with a terminal `conversation_deleted`
+        event (not `410 Gone`) so the client can reconcile deletions in the same
+        apply pass as other mutations.
+
+        **Title-only changes:** may produce an empty `events` array while `conversation`
+        still carries the updated title — apply the snapshot to local metadata.
+
+        **Retention (v2.1.0):** conversation-scoped events are append-only and not
+        compacted. A `since` value that does not exist for this conversation returns
+        `400` with `error: sync_marker_invalid`.
+
+        **Missing marker recovery (required client flow):** when the client has cached
+        committed messages but no per-conversation marker, it **must** HAL-rehydrate
+        the thread (`GET /conversations/{id}/messages`) before calling this route.
+        Then call with `since` omitted to receive an empty or small delta page plus
+        `next_sync_marker` at the current tip. Omitting `since` does **not** replay
+        full message history.
+
+        **Invalid marker recovery:** on `sync_marker_invalid`, clear the stored
+        per-conversation marker, HAL-rehydrate the thread, then call again with
+        `since` omitted to re-establish the tip marker.
+
+        **Markers:** `next_sync_marker` is **always** returned on `200`, including
+        empty pages (feed tip or origin sentinel
+        `00000000-0000-4000-8000-000000000000`).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: since
+          in: query
+          description: |
+            Opaque per-conversation sync marker from a prior `next_sync_marker`.
+            Omit (or use the origin sentinel) only after HAL thread hydration
+            (recovery) or on first cursor establishment.
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 200
+      responses:
+        '200':
+          description: Conversation message sync page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationMessageSyncResponse'
+        '400':
+          description: Invalid query or unknown sync marker (`sync_marker_invalid`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                sync_marker_invalid:
+                  value: { error: sync_marker_invalid }
+        '404':
+          description: Conversation not found, not owned, and no retained sync tail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
           content:
             application/json:
               schema:

@@ -378,6 +378,25 @@ Restart Hermes after changing `show_reasoning`. Tool start/completion lines work
 
 **Note:** Hermes may emit no SSE frames while a long-running tool executes (only `running` and `completed` tool-progress events). The companion app should render those immediately; the final reply still streams via `token` events once Hermes resumes.
 
+### Chat local-first sync (v2.1.0)
+
+The companion app can open chat from a local store and reconcile server mutations incrementally.
+
+**Sync feeds (additive — HAL list/history and SSE unchanged):**
+
+- `GET /conversations/sync` — account-scoped conversation deltas (`conversation_upsert`, `conversation_deleted`)
+- `GET /conversations/{id}/sync` — per-conversation committed-history deltas (`message_upsert`, `messages_rewound`, `conversation_deleted`) plus an authoritative `conversation` metadata snapshot
+
+Both return ordered `events`, `has_more`, and **always** return `next_sync_marker` on `200` (including empty pages). Markers are opaque UUID `event_id` values from an append-only `chat_sync_events` log. Origin sentinel when no events exist yet: `00000000-0000-4000-8000-000000000000`. Unknown `since` → `400 { error: sync_marker_invalid }`.
+
+**Client recovery:**
+
+- Missing account marker → call account sync with `since` omitted (self-heals from retained events).
+- Missing thread marker → HAL-rehydrate `GET /conversations/{id}/messages`, then thread sync with `since` omitted.
+- Invalid marker → clear stored marker and repeat the missing-marker path for that scope.
+
+No MCP tools for sync in v2.1.0. Design: [`docs/superpowers/specs/2026-06-17-companion-chat-local-sync-backend-design.md`](docs/superpowers/specs/2026-06-17-companion-chat-local-sync-backend-design.md). Full contract: [`docs/superpowers/specs/messaging-api.openapi.yaml`](docs/superpowers/specs/messaging-api.openapi.yaml).
+
 ### User location vault
 
 The companion app writes location events to a user-scoped vault. Hermes reads location only through the companion MCP skill — not Home Assistant and not conversation routes.

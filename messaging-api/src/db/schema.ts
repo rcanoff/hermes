@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3'
+import { backfillAccountSyncEvents } from './repos/chat-sync-events.js'
 
 export function initSchema(db: Database.Database): void {
   db.pragma('foreign_keys = ON')
@@ -135,6 +136,7 @@ export function initSchema(db: Database.Database): void {
   ensureLegacyUserColumns(db)
   ensureLegacyConversationColumns(db)
   ensureLegacyHealthDailySummaries(db)
+  ensureChatSyncEvents(db)
 }
 
 function ensureLegacyConversationColumns(db: Database.Database): void {
@@ -155,6 +157,31 @@ function ensureLegacyConversationColumns(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS conversations_user_updated_idx
       ON conversations (user_id, updated_at DESC, id DESC)
   `)
+}
+
+function ensureChatSyncEvents(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS chat_sync_events (
+      id TEXT PRIMARY KEY,
+      scope TEXT NOT NULL CHECK (scope IN ('account', 'conversation')),
+      user_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS chat_sync_events_account_idx
+      ON chat_sync_events (user_id, occurred_at ASC, id ASC)
+      WHERE scope = 'account';
+
+    CREATE INDEX IF NOT EXISTS chat_sync_events_conversation_idx
+      ON chat_sync_events (conversation_id, occurred_at ASC, id ASC)
+      WHERE scope = 'conversation';
+  `)
+
+  backfillAccountSyncEvents(db)
 }
 
 function ensureLegacyHealthDailySummaries(db: Database.Database): void {

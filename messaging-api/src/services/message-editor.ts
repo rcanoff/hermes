@@ -7,6 +7,10 @@ import {
   updateMessageContent,
 } from '../db/repos/messages.js'
 import { createRun, deleteRunsForUserMessage } from '../db/repos/runs.js'
+import {
+  emitConversationMessageUpsert,
+  emitConversationMessagesRewound,
+} from './chat-sync-emitter.js'
 
 export type MessageEditErrorCode = 'edit_not_allowed' | 'not_found'
 
@@ -52,6 +56,7 @@ export function findEditablePair(
 
 export function applyMessageEdit(
   db: Database.Database,
+  userId: string,
   conversationId: string,
   messageId: string,
   content: string,
@@ -70,6 +75,9 @@ export function applyMessageEdit(
 
     const hermesSessionId = rotateHermesSessionId(db, conversationId)
     const runId = createRun(db, conversationId, messageId)
+
+    emitConversationMessagesRewound(db, userId, conversationId, [assistantMessage.id])
+    emitConversationMessageUpsert(db, userId, conversationId, message)
 
     return {
       message,
