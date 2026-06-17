@@ -1,9 +1,17 @@
 openapi: 3.1.0
 info:
   title: Hermes Messaging API
-  version: 2.1.0
+  version: 2.2.0
   description: |
     Private API bridging mobile clients to Hermes.
+
+    **v2.2.0 changes:** session-scoped SSE at `GET /events/stream` for companion
+    live UX. One persistent stream per auth session (JWT `jti` claim); events carry
+    `conversationId` and `runId` for client routing. New SSE lanes: `tooling`,
+    `reply`, `title` (plus structural `rewind`, `error`). `GET
+    /conversations/{id}/stream` is deprecated — connect at login via the session
+    stream instead. See
+    `docs/superpowers/specs/2026-06-18-companion-session-stream-design.md`.
 
     **v2.1.0 changes:** local-first chat sync feeds for the companion app.
     `GET /conversations/sync` returns account-scoped conversation deltas;
@@ -78,6 +86,10 @@ info:
     `GET /invite/{token}`, `GET /auth/invite/{token}`, `POST /auth/activate`,
     `POST /auth/reset-password`. All other routes require `Authorization: Bearer <jwt>`.
 
+    JWTs issued by `POST /auth/login`, `POST /auth/activate`, and
+    `POST /auth/reset-password` include a `jti` claim (session UUID) that binds
+    `GET /events/stream` to the originating device session.
+
 servers:
   - url: http://localhost:3000
     description: Local development
@@ -88,6 +100,7 @@ tags:
   - name: auth
   - name: conversations
   - name: chat-sync
+  - name: events
   - name: messages
   - name: data-location
   - name: data-health
@@ -864,6 +877,128 @@ components:
             format: uuid
           description: Message IDs removed from the transcript (e.g. superseded assistant reply)
 
+    SseToolingEventLine:
+      type: object
+      required: [conversationId, runId, kind, text]
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        runId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [reasoning, tool]
+        text:
+          type: string
+          description: Committed process line, tool start label, or `Done:` tool completion
+        draft:
+          type: boolean
+          const: true
+          description: Reasoning delta; append to in-flight reasoning draft (not a committed line)
+
+    SseToolingEventPhaseComplete:
+      type: object
+      required: [conversationId, runId, phase]
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        runId:
+          type: string
+          format: uuid
+        phase:
+          type: string
+          const: complete
+          description: Process phase ended; reply tokens follow
+
+    SseToolingEvent:
+      oneOf:
+        - $ref: '#/components/schemas/SseToolingEventLine'
+        - $ref: '#/components/schemas/SseToolingEventPhaseComplete'
+
+    SseReplyEventToken:
+      type: object
+      required: [conversationId, runId, text]
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        runId:
+          type: string
+          format: uuid
+        text:
+          type: string
+          description: Assistant reply text chunk
+
+    SseReplyEventDone:
+      type: object
+      required: [conversationId, runId, phase, messageId]
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        runId:
+          type: string
+          format: uuid
+        phase:
+          type: string
+          const: done
+        messageId:
+          type: string
+          format: uuid
+          description: Persisted assistant message id
+
+    SseReplyEvent:
+      oneOf:
+        - $ref: '#/components/schemas/SseReplyEventToken'
+        - $ref: '#/components/schemas/SseReplyEventDone'
+
+    SseSessionTitleEvent:
+      type: object
+      required: [conversationId, title]
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        title:
+          type: string
+          maxLength: 80
+          description: Auto-generated title saved to the conversation
+
+    SseSessionRewindEvent:
+      type: object
+      required: [conversationId, runId, removedMessageIds]
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        runId:
+          type: string
+          format: uuid
+        removedMessageIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Message IDs removed from the transcript before replacement run
+
+    SseSessionErrorEvent:
+      type: object
+      required: [conversationId, runId, code]
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        runId:
+          type: string
+          format: uuid
+        code:
+          type: string
+          enum: [hermes_stream_failed, run_persist_failed]
+          description: Run failure; does not close the SSE connection
+
 paths:
   /health:
     get:
@@ -1056,6 +1191,63 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+
+  /events/stream:
+    get:
+      tags: [events]
+      summary: Session-scoped SSE stream for live assistant runs
+      description: |
+        Server-Sent Events for the authenticated auth session. One persistent
+        connection per login (JWT `jti` session id); subscribe at login,
+        reconnect on drop, close at logout. Live events route only to the session
+        that started the run (`POST /conversations/{id}/messages` or message edit
+        `PATCH`). Cross-device reconciliation uses sync feeds and HAL history.
+
+        Connection stays open across runs; individual run completion or `error`
+        does **not** close the stream. Server sends keepalive comment `: ping`
+        at least every 30 seconds.
+
+        A second connection from the same session may replace the first.
+
+        **Three UX lanes:** `tooling` (process block), `reply` (assistant answer),
+        `title` (auto-generated conversation title). Structural events: `rewind`
+        (message edit rerun), `error` (run failure).
+
+        **SSE events:**
+
+        | event | data schema | when |
+        |-------|-------------|------|
+        | `tooling` | `SseToolingEvent` | Process lines, reasoning drafts, or `phase: complete` |
+        | `reply` | `SseReplyEvent` | Reply text chunks or `phase: done` with `messageId` |
+        | `title` | `SseSessionTitleEvent` | Auto-generated title saved (first message only) |
+        | `rewind` | `SseSessionRewindEvent` | Messages removed before replacement run (message edit) |
+        | `error` | `SseSessionErrorEvent` | Run failed; stream stays open |
+      security:
+        - bearerAuth: []
+      x-sse-events:
+        tooling:
+          $ref: '#/components/schemas/SseToolingEvent'
+        reply:
+          $ref: '#/components/schemas/SseReplyEvent'
+        title:
+          $ref: '#/components/schemas/SseSessionTitleEvent'
+        rewind:
+          $ref: '#/components/schemas/SseSessionRewindEvent'
+        error:
+          $ref: '#/components/schemas/SseSessionErrorEvent'
+      responses:
+        '200':
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          description: Unauthorized or denied token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /conversations:
     get:
@@ -1582,8 +1774,13 @@ paths:
 
     get:
       tags: [messages]
+      deprecated: true
       summary: SSE stream for active assistant run
       description: |
+        **Deprecated:** use `GET /events/stream` instead. Per-conversation streams
+        attach after send and miss early tooling events; the session stream
+        eliminates that race.
+
         Server-Sent Events for the current active run. Attaches only to the
         in-flight run; no replay. Stream ends on `done` or `error`.
 
