@@ -1,5 +1,8 @@
 import type { HermesPromptMessage } from './prompt-builder.js'
 
+/** Stable Hermes gateway session key — identifies messaging-api traffic as Companion App. */
+export const COMPANION_APP_SESSION_KEY = 'companion-app'
+
 export interface StreamChatInput {
   hermesSessionId: string
   messages: HermesPromptMessage[]
@@ -11,7 +14,7 @@ export interface CompleteChatInput {
 }
 
 export interface HermesStreamEvent {
-  type: 'reasoning' | 'tool' | 'answer_token' | 'done'
+  type: 'reasoning' | 'tool' | 'tool_complete' | 'answer_token' | 'done'
   text?: string
   name?: string
   arguments?: string
@@ -60,25 +63,34 @@ interface HermesToolProgressPayload {
 }
 
 export class HermesToolProgressTracker {
-  private readonly emitted = new Set<string>()
+  private readonly running = new Map<string, { tool: string; label?: string }>()
 
   ingest(payload: HermesToolProgressPayload): HermesStreamEvent[] {
-    if (payload.status !== 'running' || !payload.tool || !payload.toolCallId) {
+    if (!payload.tool || !payload.toolCallId) {
       return []
     }
 
-    if (this.emitted.has(payload.toolCallId)) {
-      return []
+    if (payload.status === 'running') {
+      if (this.running.has(payload.toolCallId)) {
+        return []
+      }
+
+      const label = typeof payload.label === 'string' ? payload.label : undefined
+      this.running.set(payload.toolCallId, { tool: payload.tool, label })
+      return [{ type: 'tool', name: payload.tool, label }]
     }
 
-    this.emitted.add(payload.toolCallId)
-    return [
-      {
-        type: 'tool',
-        name: payload.tool,
-        label: typeof payload.label === 'string' ? payload.label : undefined,
-      },
-    ]
+    if (payload.status === 'completed') {
+      const started = this.running.get(payload.toolCallId)
+      this.running.delete(payload.toolCallId)
+      if (!started) {
+        return []
+      }
+
+      return [{ type: 'tool_complete', name: started.tool, label: started.label }]
+    }
+
+    return []
   }
 }
 
@@ -139,6 +151,7 @@ export class OpenAiHermesClient implements HermesClient {
     const headers: Record<string, string> = {
       'content-type': 'application/json',
       'x-hermes-session-id': input.hermesSessionId,
+      'x-hermes-session-key': COMPANION_APP_SESSION_KEY,
     }
 
     if (this.apiKey) {
@@ -169,6 +182,7 @@ export class OpenAiHermesClient implements HermesClient {
       accept: 'text/event-stream',
       'content-type': 'application/json',
       'x-hermes-session-id': input.hermesSessionId,
+      'x-hermes-session-key': COMPANION_APP_SESSION_KEY,
     }
 
     if (this.apiKey) {

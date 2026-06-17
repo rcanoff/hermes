@@ -23,6 +23,8 @@ const ssePlugin: FastifyPluginAsync = async (app) => {
   app.decorateReply('sseSend', function sseSend(this: FastifyReply, event: string, data: unknown) {
     this.raw.write(`event: ${event}\n`)
     this.raw.write(`data: ${JSON.stringify(data)}\n\n`)
+    const flushable = this.raw as { flush?: () => void }
+    flushable.flush?.()
   })
 
   app.decorateReply('sseEnd', function sseEnd(this: FastifyReply) {

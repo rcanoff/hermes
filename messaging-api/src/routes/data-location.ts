@@ -2,12 +2,12 @@ import type { FastifyPluginAsync } from 'fastify'
 import {
   getLatestLocationEvent,
   insertLocationEvent,
-  listLocationEvents,
+  listLocationEventsPage,
   type LocationEventRow,
 } from '../db/repos/location-events.js'
+import { buildHalLinks, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
 
 const VALID_TRIGGERS = new Set(['manual', 'significant_change', 'interval'])
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 interface LocationEventBody {
   lat: number
@@ -54,18 +54,38 @@ const dataLocationRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.get('/data/location/events', { preHandler: app.authenticate }, async (request, reply) => {
-    const query = request.query as { limit?: string; before?: string }
-    const limit = parseLimit(query.limit)
+    const query = request.query as { limit?: string; before?: string; after?: string }
+    const limit = parsePageLimit(query.limit)
     if (limit === null) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    if (query.before !== undefined && !UUID_PATTERN.test(query.before)) {
+    const anchors = parseListAnchors(query)
+    if (anchors === null) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    const events = listLocationEvents(app.db, request.userId, limit, query.before)
-    return { events: events.map(serializeLocationEvent) }
+    const page = listLocationEventsPage(app.db, request.userId, limit, anchors)
+    if (!page) {
+      return reply.code(400).send({ error: 'invalid_request' })
+    }
+
+    const firstId = page.events[0]?.id
+    const lastId = page.events[page.events.length - 1]?.id
+
+    return {
+      events: page.events.map(serializeLocationEvent),
+      _links: buildHalLinks({
+        basePath: '/data/location/events',
+        limit,
+        before: anchors.before,
+        after: anchors.after,
+        hasOlder: page.hasOlder,
+        hasNewer: page.hasNewer,
+        firstId,
+        lastId,
+      }),
+    }
   })
 }
 
@@ -86,19 +106,6 @@ function serializeLocationEvent(row: LocationEventRow) {
     address_status: row.address_status,
     created_at: row.created_at,
   }
-}
-
-function parseLimit(value: string | undefined): number | null {
-  if (value === undefined) {
-    return 20
-  }
-
-  const parsed = Number(value)
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
-    return null
-  }
-
-  return parsed
 }
 
 function isLocationEventBody(value: unknown): value is LocationEventBody {

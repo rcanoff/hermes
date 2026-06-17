@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
+import type { ListPageAnchors } from './conversations.js'
 
 export interface LocationEventInput {
   userId: string
@@ -25,6 +26,12 @@ export interface LocationEventRow {
   address_source: string | null
   address_status: string
   created_at: string
+}
+
+export interface LocationEventPage {
+  events: LocationEventRow[]
+  hasOlder: boolean
+  hasNewer: boolean
 }
 
 export function insertLocationEvent(db: Database.Database, input: LocationEventInput): LocationEventRow {
@@ -68,16 +75,19 @@ export function getLatestLocationEvent(db: Database.Database, userId: string): L
     .get(userId) as LocationEventRow | undefined
 }
 
-export function listLocationEvents(
+export function listLocationEventsPage(
   db: Database.Database,
   userId: string,
   limit: number,
-  beforeId?: string,
-): LocationEventRow[] {
-  if (beforeId) {
-    const cursor = getLocationEventById(db, beforeId)
-    if (!cursor) return []
-    return db
+  anchors: ListPageAnchors = {},
+): LocationEventPage | null {
+  if (anchors.before) {
+    const cursor = getLocationEventById(db, anchors.before)
+    if (!cursor || cursor.user_id !== userId) {
+      return null
+    }
+
+    const events = db
       .prepare(`
         SELECT * FROM location_events
         WHERE user_id = ? AND timestamp < ?
@@ -85,9 +95,30 @@ export function listLocationEvents(
         LIMIT ?
       `)
       .all(userId, cursor.timestamp, limit) as LocationEventRow[]
+
+    return buildLocationEventPage(db, userId, events)
   }
 
-  return db
+  if (anchors.after) {
+    const cursor = getLocationEventById(db, anchors.after)
+    if (!cursor || cursor.user_id !== userId) {
+      return null
+    }
+
+    const events = db
+      .prepare(`
+        SELECT * FROM location_events
+        WHERE user_id = ? AND timestamp > ?
+        ORDER BY timestamp ASC
+        LIMIT ?
+      `)
+      .all(userId, cursor.timestamp, limit) as LocationEventRow[]
+
+    events.reverse()
+    return buildLocationEventPage(db, userId, events)
+  }
+
+  const events = db
     .prepare(`
       SELECT * FROM location_events
       WHERE user_id = ?
@@ -95,6 +126,8 @@ export function listLocationEvents(
       LIMIT ?
     `)
     .all(userId, limit) as LocationEventRow[]
+
+  return buildLocationEventPage(db, userId, events)
 }
 
 export function updateLocationEventAddress(
@@ -109,4 +142,45 @@ export function updateLocationEventAddress(
     SET address = ?, address_source = ?, address_status = ?
     WHERE id = ?
   `).run(address, addressSource, addressStatus, id)
+}
+
+function buildLocationEventPage(
+  db: Database.Database,
+  userId: string,
+  events: LocationEventRow[],
+): LocationEventPage {
+  if (events.length === 0) {
+    return {
+      events,
+      hasOlder: false,
+      hasNewer: false,
+    }
+  }
+
+  const first = events[0]!
+  const last = events[events.length - 1]!
+
+  const hasNewer = db
+    .prepare(`
+      SELECT 1
+      FROM location_events
+      WHERE user_id = ? AND timestamp > ?
+      LIMIT 1
+    `)
+    .get(userId, first.timestamp) as { 1: number } | undefined
+
+  const hasOlder = db
+    .prepare(`
+      SELECT 1
+      FROM location_events
+      WHERE user_id = ? AND timestamp < ?
+      LIMIT 1
+    `)
+    .get(userId, last.timestamp) as { 1: number } | undefined
+
+  return {
+    events,
+    hasOlder: hasOlder !== undefined,
+    hasNewer: hasNewer !== undefined,
+  }
 }

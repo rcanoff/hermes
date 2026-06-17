@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
-import { touchConversationUpdatedAt } from './conversations.js'
+import { touchConversationUpdatedAt, type ListPageAnchors } from './conversations.js'
 
 export interface InsertMessageInput {
   conversationId: string
@@ -14,6 +14,16 @@ export interface MessageRow {
   role: 'user' | 'assistant'
   content: string
   created_at: string
+}
+
+export interface MessagePage {
+  messages: MessageRow[]
+  hasOlder: boolean
+  hasNewer: boolean
+}
+
+interface MessageCursorRow extends MessageRow {
+  rowid: number
 }
 
 export function insertMessage(db: Database.Database, input: InsertMessageInput): string {
@@ -35,6 +45,73 @@ export function listMessages(db: Database.Database, conversationId: string): Mes
       ORDER BY created_at ASC, rowid ASC
     `)
     .all(conversationId) as MessageRow[]
+}
+
+export function listMessagesPage(
+  db: Database.Database,
+  conversationId: string,
+  limit: number,
+  anchors: ListPageAnchors = {},
+): MessagePage | null {
+  if (anchors.before) {
+    const cursor = getMessageCursor(db, conversationId, anchors.before)
+    if (!cursor) {
+      return null
+    }
+
+    const messages = db
+      .prepare(`
+        SELECT id, conversation_id, role, content, created_at
+        FROM messages
+        WHERE conversation_id = ?
+          AND (
+            created_at < ?
+            OR (created_at = ? AND rowid < ?)
+          )
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT ?
+      `)
+      .all(conversationId, cursor.created_at, cursor.created_at, cursor.rowid, limit) as MessageRow[]
+
+    messages.reverse()
+    return buildMessagePage(db, conversationId, messages)
+  }
+
+  if (anchors.after) {
+    const cursor = getMessageCursor(db, conversationId, anchors.after)
+    if (!cursor) {
+      return null
+    }
+
+    const messages = db
+      .prepare(`
+        SELECT id, conversation_id, role, content, created_at
+        FROM messages
+        WHERE conversation_id = ?
+          AND (
+            created_at > ?
+            OR (created_at = ? AND rowid > ?)
+          )
+        ORDER BY created_at ASC, rowid ASC
+        LIMIT ?
+      `)
+      .all(conversationId, cursor.created_at, cursor.created_at, cursor.rowid, limit) as MessageRow[]
+
+    return buildMessagePage(db, conversationId, messages)
+  }
+
+  const messages = db
+    .prepare(`
+      SELECT id, conversation_id, role, content, created_at
+      FROM messages
+      WHERE conversation_id = ?
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT ?
+    `)
+    .all(conversationId, limit) as MessageRow[]
+
+  messages.reverse()
+  return buildMessagePage(db, conversationId, messages)
 }
 
 export function getMessage(
@@ -72,4 +149,67 @@ export function deleteMessage(db: Database.Database, conversationId: string, mes
     DELETE FROM messages
     WHERE conversation_id = ? AND id = ?
   `).run(conversationId, messageId)
+}
+
+function getMessageCursor(
+  db: Database.Database,
+  conversationId: string,
+  messageId: string,
+): MessageCursorRow | undefined {
+  return db
+    .prepare(`
+      SELECT rowid, id, conversation_id, role, content, created_at
+      FROM messages
+      WHERE conversation_id = ? AND id = ?
+    `)
+    .get(conversationId, messageId) as MessageCursorRow | undefined
+}
+
+function buildMessagePage(
+  db: Database.Database,
+  conversationId: string,
+  messages: MessageRow[],
+): MessagePage {
+  if (messages.length === 0) {
+    return {
+      messages,
+      hasOlder: false,
+      hasNewer: false,
+    }
+  }
+
+  const first = getMessageCursor(db, conversationId, messages[0]!.id)!
+  const last = getMessageCursor(db, conversationId, messages[messages.length - 1]!.id)!
+
+  const hasOlder = db
+    .prepare(`
+      SELECT 1
+      FROM messages
+      WHERE conversation_id = ?
+        AND (
+          created_at < ?
+          OR (created_at = ? AND rowid < ?)
+        )
+      LIMIT 1
+    `)
+    .get(conversationId, first.created_at, first.created_at, first.rowid) as { 1: number } | undefined
+
+  const hasNewer = db
+    .prepare(`
+      SELECT 1
+      FROM messages
+      WHERE conversation_id = ?
+        AND (
+          created_at > ?
+          OR (created_at = ? AND rowid > ?)
+        )
+      LIMIT 1
+    `)
+    .get(conversationId, last.created_at, last.created_at, last.rowid) as { 1: number } | undefined
+
+  return {
+    messages,
+    hasOlder: hasOlder !== undefined,
+    hasNewer: hasNewer !== undefined,
+  }
 }

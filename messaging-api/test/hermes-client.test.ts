@@ -62,7 +62,7 @@ describe('parseHermesSsePayload', () => {
     ])
   })
 
-  it('ignores duplicate hermes.tool.progress completed frames', () => {
+  it('emits tool_complete after hermes.tool.progress completed frames', () => {
     const tracker = new HermesToolProgressTracker()
     const running = parseHermesSsePayload(
       'event: hermes.tool.progress\ndata: {"tool":"skill_view","label":"demo","toolCallId":"call_1","status":"running"}\n\n',
@@ -75,7 +75,7 @@ describe('parseHermesSsePayload', () => {
       tracker,
     )
 
-    expect(running).toHaveLength(1)
-    expect(completed).toEqual([])
+    expect(running).toEqual([{ type: 'tool', name: 'skill_view', label: 'demo' }])
+    expect(completed).toEqual([{ type: 'tool_complete', name: 'skill_view', label: 'demo' }])
   })
 })

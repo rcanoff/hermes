@@ -193,17 +193,25 @@ describe('data location routes', () => {
         expect.objectContaining({ id: createdIds[2], timestamp: timestamps[2] }),
         expect.objectContaining({ id: createdIds[1], timestamp: timestamps[1] }),
       ],
+      _links: {
+        self: { href: '/data/location/events?limit=2' },
+        next: { href: `/data/location/events?limit=2&before=${createdIds[1]}` },
+      },
     })
 
     const secondPage = await app!.inject({
       method: 'GET',
-      url: `/data/location/events?limit=2&before=${createdIds[1]}`,
+      url: (firstPage.json() as { _links: { next: { href: string } } })._links.next.href,
       headers: { authorization: `Bearer ${operatorToken}` },
     })
 
     expect(secondPage.statusCode).toBe(200)
     expect(secondPage.json()).toEqual({
       events: [expect.objectContaining({ id: createdIds[0], timestamp: timestamps[0] })],
+      _links: {
+        self: { href: `/data/location/events?limit=2&before=${createdIds[1]}` },
+        prev: { href: `/data/location/events?limit=2&after=${createdIds[0]}` },
+      },
     })
   })
 

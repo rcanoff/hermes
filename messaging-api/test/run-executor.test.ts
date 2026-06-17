@@ -51,6 +51,7 @@ describe('executeAssistantRun process stream', () => {
     const assistantMessageId = await runPromise
 
     expect(events.map((e) => e.event)).toEqual([
+      'process_token',
       'process',
       'process',
       'process_complete',
@@ -63,5 +64,50 @@ describe('executeAssistantRun process stream', () => {
       { kind: 'reasoning', text: 'Searching for tools…' },
       { kind: 'tool', text: 'Loading skill: demo' },
     ])
+  })
+
+  it('streams reasoning tokens and emits tool completion lines', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedConversation(db)
+
+    const hermes = new FakeHermesClient()
+    const hub = new StreamHub()
+    const events: StreamEvent[] = []
+    hub.subscribe('c1', (event) => events.push(event))
+
+    const runPromise = executeAssistantRun({
+      db,
+      hermesClient: hermes,
+      hub,
+      conversationId: 'c1',
+      hermesSessionId: 'sess-1',
+      userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
+      runId: 'run-1',
+    })
+
+    hermes.pushReasoning('Think')
+    hermes.pushReasoning('ing')
+    hermes.pushToolCall('execute_code', '{}')
+    hermes.pushToolComplete('execute_code')
+    hermes.pushAnswerToken('Done')
+    hermes.pushDone()
+    hermes.closeWithoutDone()
+
+    await runPromise
+
+    expect(events.map((e) => e.event)).toEqual([
+      'process_token',
+      'process_token',
+      'process',
+      'process',
+      'process',
+      'process_complete',
+      'token',
+      'done',
+    ])
+    expect(events[0]).toEqual({ event: 'process_token', data: { kind: 'reasoning', text: 'Think' } })
+    expect(events[2]).toEqual({ event: 'process', data: { kind: 'reasoning', text: 'Thinking' } })
+    expect(events[4]).toEqual({ event: 'process', data: { kind: 'tool', text: 'Done: Running command' } })
   })
 })

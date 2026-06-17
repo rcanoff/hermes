@@ -56,8 +56,12 @@ describe('conversation routes', () => {
     })
 
     expect(list.statusCode).toBe(200)
-    expect(list.json()).toHaveLength(1)
-    expect(list.json()).toEqual([create.json()])
+    expect(list.json()).toEqual({
+      conversations: [create.json()],
+      _links: {
+        self: { href: '/conversations?limit=20' },
+      },
+    })
   })
 
   it('orders conversations by updated_at so recently messaged threads rise to the top', async () => {
@@ -88,10 +92,9 @@ describe('conversation routes', () => {
       headers: { authorization: `Bearer ${operatorToken}` },
     })
 
-    expect((beforeMessage.json() as Array<{ id: string }>).map((row) => row.id)).toEqual([
-      secondId,
-      firstId,
-    ])
+    expect(
+      (beforeMessage.json() as { conversations: Array<{ id: string }> }).conversations.map((row) => row.id),
+    ).toEqual([secondId, firstId])
 
     insertMessage(app!.db, {
       conversationId: firstId,
@@ -105,10 +108,80 @@ describe('conversation routes', () => {
       headers: { authorization: `Bearer ${operatorToken}` },
     })
 
-    expect((afterMessage.json() as Array<{ id: string }>).map((row) => row.id)).toEqual([
-      firstId,
-      secondId,
-    ])
+    expect(
+      (afterMessage.json() as { conversations: Array<{ id: string }> }).conversations.map((row) => row.id),
+    ).toEqual([firstId, secondId])
+  })
+
+  it('paginates conversations with HAL link navigation', async () => {
+    const ids: string[] = []
+    for (let index = 0; index < 5; index += 1) {
+      const create = await app!.inject({
+        method: 'POST',
+        url: '/conversations',
+        headers: { authorization: `Bearer ${operatorToken}` },
+      })
+      const id = (create.json() as { id: string }).id
+      ids.push(id)
+      app!.db
+        .prepare(`UPDATE conversations SET updated_at = datetime('now', '-${5 - index} hours') WHERE id = ?`)
+        .run(id)
+    }
+
+    const firstPage = await app!.inject({
+      method: 'GET',
+      url: '/conversations?limit=2',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(firstPage.statusCode).toBe(200)
+    expect(firstPage.json()).toEqual({
+      conversations: [
+        expect.objectContaining({ id: ids[4] }),
+        expect.objectContaining({ id: ids[3] }),
+      ],
+      _links: {
+        self: { href: '/conversations?limit=2' },
+        next: { href: `/conversations?limit=2&before=${ids[3]}` },
+      },
+    })
+
+    const secondPage = await app!.inject({
+      method: 'GET',
+      url: (firstPage.json() as { _links: { next: { href: string } } })._links.next.href,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(secondPage.statusCode).toBe(200)
+    expect(secondPage.json()).toEqual({
+      conversations: [
+        expect.objectContaining({ id: ids[2] }),
+        expect.objectContaining({ id: ids[1] }),
+      ],
+      _links: {
+        self: { href: `/conversations?limit=2&before=${ids[3]}` },
+        next: { href: `/conversations?limit=2&before=${ids[1]}` },
+        prev: { href: `/conversations?limit=2&after=${ids[2]}` },
+      },
+    })
+
+    const backToFirst = await app!.inject({
+      method: 'GET',
+      url: (secondPage.json() as { _links: { prev: { href: string } } })._links.prev.href,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(backToFirst.statusCode).toBe(200)
+    expect(backToFirst.json()).toEqual({
+      conversations: [
+        expect.objectContaining({ id: ids[4] }),
+        expect.objectContaining({ id: ids[3] }),
+      ],
+      _links: {
+        self: { href: `/conversations?limit=2&after=${ids[2]}` },
+        next: { href: `/conversations?limit=2&before=${ids[3]}` },
+      },
+    })
   })
 
   it('gets a conversation for its owner and returns 404 for missing or unauthorized access', async () => {
@@ -184,7 +257,12 @@ describe('conversation routes', () => {
       headers: { authorization: `Bearer ${operatorToken}` },
     })
 
-    expect(list.json()).toEqual([patch.json()])
+    expect(list.json()).toEqual({
+      conversations: [patch.json()],
+      _links: {
+        self: { href: '/conversations?limit=20' },
+      },
+    })
   })
 
   it('rejects empty or oversized titles', async () => {
@@ -267,7 +345,12 @@ describe('conversation routes', () => {
       url: '/conversations',
       headers: { authorization: `Bearer ${operatorToken}` },
     })
-    expect(list.json()).toEqual([])
+    expect(list.json()).toEqual({
+      conversations: [],
+      _links: {
+        self: { href: '/conversations?limit=20' },
+      },
+    })
 
     const fetch = await app!.inject({
       method: 'GET',

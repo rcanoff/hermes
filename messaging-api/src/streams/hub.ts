@@ -3,6 +3,7 @@ export type ProcessLineKind = 'reasoning' | 'tool'
 export type StreamEvent =
   | { event: 'rewind'; data: { removedMessageIds: string[] } }
   | { event: 'process'; data: { kind: ProcessLineKind; text: string } }
+  | { event: 'process_token'; data: { kind: 'reasoning'; text: string } }
   | { event: 'process_complete'; data: Record<string, never> }
   | { event: 'token'; data: { text: string } }
   | { event: 'title'; data: { title: string } }

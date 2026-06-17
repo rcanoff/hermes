@@ -27,6 +27,10 @@ export class FakeHermesClient implements HermesClient {
     this.enqueue(streamId, { kind: 'event', event: { type: 'tool', name, arguments: args } })
   }
 
+  pushToolComplete(name: string, label?: string, streamId = 0): void {
+    this.enqueue(streamId, { kind: 'event', event: { type: 'tool_complete', name, label } })
+  }
+
   pushAnswerToken(text: string, streamId = 0): void {
     this.enqueue(streamId, { kind: 'event', event: { type: 'answer_token', text } })
   }
