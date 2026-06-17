@@ -1,7 +1,8 @@
 # Companion Health Vault — iOS Design
 
 **Date:** 2026-06-17  
-**Status:** Draft — pending review  
+**Status:** Approved  
+**Plan:** `docs/superpowers/plans/2026-06-17-companion-health-vault-ios.md`  
 **Parent:** `docs/superpowers/specs/2026-06-17-companion-health-vault-design.md`  
 **Backend spec:** `docs/superpowers/specs/2026-06-17-companion-health-vault-backend-design.md`  
 **OpenAPI:** `docs/superpowers/specs/messaging-api.openapi.yaml` (v2.0.0)  

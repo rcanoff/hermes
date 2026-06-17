@@ -1,7 +1,10 @@
 # Companion Health Vault — Design Overview
 
 **Date:** 2026-06-17  
-**Status:** Draft — pending review  
+**Status:** Approved  
+**Plans:**
+- `docs/superpowers/plans/2026-06-17-companion-health-vault-backend.md` — **this repo**
+- `docs/superpowers/plans/2026-06-17-companion-health-vault-ios.md` — **reference only; `assistant-companion` repo**  
 **OpenAPI:** `docs/superpowers/specs/messaging-api.openapi.yaml` (v2.0.0)  
 **Supersedes:** HealthKit out-of-scope note in `docs/history/specs/2026-06-13-companion-user-data-vault-design.md`
 
@@ -210,9 +213,3 @@ MCP tools and `companion-user-health` skill — see backend spec.
 
 ---
 
-## Approval
-
-After review, implementation plans:
-
-- `docs/superpowers/plans/2026-06-17-companion-health-vault-backend.md`
-- `docs/superpowers/plans/2026-06-17-companion-health-vault-ios.md` (reference only in `hermes`)
