@@ -88,7 +88,8 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    const content = extractMessageText(request.body)
+    const body = request.body
+    const content = extractMessageText(body)
     if (!content) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
@@ -100,8 +101,8 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         const existingMessages = listMessages(app.db, conversation.id)
         const isFirstMessage = existingMessages.length === 0
 
-        if (isFirstMessage && request.body.bootstrap !== undefined) {
-          const bootstrap = validateBootstrap(request.body.bootstrap)
+        if (isFirstMessage && body.bootstrap !== undefined) {
+          const bootstrap = validateBootstrap(body.bootstrap)
           if (!bootstrap) {
             throw new BootstrapValidationError()
           }
