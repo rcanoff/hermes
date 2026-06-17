@@ -5,7 +5,7 @@ import { listMessages } from '../src/db/repos/messages.js'
 import { getActiveRun } from '../src/db/repos/runs.js'
 import { initSchema, reconcileRunningRuns } from '../src/db/schema.js'
 import { OpenAiHermesClient } from '../src/services/hermes-client.js'
-import { buildHermesMessages } from '../src/services/prompt-builder.js'
+import { buildHermesMessages, buildHermesSystemPrompt } from '../src/services/prompt-builder.js'
 import { executeAssistantRun } from '../src/services/run-executor.js'
 import { StreamHub } from '../src/streams/hub.js'
 import { FakeHermesClient } from './helpers/hermes.js'
@@ -30,16 +30,45 @@ describe('startup reconciliation', () => {
 })
 
 describe('prompt builder', () => {
-  it('returns stored transcript history without injected context', () => {
-    const messages = buildHermesMessages([
-      { role: 'user', content: 'Where am I?' },
-      { role: 'assistant', content: 'You are outdoors.' },
-    ])
+  const sampleBootstrap =
+    "Before composing your reply, you MUST call skill_view(name='companion-app') and follow it."
+
+  it('prepends stored bootstrap before transcript history', () => {
+    const messages = buildHermesMessages(
+      [{ role: 'user', content: 'Where am I?' }],
+      { bootstrapPrompt: sampleBootstrap },
+    )
 
     expect(messages).toEqual([
+      { role: 'system', content: sampleBootstrap },
       { role: 'user', content: 'Where am I?' },
-      { role: 'assistant', content: 'You are outdoors.' },
     ])
+  })
+
+  it('omits system message when bootstrap and username are absent', () => {
+    const messages = buildHermesMessages([{ role: 'user', content: 'Hi' }])
+
+    expect(messages).toEqual([{ role: 'user', content: 'Hi' }])
+  })
+
+  it('appends username safety line when bootstrap omits username', () => {
+    const system = buildHermesSystemPrompt({
+      bootstrapPrompt: sampleBootstrap,
+      companionUsername: 'roberto',
+    })
+
+    expect(system).toContain(sampleBootstrap)
+    expect(system).toContain('authenticated companion user for this conversation is "roberto"')
+  })
+
+  it('does not duplicate username when bootstrap already includes it', () => {
+    const bootstrap = 'The authenticated companion user for this conversation is "roberto".'
+    const system = buildHermesSystemPrompt({
+      bootstrapPrompt: bootstrap,
+      companionUsername: 'roberto',
+    })
+
+    expect(system).toBe(bootstrap)
   })
 })
 
