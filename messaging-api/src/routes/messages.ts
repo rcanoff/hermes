@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify'
 import { getConversationForUser } from '../db/repos/conversations.js'
-import { insertMessage, listMessages } from '../db/repos/messages.js'
+import { insertMessage, listMessages, listMessagesPage } from '../db/repos/messages.js'
+import { buildHalLinks, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
 import { getProcessByAssistantMessageIds } from '../db/repos/process.js'
 import { createRun, getActiveRun } from '../db/repos/runs.js'
 import { applyMessageEdit, MessageEditError } from '../services/message-editor.js'
@@ -20,11 +21,28 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ error: 'not_found' })
     }
 
-    const rows = listMessages(app.db, conversation.id)
-    const assistantIds = rows.filter((message) => message.role === 'assistant').map((message) => message.id)
+    const query = request.query as { limit?: string; before?: string; after?: string }
+    const limit = parsePageLimit(query.limit)
+    if (limit === null) {
+      return reply.code(400).send({ error: 'invalid_request' })
+    }
+
+    const anchors = parseListAnchors(query)
+    if (anchors === null) {
+      return reply.code(400).send({ error: 'invalid_request' })
+    }
+
+    const page = listMessagesPage(app.db, conversation.id, limit, anchors)
+    if (!page) {
+      return reply.code(400).send({ error: 'invalid_request' })
+    }
+
+    const assistantIds = page.messages
+      .filter((message) => message.role === 'assistant')
+      .map((message) => message.id)
     const processMap = getProcessByAssistantMessageIds(app.db, assistantIds)
 
-    return rows.map((message) => {
+    const messages = page.messages.map((message) => {
       if (message.role !== 'assistant') {
         return message
       }
@@ -32,6 +50,24 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       const process = processMap.get(message.id)
       return process ? { ...message, process } : message
     })
+
+    const firstId = page.messages[0]?.id
+    const lastId = page.messages[page.messages.length - 1]?.id
+
+    return {
+      messages,
+      _links: buildHalLinks({
+        basePath: `/conversations/${conversation.id}/messages`,
+        limit,
+        before: anchors.before,
+        after: anchors.after,
+        hasOlder: page.hasOlder,
+        hasNewer: page.hasNewer,
+        firstId,
+        lastId,
+        linkStyle: 'chronological-tail',
+      }),
+    }
   })
 
   app.post('/conversations/:id/messages', { preHandler: app.authenticate }, async (request, reply) => {
@@ -78,6 +114,8 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         conversationId: conversation.id,
         hermesSessionId: conversation.hermes_session_id,
         userMessageId: created.message.id,
+        companionUsername: request.username,
+        bootstrapPrompt: conversation.bootstrap_prompt,
         runId: created.runId,
       }).catch((error) => {
         app.log.error({ err: error, conversationId: conversation.id }, 'assistant run failed')
@@ -136,6 +174,8 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         conversationId: conversation.id,
         hermesSessionId: edited.hermesSessionId,
         userMessageId: edited.message.id,
+        companionUsername: request.username,
+        bootstrapPrompt: conversation.bootstrap_prompt,
         runId: edited.runId,
         rewindMessageIds: [edited.removedAssistantMessageId],
       }).catch((error) => {

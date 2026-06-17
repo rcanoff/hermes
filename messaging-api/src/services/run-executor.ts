@@ -14,6 +14,8 @@ export interface ExecuteAssistantRunInput {
   conversationId: string
   hermesSessionId: string
   userMessageId: string
+  companionUsername?: string
+  bootstrapPrompt?: string | null
   runId?: string
   rewindMessageIds?: string[]
 }
@@ -21,12 +23,45 @@ export interface ExecuteAssistantRunInput {
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
   const runId = input.runId ?? createRun(input.db, input.conversationId, input.userMessageId)
   const history = listMessages(input.db, input.conversationId)
-  const hermesMessages = buildHermesMessages(history)
+  const hermesMessages = buildHermesMessages(history, {
+    bootstrapPrompt: input.bootstrapPrompt,
+    companionUsername: input.companionUsername,
+  })
 
   let assistantText = ''
   let sawDone = false
   const processLines: ProcessLine[] = []
+  let reasoningBuffer = ''
   let inReplyPhase = false
+  let sawProcessActivity = false
+
+  const publishProcessLine = (line: ProcessLine) => {
+    processLines.push(line)
+    sawProcessActivity = true
+    input.hub.publish(input.conversationId, { event: 'process', data: line })
+  }
+
+  const flushReasoningBuffer = () => {
+    const text = reasoningBuffer.trim()
+    reasoningBuffer = ''
+    if (!text) {
+      return
+    }
+
+    publishProcessLine({ kind: 'reasoning', text })
+  }
+
+  const beginReplyPhase = () => {
+    if (inReplyPhase) {
+      return
+    }
+
+    flushReasoningBuffer()
+    inReplyPhase = true
+    if (sawProcessActivity) {
+      input.hub.publish(input.conversationId, { event: 'process_complete', data: {} })
+    }
+  }
 
   if (input.rewindMessageIds && input.rewindMessageIds.length > 0) {
     input.hub.setPendingRewind(input.conversationId, input.rewindMessageIds)
@@ -41,28 +76,31 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       hermesSessionId: input.hermesSessionId,
       messages: hermesMessages,
     })) {
-      if (event.type === 'reasoning' && event.text?.trim()) {
-        const line = { kind: 'reasoning' as const, text: event.text.trim() }
-        processLines.push(line)
-        input.hub.publish(input.conversationId, { event: 'process', data: line })
+      if (event.type === 'reasoning' && event.text) {
+        reasoningBuffer += event.text
+        sawProcessActivity = true
+        input.hub.publish(input.conversationId, {
+          event: 'process_token',
+          data: { kind: 'reasoning', text: event.text },
+        })
         continue
       }
 
       if (event.type === 'tool' && event.name) {
+        flushReasoningBuffer()
         const text = formatToolProcessLine(event.name, event.arguments, event.label)
-        const line = { kind: 'tool' as const, text }
-        processLines.push(line)
-        input.hub.publish(input.conversationId, { event: 'process', data: line })
+        publishProcessLine({ kind: 'tool', text })
+        continue
+      }
+
+      if (event.type === 'tool_complete' && event.name) {
+        const text = formatToolProcessLine(event.name, event.arguments, event.label)
+        publishProcessLine({ kind: 'tool', text: `Done: ${text}` })
         continue
       }
 
       if (event.type === 'answer_token' && event.text) {
-        if (!inReplyPhase) {
-          inReplyPhase = true
-          if (processLines.length > 0) {
-            input.hub.publish(input.conversationId, { event: 'process_complete', data: {} })
-          }
-        }
+        beginReplyPhase()
         assistantText += event.text
         input.hub.publish(input.conversationId, { event: 'token', data: { text: event.text } })
         continue
