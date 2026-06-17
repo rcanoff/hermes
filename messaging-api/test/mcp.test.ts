@@ -152,20 +152,131 @@ describe('companion MCP routes', () => {
       name: 'get_location_history',
       arguments: { username: 'operator', limit: 2 },
     })
-    const firstPayload = parseToolResult(firstPage) as { events: Array<{ id: string; timestamp: string }> }
+    const firstPayload = parseToolResult(firstPage) as {
+      events: Array<{ id: string; timestamp: string }>
+      _links: { self: { href: string }; next?: { href: string } }
+    }
 
     expect(firstPayload.events).toHaveLength(2)
     expect(firstPayload.events[0]).toMatchObject({ id: createdIds[2], timestamp: timestamps[2] })
     expect(firstPayload.events[1]).toMatchObject({ id: createdIds[1], timestamp: timestamps[1] })
+    expect(firstPayload._links.self.href).toBe('/data/location/events?limit=2')
+    expect(firstPayload._links.next?.href).toBe(
+      `/data/location/events?limit=2&before=${createdIds[1]}`,
+    )
 
     const secondPage = await client.callTool({
       name: 'get_location_history',
       arguments: { username: 'operator', limit: 2, before: createdIds[1] },
     })
-    const secondPayload = parseToolResult(secondPage) as { events: Array<{ id: string; timestamp: string }> }
+    const secondPayload = parseToolResult(secondPage) as {
+      events: Array<{ id: string; timestamp: string }>
+      _links: { prev?: { href: string } }
+    }
 
     expect(secondPayload.events).toHaveLength(1)
     expect(secondPayload.events[0]).toMatchObject({ id: createdIds[0], timestamp: timestamps[0] })
+    expect(secondPayload._links.prev?.href).toBe(
+      `/data/location/events?limit=2&after=${createdIds[0]}`,
+    )
+
+    await transport.close()
+    await client.close()
+  })
+
+  it('get_user_health_today returns available summary', async () => {
+    await app!.inject({
+      method: 'POST',
+      url: '/data/health/daily-summaries',
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: {
+        date: '2026-06-17',
+        timezone: 'Europe/Lisbon',
+        partial: true,
+        source: 'healthkit',
+        metrics: {
+          steps: { value: 6432, unit: 'count', goal: 10000, remaining: 3568 },
+        },
+      },
+    })
+
+    const { client, transport } = await createMcpClient(app!, 'test-mcp-token')
+    const result = await client.callTool({
+      name: 'get_user_health_today',
+      arguments: { username: 'operator' },
+    })
+    const payload = parseToolResult(result)
+
+    expect(payload).toMatchObject({
+      available: true,
+      username: 'operator',
+      date: '2026-06-17',
+      timezone: 'Europe/Lisbon',
+      partial: true,
+      metrics: {
+        steps: { value: 6432, unit: 'count', goal: 10000, remaining: 3568 },
+      },
+    })
+
+    await transport.close()
+    await client.close()
+  })
+
+  it('get_user_health_daily returns unavailable for missing date', async () => {
+    const { client, transport } = await createMcpClient(app!, 'test-mcp-token')
+    const result = await client.callTool({
+      name: 'get_user_health_daily',
+      arguments: { username: 'operator', date: '2026-06-01' },
+    })
+    const payload = parseToolResult(result)
+
+    expect(payload).toEqual({
+      available: false,
+      username: 'operator',
+      date: '2026-06-01',
+    })
+
+    await transport.close()
+    await client.close()
+  })
+
+  it('get_user_health_history returns HAL summaries', async () => {
+    const dates = ['2026-06-15', '2026-06-16', '2026-06-17']
+
+    for (const date of dates) {
+      await app!.inject({
+        method: 'POST',
+        url: '/data/health/daily-summaries',
+        headers: { authorization: `Bearer ${operatorToken}` },
+        payload: {
+          date,
+          timezone: 'Europe/Lisbon',
+          partial: true,
+          source: 'healthkit',
+          metrics: {
+            steps: { value: 6432, unit: 'count', goal: 10000, remaining: 3568 },
+          },
+        },
+      })
+    }
+
+    const { client, transport } = await createMcpClient(app!, 'test-mcp-token')
+    const result = await client.callTool({
+      name: 'get_user_health_history',
+      arguments: { username: 'operator', limit: 20 },
+    })
+    const payload = parseToolResult(result) as {
+      summaries: Array<{ date: string }>
+      _links: { self: { href: string } }
+    }
+
+    expect(payload.summaries).toHaveLength(3)
+    expect(payload.summaries.map((summary) => summary.date)).toEqual([
+      '2026-06-17',
+      '2026-06-16',
+      '2026-06-15',
+    ])
+    expect(payload._links.self.href).toBe('/data/health/daily-summaries?limit=20')
 
     await transport.close()
     await client.close()
@@ -177,8 +288,10 @@ describe('companion MCP routes', () => {
       name: 'create_companion_invite',
       arguments: { label: 'Roberto' },
     })
-    const payload = parseToolResult(result) as { invite_id: string; url: string; expires_at: string }
-    expect(payload.url).toMatch(/^http:\/\/127\.0\.0\.1:3000\/invite\//)
+    const payload = parseToolResult(result) as { invite_id: string; token: string; expires_at: string }
+    expect(payload.token.length).toBeGreaterThan(30)
+    expect(payload.invite_id).toBeTruthy()
+    expect(payload.expires_at).toBeTruthy()
     await transport.close()
     await client.close()
   })

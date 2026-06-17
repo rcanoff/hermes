@@ -7,11 +7,20 @@ import {
 } from '../db/repos/account-invites.js'
 import { findUserByUsername } from '../db/repos/users.js'
 import {
+  getHealthDailySummaryByDate,
+  getLatestHealthDailySummary,
+  listHealthDailySummariesPage,
+  parseStoredHealthMetrics,
+  type HealthDailySummaryRow,
+} from '../db/repos/health-daily-summaries.js'
+import {
   getLatestLocationEvent,
-  listLocationEvents,
+  listLocationEventsPage,
   type LocationEventRow,
 } from '../db/repos/location-events.js'
-import { buildInviteUrl, createInviteRecord } from './invites.js'
+import { parseHealthDate, type HealthMetrics } from '../lib/health-metrics.js'
+import { buildHalLinks } from '../lib/pagination.js'
+import { createInviteRecord } from './invites.js'
 import { formatFreshness } from './freshness.js'
 
 export interface UserLocationUnavailable {
@@ -48,11 +57,44 @@ export interface LocationHistoryEvent {
 
 export interface LocationHistoryResult {
   events: LocationHistoryEvent[]
+  _links: ReturnType<typeof buildHalLinks>
+}
+
+export interface UserHealthSummaryResult {
+  available: true
+  username: string
+  date: string
+  timezone: string
+  partial: boolean
+  synced_at: string
+  metrics: HealthMetrics
+  finalized_at?: string | null
+}
+
+export type UserHealthTodayResult = UserHealthSummaryResult | { available: false; username: string }
+export type UserHealthDailyResult =
+  | UserHealthSummaryResult
+  | { available: false; username: string; date: string }
+
+export interface HealthHistorySummary {
+  id: string
+  date: string
+  timezone: string
+  partial: boolean
+  finalized_at: string | null
+  synced_at: string
+  source: string
+  metrics: HealthMetrics
+}
+
+export interface HealthHistoryResult {
+  summaries: HealthHistorySummary[]
+  _links: ReturnType<typeof buildHalLinks>
 }
 
 export interface CreateInviteResult {
   invite_id: string
-  url: string
+  token: string
   expires_at: string
 }
 
@@ -85,7 +127,16 @@ export interface McpToolHandlers {
     username: string
     limit?: number
     before?: string
+    after?: string
   }): Promise<LocationHistoryResult>
+  get_user_health_today(input: { username: string }): Promise<UserHealthTodayResult>
+  get_user_health_daily(input: { username: string; date: string }): Promise<UserHealthDailyResult>
+  get_user_health_history(input: {
+    username: string
+    limit?: number
+    before?: string
+    after?: string
+  }): Promise<HealthHistoryResult>
   create_companion_invite(input: { label?: string }): Promise<CreateInviteResult>
   create_password_reset_invite(input: { username: string }): Promise<CreateInviteResult>
   list_companion_accounts(): Promise<ListCompanionAccountsResult>
@@ -95,7 +146,6 @@ export interface McpToolHandlers {
 export function buildMcpToolHandlers(
   db: Database.Database,
   options: {
-    messagingApiHost: string
     inviteExpiryHours: number
   },
 ): McpToolHandlers {
@@ -110,12 +160,94 @@ export function buildMcpToolHandlers(
       return serializeAvailableLocation(event)
     },
 
-    async get_location_history(input) {
+    async get_user_health_today(input) {
+      const user = resolveUserByUsername(db, input.username)
+      const row = getLatestHealthDailySummary(db, user.id)
+      if (!row) {
+        return { available: false, username: input.username }
+      }
+
+      return serializeHealthSummary(input.username, row)
+    },
+
+    async get_user_health_daily(input) {
+      const user = resolveUserByUsername(db, input.username)
+      const date = parseHealthDate(input.date)
+      if (!date) {
+        throw new Error('invalid_request')
+      }
+
+      const row = getHealthDailySummaryByDate(db, user.id, date)
+      if (!row) {
+        return { available: false, username: input.username, date }
+      }
+
+      return serializeHealthSummary(input.username, row)
+    },
+
+    async get_user_health_history(input) {
+      if (input.before && input.after) {
+        throw new Error('invalid_request')
+      }
+
       const user = resolveUserByUsername(db, input.username)
       const limit = clampHistoryLimit(input.limit)
-      const events = listLocationEvents(db, user.id, limit, input.before)
+      const page = listHealthDailySummariesPage(db, user.id, limit, {
+        before: input.before,
+        after: input.after,
+      })
+      if (!page) {
+        throw new Error('invalid_request')
+      }
+
+      const firstId = page.summaries[0]?.id
+      const lastId = page.summaries[page.summaries.length - 1]?.id
+
       return {
-        events: events.map(serializeHistoryEvent),
+        summaries: page.summaries.map(serializeHealthHistorySummary),
+        _links: buildHalLinks({
+          basePath: '/data/health/daily-summaries',
+          limit,
+          before: input.before,
+          after: input.after,
+          hasOlder: page.hasOlder,
+          hasNewer: page.hasNewer,
+          firstId,
+          lastId,
+        }),
+      }
+    },
+
+    async get_location_history(input) {
+      if (input.before && input.after) {
+        throw new Error('invalid_request')
+      }
+
+      const user = resolveUserByUsername(db, input.username)
+      const limit = clampHistoryLimit(input.limit)
+      const page = listLocationEventsPage(db, user.id, limit, {
+        before: input.before,
+        after: input.after,
+      })
+      if (!page) {
+        throw new Error('invalid_request')
+      }
+
+      const firstId = page.events[0]?.id
+      const lastId = page.events[page.events.length - 1]?.id
+
+      return {
+        events: page.events.map(serializeHistoryEvent),
+        _links: buildHalLinks({
+          basePath: '/data/location/events',
+          limit,
+          before: input.before,
+          after: input.after,
+          hasOlder: page.hasOlder,
+          hasNewer: page.hasNewer,
+          firstId,
+          lastId,
+        }),
       }
     },
 
@@ -128,7 +260,7 @@ export function buildMcpToolHandlers(
 
       return {
         invite_id: invite.id,
-        url: buildInviteUrl(options.messagingApiHost, rawToken),
+        token: rawToken,
         expires_at: expiresAt,
       }
     },
@@ -147,7 +279,7 @@ export function buildMcpToolHandlers(
 
       return {
         invite_id: invite.id,
-        url: buildInviteUrl(options.messagingApiHost, rawToken),
+        token: rawToken,
         expires_at: expiresAt,
       }
     },
@@ -200,6 +332,32 @@ function serializeAvailableLocation(event: LocationEventRow): UserLocationAvaila
     timestamp: event.timestamp,
     trigger: event.trigger,
     freshness: formatFreshness(event.timestamp),
+  }
+}
+
+function serializeHealthSummary(username: string, row: HealthDailySummaryRow): UserHealthSummaryResult {
+  return {
+    available: true,
+    username,
+    date: row.date,
+    timezone: row.timezone,
+    partial: row.partial === 1,
+    synced_at: row.synced_at,
+    metrics: parseStoredHealthMetrics(row.metrics_json),
+    finalized_at: row.finalized_at,
+  }
+}
+
+function serializeHealthHistorySummary(row: HealthDailySummaryRow): HealthHistorySummary {
+  return {
+    id: row.id,
+    date: row.date,
+    timezone: row.timezone,
+    partial: row.partial === 1,
+    finalized_at: row.finalized_at,
+    synced_at: row.synced_at,
+    source: row.source,
+    metrics: parseStoredHealthMetrics(row.metrics_json),
   }
 }
 

@@ -33,7 +33,6 @@ const mcpRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const toolHandlers = buildMcpToolHandlers(app.db, {
-      messagingApiHost: app.messagingApiHost,
       inviteExpiryHours: app.inviteExpiryHours,
     })
     const mcpServer = createMcpServer(toolHandlers)
@@ -100,6 +99,55 @@ function createMcpServer(toolHandlers: McpToolHandlers): McpServer {
   )
 
   server.registerTool(
+    'get_user_health_today',
+    {
+      description: 'Return the latest health daily summary for a companion user, or unavailability',
+      inputSchema: {
+        username: z.string().describe('Companion account username'),
+      },
+    },
+    async (input) => executeToolCall(() => toolHandlers.get_user_health_today(input)),
+  )
+
+  server.registerTool(
+    'get_user_health_daily',
+    {
+      description: 'Return the health daily summary for a specific date for a companion user',
+      inputSchema: {
+        username: z.string().describe('Companion account username'),
+        date: z.string().describe('Calendar date in YYYY-MM-DD format'),
+      },
+    },
+    async (input) => executeToolCall(() => toolHandlers.get_user_health_daily(input)),
+  )
+
+  server.registerTool(
+    'get_user_health_history',
+    {
+      description: 'Return paginated health daily summary history for a companion user',
+      inputSchema: {
+        username: z.string().describe('Companion account username'),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe('Maximum number of summaries to return (default 20, max 100)'),
+        before: z
+          .string()
+          .optional()
+          .describe('Optional summary id — return summaries older than this anchor'),
+        after: z
+          .string()
+          .optional()
+          .describe('Optional summary id — return summaries newer than this anchor'),
+      },
+    },
+    async (input) => executeToolCall(() => toolHandlers.get_user_health_history(input)),
+  )
+
+  server.registerTool(
     'get_location_history',
     {
       description: 'Return paginated location history for a companion user',
@@ -115,7 +163,11 @@ function createMcpServer(toolHandlers: McpToolHandlers): McpServer {
         before: z
           .string()
           .optional()
-          .describe('Optional event id cursor for pagination'),
+          .describe('Optional event id — return events older than this anchor'),
+        after: z
+          .string()
+          .optional()
+          .describe('Optional event id — return events newer than this anchor'),
       },
     },
     async (input) => executeToolCall(() => toolHandlers.get_location_history(input)),
