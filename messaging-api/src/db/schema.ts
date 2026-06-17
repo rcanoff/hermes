@@ -110,10 +110,31 @@ export function initSchema(db: Database.Database): void {
       ON account_invites (token_hash);
     CREATE INDEX IF NOT EXISTS idx_account_invites_active
       ON account_invites (used_at, revoked_at, expires_at);
+
+    CREATE TABLE IF NOT EXISTS health_daily_summaries (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      date TEXT NOT NULL,
+      timezone TEXT NOT NULL,
+      partial INTEGER NOT NULL CHECK (partial IN (0, 1)),
+      finalized_at TEXT,
+      synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+      source TEXT NOT NULL DEFAULT 'healthkit',
+      metrics_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS health_daily_summaries_user_date_idx
+      ON health_daily_summaries (user_id, date);
+
+    CREATE INDEX IF NOT EXISTS health_daily_summaries_user_date_desc_idx
+      ON health_daily_summaries (user_id, date DESC, id DESC);
   `)
 
   ensureLegacyUserColumns(db)
   ensureLegacyConversationColumns(db)
+  ensureLegacyHealthDailySummaries(db)
 }
 
 function ensureLegacyConversationColumns(db: Database.Database): void {
@@ -133,6 +154,30 @@ function ensureLegacyConversationColumns(db: Database.Database): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS conversations_user_updated_idx
       ON conversations (user_id, updated_at DESC, id DESC)
+  `)
+}
+
+function ensureLegacyHealthDailySummaries(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS health_daily_summaries (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      date TEXT NOT NULL,
+      timezone TEXT NOT NULL,
+      partial INTEGER NOT NULL CHECK (partial IN (0, 1)),
+      finalized_at TEXT,
+      synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+      source TEXT NOT NULL DEFAULT 'healthkit',
+      metrics_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS health_daily_summaries_user_date_idx
+      ON health_daily_summaries (user_id, date);
+
+    CREATE INDEX IF NOT EXISTS health_daily_summaries_user_date_desc_idx
+      ON health_daily_summaries (user_id, date DESC, id DESC);
   `)
 }
 

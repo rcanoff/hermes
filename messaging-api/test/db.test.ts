@@ -9,6 +9,15 @@ import { initSchema, reconcileRunningRuns } from '../src/db/schema.js'
 import { closeDb, getDb } from '../src/db/index.js'
 
 describe('schema', () => {
+  it('creates health_daily_summaries table', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const rows = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='health_daily_summaries'")
+      .all()
+    expect(rows).toHaveLength(1)
+  })
+
   it('creates account_invites table', () => {
     const db = new Database(':memory:')
     initSchema(db)
