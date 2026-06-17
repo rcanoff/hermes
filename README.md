@@ -280,7 +280,7 @@ line to prevent duplicates.
 The workflow is defined by the `productivity/trip-records` skill in `data/skills/`,
 which composes the existing `note-taking/obsidian` and
 `productivity/travel-bookings-to-calendar` skills. Design spec:
-`docs/superpowers/implemented/specs/2026-06-12-obsidian-trip-records-vault-design.md`.
+`docs/history/implemented/specs/2026-06-12-obsidian-trip-records-vault-design.md`.
 
 The vault is plain markdown — open the folder in Obsidian later for browsing on
 Mac/iPhone (sync is deferred; the vault is local-only on the Pi for now). It is part
@@ -313,15 +313,15 @@ MIN_PASSWORD_LENGTH=12
 COMPANION_MCP_BEARER_TOKEN=replace-with-long-random-token
 ```
 
-`HERMES_API_SERVER_KEY` enables Hermes's OpenAI-compatible API server on port `8642` inside the Docker network and authenticates `messaging-api` when it calls Hermes. In this deployment that path is the **Companion App** channel: `messaging-api` sends `X-Hermes-Session-Key: companion-app` on every Hermes call. Skill routing is **not** hardcoded in the API — the iOS app sends a `bootstrap` prompt on the first message of each conversation; the API stores and forwards it. See `companion-app` skill and OpenAPI v1.9.0.
+`HERMES_API_SERVER_KEY` enables Hermes's OpenAI-compatible listener on port `8642` inside the Docker network and authenticates `messaging-api` when it calls Hermes. In this deployment that path is the **Companion App** channel: `messaging-api` sends `X-Hermes-Session-Key: companion-app` on every Hermes call. Skill routing is **not** hardcoded in the API — the iOS app sends a `bootstrap` prompt on the first message of each conversation; the API stores and forwards it. See `companion-app` skill and OpenAPI v1.9.0.
 
-`MESSAGING_API_HOST` must be the Tailscale-reachable IP and port of the messaging API (used in magic-link URLs). Set it to your Pi's Tailscale address, e.g. `100.x.x.x:3000`.
+`MESSAGING_API_HOST` must be the Tailscale-reachable IP and port of the messaging API. Set it to your Pi's Tailscale address, e.g. `100.x.x.x:3000`.
 
 ### Account setup (invite-based)
 
-On a **cold start**, the messaging API has **no users**. Create the first companion account through Hermes using the `companion-account-management` skill (MCP tools `create_companion_invite`, etc.). Share the magic link with the user to complete activation in the iOS app.
+On a **cold start**, the messaging API has **no users**. Create the first companion account through Hermes using the `companion-account-management` skill (MCP tools `create_companion_invite`, etc.). Hermes generates a QR code containing the invite token; the user scans it in the iOS app to complete activation.
 
-To reset a password, use `create_password_reset_invite` via the same skill.
+To reset a password, use `create_password_reset_invite` via the same skill and deliver the QR code the same way.
 
 **Upgrading** from the bootstrap model: existing `operator` (or other) users in the SQLite database are preserved. You can keep using them or reset passwords via invite.
 
@@ -344,7 +344,8 @@ The messaging API streams Hermes reasoning and tool activity over SSE while a re
 
 Live stream events (in order):
 
-- `process` — one event per reasoning or tool line (`{"kind":"reasoning"|"tool","text":"..."}`)
+- `process_token` — reasoning text deltas while Hermes is thinking (`{"kind":"reasoning","text":"..."}`)
+- `process` — completed reasoning line, tool start label, or `Done:` tool completion
 - `process_complete` — signals the process section is finished (`{}`)
 - `token` — answer text chunks
 - `done` — final assistant message id
@@ -364,19 +365,24 @@ After the run completes, `GET /conversations/:id/messages` includes an optional 
 }
 ```
 
-Process lines require Hermes to emit reasoning and tool deltas on `/v1/chat/completions`. If reasoning lines are missing, enable them in `data/config.yaml`:
+Process lines require Hermes to emit reasoning and tool deltas on `/v1/chat/completions`. Operator settings in `data/config.yaml` under `display:`:
 
 ```yaml
-show_reasoning: true
+display:
+  show_reasoning: true   # required for reasoning process_token / process lines
+  tool_progress: all     # Hermes emits hermes.tool.progress SSE frames (default)
+  streaming: true
 ```
 
-Restart Hermes after changing that setting. Tool-only process lines still work without reasoning enabled.
+Restart Hermes after changing `show_reasoning`. Tool start/completion lines work without reasoning enabled.
+
+**Note:** Hermes may emit no SSE frames while a long-running tool executes (only `running` and `completed` tool-progress events). The companion app should render those immediately; the final reply still streams via `token` events once Hermes resumes.
 
 ### User location vault
 
 The companion app writes location events to a user-scoped vault. Hermes reads location only through the companion MCP skill — not Home Assistant and not conversation routes.
 
-**API (v1.5.0):** `POST /data/location/events`, `GET /data/location/events`, and `GET /data/location/latest`. Full contract: [`docs/superpowers/specs/messaging-api.openapi.yaml`](docs/superpowers/specs/messaging-api.openapi.yaml).
+**API (v1.7.0):** All list endpoints return HAL paginated responses (`_links.self|next|prev`): `GET /conversations`, `GET /conversations/:id/messages`, `GET /data/location/events`. Default `limit=20`, max 100. Location ingest/latest unchanged. Full contract: [`docs/superpowers/specs/messaging-api.openapi.yaml`](docs/superpowers/specs/messaging-api.openapi.yaml).
 
 Conversation-scoped `/conversations/{id}/location/*` routes were removed. Location is available to Hermes via the `companion-user-location` skill and companion MCP tools only.
 

@@ -2,13 +2,13 @@
 
 **Date:** 2026-06-14  
 **Status:** Approved  
-**Parent:** `docs/superpowers/specs/2026-06-14-companion-auth-invites-design.md`  
-**Backend spec:** `docs/superpowers/specs/2026-06-14-companion-auth-invites-backend-design.md`  
+**Parent:** `docs/history/specs/2026-06-14-companion-auth-invites-design.md`  
+**Backend spec:** `docs/history/specs/2026-06-14-companion-auth-invites-backend-design.md`  
 **OpenAPI:** `docs/superpowers/specs/messaging-api.openapi.yaml` (v1.6.0)
 
 **Codebase location:** separate machine — paths are relative to the `assistant-companion` Xcode project root.
 
-**Prerequisite:** Base app per `docs/superpowers/implemented/plans/2026-06-12-assistant-companion-plan.md` (login, Keychain, conversations, chat). Backend v1.6.0 deployed before live testing.
+**Prerequisite:** Base app per `docs/history/implemented/plans/2026-06-12-assistant-companion-plan.md` (login, Keychain, conversations, chat). Backend v1.6.0 deployed before live testing.
 
 ---
 
@@ -205,7 +205,7 @@ assistant-companionTests/
 
 ## Supersedes
 
-Authentication section in `docs/superpowers/implemented/specs/2026-06-12-hermes-assistant-companion-design.md`:
+Authentication section in `docs/history/implemented/specs/2026-06-12-hermes-assistant-companion-design.md`:
 
 - Removes assumption of pre-provisioned operator credentials
 - Adds magic-link onboarding and reset views alongside existing `LoginView`

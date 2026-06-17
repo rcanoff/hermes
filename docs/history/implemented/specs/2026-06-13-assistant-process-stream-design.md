@@ -195,7 +195,7 @@ If JSON args are incomplete, fall back to the default template.
 - `src/db/repos/messages.ts` or list handler — join `process` onto assistant rows
 - `src/streams/hub.ts` — `process`, `process_complete` in `StreamEvent`; remove `tool`
 - `src/routes/messages.ts` — history response shape
-- `docs/superpowers/implemented/specs/messaging-api.openapi.yaml` — v1.4.0
+- `docs/history/implemented/specs/messaging-api.openapi.yaml` — v1.4.0
 
 ### Out of scope (this spec)
 

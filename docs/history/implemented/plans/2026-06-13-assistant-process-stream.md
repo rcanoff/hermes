@@ -8,8 +8,8 @@
 
 **Tech Stack:** TypeScript, Fastify, `better-sqlite3`, Vitest
 
-**Spec:** `docs/superpowers/implemented/specs/2026-06-13-assistant-process-stream-design.md`  
-**OpenAPI:** `docs/superpowers/implemented/specs/messaging-api.openapi.yaml` (v1.4.0)
+**Spec:** `docs/history/implemented/specs/2026-06-13-assistant-process-stream-design.md`  
+**OpenAPI:** `docs/history/implemented/specs/messaging-api.openapi.yaml` (v1.4.0)
 
 ---
 

@@ -17,13 +17,13 @@
   - No Todoist-specific env vars are required for the hosted OAuth MCP server, so this file should stay unchanged unless verification reveals a real gap.
 - Modify: `README.md`
   - Add a Todoist MCP setup section with the exact Hermes commands, OAuth notes, and verification steps.
-- Create: `docs/superpowers/implemented/specs/2026-06-10-todoist-mcp-integration-design.md`
+- Create: `docs/history/implemented/specs/2026-06-10-todoist-mcp-integration-design.md`
   - Capture the approved design for the Todoist hosted MCP integration.
 
 ## Task 1: Write the Design Spec
 
 **Files:**
-- Create: `docs/superpowers/implemented/specs/2026-06-10-todoist-mcp-integration-design.md`
+- Create: `docs/history/implemented/specs/2026-06-10-todoist-mcp-integration-design.md`
 
 - [ ] **Step 1: Write the design spec**
 
@@ -79,7 +79,7 @@ Out of scope:
 Run:
 
 ```bash
-test -f docs/superpowers/implemented/specs/2026-06-10-todoist-mcp-integration-design.md && echo OK
+test -f docs/history/implemented/specs/2026-06-10-todoist-mcp-integration-design.md && echo OK
 ```
 
 Expected:

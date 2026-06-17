@@ -24,7 +24,7 @@
   - main deployment playbook
 - Modify: `README.md`
   - document the Raspberry Pi deploy workflow
-- Modify: `docs/superpowers/implemented/specs/2026-06-10-raspi-ansible-deploy-design.md`
+- Modify: `docs/history/implemented/specs/2026-06-10-raspi-ansible-deploy-design.md`
   - reflect the concrete host and path
 
 ## Task 1: Scaffold the Ansible Project

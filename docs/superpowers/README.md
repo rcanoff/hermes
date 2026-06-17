@@ -1,36 +1,25 @@
 # Superpowers Docs
 
-Design notes and implementation plans for this workspace.
+Active design notes and implementation plans for this workspace.
 
 ## Layout
 
 | Path | Purpose |
 |------|---------|
-| `specs/` | Active design specs (in progress or planned) |
+| `specs/` | Active design specs and the live OpenAPI contract |
 | `plans/` | Active implementation plans |
-| `implemented/specs/` | Shipped design specs |
-| `implemented/plans/` | Completed implementation plans |
 
-When work ships, move its spec and plan from `specs/` / `plans/` into `implemented/` and set **Status: Implemented** on the design doc.
+Older specs and plans (dated before today’s active work) are archived in [`docs/history/`](../history/README.md).
 
 ## Current active work
 
-- Companion auth — invite-based account management
-  - Overview: `specs/2026-06-14-companion-auth-invites-design.md`
-  - Backend: `specs/2026-06-14-companion-auth-invites-backend-design.md`
-  - Backend plan: `plans/2026-06-14-companion-auth-invites-backend.md`
-  - iOS: `specs/2026-06-14-companion-auth-invites-ios-design.md`
-  - OpenAPI v1.6.0: `specs/messaging-api.openapi.yaml`
-- Companion user-data vault + MCP (location redesign)
-  - Design: `specs/2026-06-13-companion-user-data-vault-design.md`
-  - OpenAPI v1.5.0: `specs/messaging-api.openapi.yaml`
-  - Backend plan: `plans/2026-06-13-companion-user-data-vault-backend.md`
-  - iOS plan: `plans/2026-06-13-companion-user-data-vault-ios.md`
+- **Companion app skills & iOS bootstrap** (OpenAPI v1.9.0)
+  - Design: `specs/2026-06-17-companion-app-skills-design.md`
+  - Backend plan: `plans/2026-06-17-companion-app-skills-backend.md`
+  - iOS plan (reference): `plans/2026-06-17-companion-app-skills-ios.md`
+  - OpenAPI: `specs/messaging-api.openapi.yaml`
 
-## Implemented (2026-06-13)
+## Rules
 
-- `messaging-api` — Hermes mobile channel (auth, conversations, messages, SSE, process stream, title generation, message edit)
-- `assistant-companion` iOS app — implemented on a separate machine; see `implemented/plans/2026-06-12-assistant-companion-plan.md`
-- Apple Calendar CalDAV MCP, Todoist MCP, Raspberry Pi Ansible deploy, Obsidian trip records vault
-
-See `implemented/README.md` for the full index.
+- Every `messaging-api` contract change must update `specs/messaging-api.openapi.yaml` in the same change set.
+- When work ships, move its spec and plan to `docs/history/` and add new active docs here if needed.

@@ -4,7 +4,7 @@
 
 **Goal:** Give Hermes a centralized, Obsidian-compatible markdown vault of trip records that holds canonical booking facts and back-links to calendar events, wired up via a new `trip-records` skill.
 
-**Architecture:** Hub-and-spoke per `docs/superpowers/implemented/specs/2026-06-12-obsidian-trip-records-vault-design.md` — one markdown note per trip in `data/vault/Trips/` is the hub (canonical facts + pointers); the calendar holds enriched detail. A new thin-orchestrator skill defines the note format, trip resolution, and the link-back rule, deferring file mechanics to the existing `obsidian` skill and event shaping to `travel-bookings-to-calendar`.
+**Architecture:** Hub-and-spoke per `docs/history/implemented/specs/2026-06-12-obsidian-trip-records-vault-design.md` — one markdown note per trip in `data/vault/Trips/` is the hub (canonical facts + pointers); the calendar holds enriched detail. A new thin-orchestrator skill defines the note format, trip resolution, and the link-back rule, deferring file mechanics to the existing `obsidian` skill and event shaping to `travel-bookings-to-calendar`.
 
 **Tech Stack:** Markdown + YAML frontmatter, Docker Compose env wiring. No application code; deliverables are files in the mounted `data/` dir plus compose/README edits.
 
@@ -254,7 +254,7 @@ line to prevent duplicates.
 The workflow is defined by the `productivity/trip-records` skill in `data/skills/`,
 which composes the existing `note-taking/obsidian` and
 `productivity/travel-bookings-to-calendar` skills. Design spec:
-`docs/superpowers/implemented/specs/2026-06-12-obsidian-trip-records-vault-design.md`.
+`docs/history/implemented/specs/2026-06-12-obsidian-trip-records-vault-design.md`.
 
 The vault is plain markdown — open the folder in Obsidian later for browsing on
 Mac/iPhone (sync is deferred; the vault is local-only on the Pi for now). It is part

@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript, Fastify, `better-sqlite3`, `@fastify/jwt`, `@modelcontextprotocol/sdk`, `zod`, Vitest, Docker Compose
 
-**Spec:** `docs/superpowers/specs/2026-06-14-companion-auth-invites-backend-design.md`  
+**Spec:** `docs/history/specs/2026-06-14-companion-auth-invites-backend-design.md`  
 **OpenAPI:** `docs/superpowers/specs/messaging-api.openapi.yaml` (v1.6.0)
 
 ---
@@ -1222,7 +1222,7 @@ Create invite via MCP script (reuse pattern from location check) and complete ac
 
 - [ ] **Step 4: Move spec to implemented when done**
 
-After shipping, move design spec to `docs/superpowers/implemented/specs/` and set **Status: Implemented**.
+After shipping, move design spec to `docs/history/implemented/specs/` and set **Status: Implemented**.
 
 ---
 

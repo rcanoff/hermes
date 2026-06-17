@@ -8,8 +8,8 @@
 
 **Tech Stack:** TypeScript, Fastify, `better-sqlite3`, Vitest
 
-**Spec:** `docs/superpowers/implemented/specs/2026-06-13-conversation-title-generation-design.md`  
-**OpenAPI:** `docs/superpowers/implemented/specs/messaging-api.openapi.yaml`
+**Spec:** `docs/history/implemented/specs/2026-06-13-conversation-title-generation-design.md`  
+**OpenAPI:** `docs/history/implemented/specs/messaging-api.openapi.yaml`
 
 ---
 
@@ -817,7 +817,7 @@ git commit -m "feat(messaging-api): auto-generate title on first message"
 ### Task 6: Final verification
 
 **Files:**
-- Verify: `docs/superpowers/implemented/specs/messaging-api.openapi.yaml` still matches behavior
+- Verify: `docs/history/implemented/specs/messaging-api.openapi.yaml` still matches behavior
 
 - [ ] **Step 1: Run full test suite**
 

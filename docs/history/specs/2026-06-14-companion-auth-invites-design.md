@@ -42,5 +42,5 @@ Unchanged: `POST /auth/login` → JWT
 
 ## Supersedes
 
-- Bootstrap-user auth in `docs/superpowers/implemented/specs/2026-06-12-hermes-messaging-api-design.md` (Auth Model)
-- Authentication section in `docs/superpowers/implemented/specs/2026-06-12-hermes-assistant-companion-design.md`
+- Bootstrap-user auth in `docs/history/implemented/specs/2026-06-12-hermes-messaging-api-design.md` (Auth Model)
+- Authentication section in `docs/history/implemented/specs/2026-06-12-hermes-assistant-companion-design.md`

@@ -58,8 +58,8 @@
 ## Task 1: Replace the Stale Third-Party Direction in Workspace Docs and Layout
 
 **Files:**
-- Modify: `docs/superpowers/implemented/specs/2026-06-10-apple-calendar-caldav-mcp-design.md`
-- Modify: `docs/superpowers/implemented/plans/2026-06-10-apple-calendar-caldav-mcp.md`
+- Modify: `docs/history/implemented/specs/2026-06-10-apple-calendar-caldav-mcp-design.md`
+- Modify: `docs/history/implemented/plans/2026-06-10-apple-calendar-caldav-mcp.md`
 - Delete: `docker/dav-mcp/Dockerfile`
 
 - [ ] **Step 1: Confirm the stale third-party path is still present**

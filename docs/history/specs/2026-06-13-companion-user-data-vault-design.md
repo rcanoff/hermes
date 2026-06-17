@@ -2,9 +2,9 @@
 
 **Date:** 2026-06-13  
 **Status:** Approved  
-**Plans:** `docs/superpowers/plans/2026-06-13-companion-user-data-vault-backend.md`, `docs/superpowers/plans/2026-06-13-companion-user-data-vault-ios.md`  
+**Plans:** `docs/history/plans/2026-06-13-companion-user-data-vault-backend.md`, `docs/history/plans/2026-06-13-companion-user-data-vault-ios.md`  
 **OpenAPI:** `docs/superpowers/specs/messaging-api.openapi.yaml` (v1.5.0)  
-**Supersedes:** conversation-scoped location in `docs/superpowers/implemented/specs/2026-06-12-hermes-messaging-api-design.md` and `docs/superpowers/implemented/specs/2026-06-12-hermes-assistant-companion-design.md` (location sections only)
+**Supersedes:** conversation-scoped location in `docs/history/implemented/specs/2026-06-12-hermes-messaging-api-design.md` and `docs/history/implemented/specs/2026-06-12-hermes-assistant-companion-design.md` (location sections only)
 
 ---
 

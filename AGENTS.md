@@ -28,7 +28,9 @@ It is not the Hermes source repo. It exists to:
 - `data/`
   - persisted Hermes runtime state mounted into the container at `/opt/data`
 - `docs/superpowers/`
-  - local design notes and implementation plans for workspace changes
+  - active design specs, implementation plans, and the live OpenAPI contract
+- `docs/history/`
+  - archived specs and plans (older than current active work)
 
 ## Expected Changes
 
@@ -44,12 +46,25 @@ Typical work includes:
 
 ## Working Rules
 
+### Repository scope (hard rules)
+
+- **Backend only in this repo.** Implement `messaging-api`, companion MCP, `data/skills/`, Docker/Makefile, and operator docs here. Do **not** implement iOS/SwiftUI or other frontend client code in this workspace.
+- **Specs cover both sides.** Design specs and plans in `docs/superpowers/` must document backend **and** frontend/client impact when the API contract changes, even though FE is built elsewhere (`assistant-companion`).
+- **OpenAPI is mandatory.** Every `messaging-api` contract change (routes, query params, request/response shapes, MCP tool payloads that mirror REST) must update `docs/superpowers/specs/messaging-api.openapi.yaml` in the same change set. OpenAPI is the source of truth for REST; specs reference it by version.
+
 - Prefer minimal operational changes over broad restructuring.
 - Keep secrets out of tracked files; use `.env` for credentials and machine-local values.
 - Treat `data/` as runtime state, not hand-maintained source.
 - Preserve the documented single-container Hermes model unless there is a clear reason to change it.
 - When integration behavior changes, update `README.md` so the workspace remains operable by someone new to it.
 - **Companion skills:** every new Hermes skill for the companion app, `messaging-api`, or companion MCP must use the `companion-` prefix (e.g. `companion-user-location`, `companion-account-management`). Place them under `data/skills/`.
+- **List endpoint pagination:** every `messaging-api` endpoint (REST or MCP tool) that returns a collection must use HAL-style pagination by default. Spec: `docs/history/specs/2026-06-15-list-pagination-hal-design.md`. Rules in brief:
+  - Response envelope: `{ "<collection>": [...], "_links": { "self": { "href": "..." }, "next"?: ..., "prev"?: ... } }`
+  - Query / tool args: `limit` (default 20, max 100), `before` and `after` (mutually exclusive UUID anchors)
+  - No total counts; omit `next` / `prev` when no further page exists (do not return `null`)
+  - `href` values are relative path + query (e.g. `/conversations?limit=20&before=<uuid>`)
+  - MCP list tools mirror the same envelope and anchor semantics as their REST equivalent
+  - Single-item routes (`GET …/latest`, `GET …/:id`) and small bounded operator snapshots (e.g. `list_companion_accounts`) are exempt until pagination is needed
 
 ## Start Here
 
@@ -58,12 +73,13 @@ When working in this repo, read these first:
 1. `README.md`
 2. `docker-compose.yml`
 3. `Makefile`
-4. any relevant files under `docs/superpowers/`
+4. any relevant files under `docs/superpowers/` (archived context in `docs/history/`)
 
 ## Non-Goals
 
 This repo is not meant to:
 
 - vendor or modify Hermes application source code
+- implement the iOS companion app (`assistant-companion`) — FE plans here are reference docs only
 - store long-lived secrets in tracked files
 - act as a general-purpose application codebase

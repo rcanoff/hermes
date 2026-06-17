@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript, Fastify, `better-sqlite3`, `@fastify/jwt`, `@modelcontextprotocol/sdk`, `zod`, Vitest, Docker Compose
 
-**Spec:** `docs/superpowers/specs/2026-06-13-companion-user-data-vault-design.md`  
+**Spec:** `docs/history/specs/2026-06-13-companion-user-data-vault-design.md`  
 **OpenAPI:** `docs/superpowers/specs/messaging-api.openapi.yaml` (v1.5.0)
 
 ---

@@ -2,9 +2,9 @@
 
 **Date:** 2026-06-14  
 **Status:** Approved  
-**Parent:** `docs/superpowers/specs/2026-06-14-companion-auth-invites-design.md`  
+**Parent:** `docs/history/specs/2026-06-14-companion-auth-invites-design.md`  
 **OpenAPI:** `docs/superpowers/specs/messaging-api.openapi.yaml` (v1.6.0)  
-**iOS spec:** `docs/superpowers/specs/2026-06-14-companion-auth-invites-ios-design.md`
+**iOS spec:** `docs/history/specs/2026-06-14-companion-auth-invites-ios-design.md`
 
 ---
 

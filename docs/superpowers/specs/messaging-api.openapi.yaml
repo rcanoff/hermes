@@ -11,19 +11,19 @@ info:
     as `bootstrap_prompt`, prepended to every Hermes call, **never** returned in
     GET responses. Removes API-hardcoded companion skill routing; iOS sends
     `skill_view(name='companion-app')` instructions. See
-    `2026-06-17-companion-app-skills-design.md`.
+    `docs/superpowers/specs/2026-06-17-companion-app-skills-design.md`.
 
     **v1.8.0 changes:** live process streaming — SSE `process_token` events stream
     reasoning text incrementally; tool `Done:` lines emit when Hermes reports tool
     completion. Requires companion app update for `process_token` handling.
-    See `2026-06-15-companion-live-streaming-ios.md`.
+    See `docs/history/plans/2026-06-15-companion-live-streaming-ios.md`.
 
     **v1.7.0 changes:** HAL `_links` pagination on all list endpoints:
     `GET /conversations`, `GET /conversations/{id}/messages`, and
     `GET /data/location/events`. Query params `limit` (default 20, max 100),
     `before`, and `after` (mutually exclusive UUID anchors). MCP
     `get_location_history` returns the same envelope. Replaces bare array and
-    events-only list responses. See `2026-06-15-list-pagination-hal-design.md`.
+    events-only list responses. See `docs/history/specs/2026-06-15-list-pagination-hal-design.md`.
 
     **v1.6.0 changes:** invite-based account provisioning. Bootstrap user removed.
     New routes: `GET /invite/{token}`, `GET /auth/invite/{token}`,
@@ -32,19 +32,19 @@ info:
     `list_companion_accounts`, `revoke_companion_invite`). MCP location tools
     (`get_user_location`, `get_location_history`) now require a `username` argument.
     MCP is not described in this OpenAPI document.
-    See `2026-06-14-companion-auth-invites-backend-design.md`.
+    See `docs/history/specs/2026-06-14-companion-auth-invites-backend-design.md`.
 
     **v1.5.0 changes:** user-scoped location data vault under `/data/location/*`.
     Replaces conversation-scoped `/conversations/{id}/location/*`. Location events
     are append-only history; latest is derived. Optional `address` on ingest.
     MCP tools (`get_user_location`, `get_location_history`) are exposed at `POST /mcp`
     with bearer auth — not described in this OpenAPI document.
-    See `2026-06-13-companion-user-data-vault-design.md`.
+    See `docs/history/specs/2026-06-13-companion-user-data-vault-design.md`.
 
     **v1.4.0 changes:** assistant process stream — SSE `process` and
     `process_complete` events (reasoning + friendly tool labels), optional
     `process` field on assistant messages in `GET /messages`. Replaces SSE
-    `tool` event. See `2026-06-13-assistant-process-stream-design.md`.
+    `tool` event. See `docs/history/implemented/specs/2026-06-13-assistant-process-stream-design.md`.
 
     **v1.3.0 changes:** `PATCH /conversations/{id}/messages/{messageId}` edits the
     latest user message in a completed pair, discards the assistant reply, rotates

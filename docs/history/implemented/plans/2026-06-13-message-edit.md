@@ -4,6 +4,6 @@
 
 **Goal:** `PATCH /conversations/:id/messages/:messageId` edits the latest user message, discards the assistant reply, rotates Hermes session, re-runs.
 
-**Spec:** `docs/superpowers/implemented/specs/2026-06-13-message-edit-design.md`
+**Spec:** `docs/history/implemented/specs/2026-06-13-message-edit-design.md`
 
 **Tasks:** repo helpers → rewind event → message-editor service → PATCH route + tests → verify + deploy

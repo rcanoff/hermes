@@ -8,9 +8,9 @@
 
 **Tech Stack:** SwiftUI, Swift Concurrency, URLSession, CoreLocation, CLGeocoder, XCTest
 
-**Spec:** `docs/superpowers/specs/2026-06-13-companion-user-data-vault-design.md`  
+**Spec:** `docs/history/specs/2026-06-13-companion-user-data-vault-design.md`  
 **OpenAPI:** `docs/superpowers/specs/messaging-api.openapi.yaml` (v1.5.0)  
-**Prerequisite:** Base app implemented per `docs/superpowers/implemented/plans/2026-06-12-assistant-companion-plan.md` (auth, conversations, chat, SSE). Backend v1.5.0 deployed before live testing.
+**Prerequisite:** Base app implemented per `docs/history/implemented/plans/2026-06-12-assistant-companion-plan.md` (auth, conversations, chat, SSE). Backend v1.5.0 deployed before live testing.
 
 **Codebase location:** separate machine — paths below are relative to the `assistant-companion` Xcode project root.
 
