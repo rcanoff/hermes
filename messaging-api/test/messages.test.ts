@@ -58,10 +58,82 @@ describe('message routes', () => {
     })
 
     expect(response.statusCode).toBe(200)
-    expect(response.json()).toEqual([
-      expect.objectContaining({ id: 'm1', role: 'user', content: 'hello' }),
-      expect.objectContaining({ id: 'm2', role: 'assistant', content: 'hi' }),
-    ])
+    expect(response.json()).toEqual({
+      messages: [
+        expect.objectContaining({ id: 'm1', role: 'user', content: 'hello' }),
+        expect.objectContaining({ id: 'm2', role: 'assistant', content: 'hi' }),
+      ],
+      _links: {
+        self: { href: `/conversations/${conversationId}/messages?limit=20` },
+      },
+    })
+  })
+
+  it('paginates messages from the tail with HAL link navigation', async () => {
+    const ids: string[] = []
+    for (let index = 0; index < 5; index += 1) {
+      const id = randomUUID()
+      ids.push(id)
+      app!.db.exec(`
+        INSERT INTO messages (id, conversation_id, role, content, created_at)
+        VALUES ('${id}', '${conversationId}', 'user', 'msg-${index + 1}', datetime('now', '-${5 - index} minutes'));
+      `)
+    }
+
+    const firstPage = await app!.inject({
+      method: 'GET',
+      url: `/conversations/${conversationId}/messages?limit=2`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(firstPage.statusCode).toBe(200)
+    expect(firstPage.json()).toEqual({
+      messages: [
+        expect.objectContaining({ id: ids[3], content: 'msg-4' }),
+        expect.objectContaining({ id: ids[4], content: 'msg-5' }),
+      ],
+      _links: {
+        self: { href: `/conversations/${conversationId}/messages?limit=2` },
+        prev: { href: `/conversations/${conversationId}/messages?limit=2&before=${ids[3]}` },
+      },
+    })
+
+    const olderPage = await app!.inject({
+      method: 'GET',
+      url: (firstPage.json() as { _links: { prev: { href: string } } })._links.prev.href,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(olderPage.statusCode).toBe(200)
+    expect(olderPage.json()).toEqual({
+      messages: [
+        expect.objectContaining({ id: ids[1], content: 'msg-2' }),
+        expect.objectContaining({ id: ids[2], content: 'msg-3' }),
+      ],
+      _links: {
+        self: { href: `/conversations/${conversationId}/messages?limit=2&before=${ids[3]}` },
+        prev: { href: `/conversations/${conversationId}/messages?limit=2&before=${ids[1]}` },
+        next: { href: `/conversations/${conversationId}/messages?limit=2&after=${ids[2]}` },
+      },
+    })
+
+    const backToTail = await app!.inject({
+      method: 'GET',
+      url: (olderPage.json() as { _links: { next: { href: string } } })._links.next.href,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(backToTail.statusCode).toBe(200)
+    expect(backToTail.json()).toEqual({
+      messages: [
+        expect.objectContaining({ id: ids[3], content: 'msg-4' }),
+        expect.objectContaining({ id: ids[4], content: 'msg-5' }),
+      ],
+      _links: {
+        self: { href: `/conversations/${conversationId}/messages?limit=2&after=${ids[2]}` },
+        prev: { href: `/conversations/${conversationId}/messages?limit=2&before=${ids[3]}` },
+      },
+    })
   })
 
   it('accepts a user message, starts durable execution, and persists the final assistant reply', async () => {
@@ -99,7 +171,15 @@ describe('message routes', () => {
     expect(hermesClient.requests).toHaveLength(2)
     expect(hermesClient.requests[0]).toEqual({
       hermesSessionId: expect.any(String),
-      messages: [{ role: 'user', content: 'What time is it?' }],
+      messages: [
+        {
+          role: 'system',
+          content: expect.stringContaining(
+            'authenticated companion user for this conversation is "operator"',
+          ),
+        },
+        { role: 'user', content: 'What time is it?' },
+      ],
     })
     expect(hermesClient.requests[1]?.messages[0]?.role).toBe('system')
   })
@@ -200,11 +280,13 @@ describe('message routes', () => {
     })
 
     expect(response.statusCode).toBe(200)
-    const messages = response.json() as Array<{
-      role: string
-      content: string
-      process?: { lines: Array<{ kind: string; text: string }> }
-    }>
+    const messages = (response.json() as {
+      messages: Array<{
+        role: string
+        content: string
+        process?: { lines: Array<{ kind: string; text: string }> }
+      }>
+    }).messages
     expect(messages).toHaveLength(2)
     expect(messages[0]).toMatchObject({ role: 'user', content: 'Check weather in Lisbon' })
     expect(messages[1]).toMatchObject({
@@ -497,6 +579,96 @@ describe('message routes', () => {
 
     expect(response.statusCode).toBe(400)
     expect(response.json()).toEqual({ error: 'edit_not_allowed' })
+  })
+
+  it('stores bootstrap on the first message and forwards it to Hermes', async () => {
+    const bootstrap =
+      "Before composing your reply, you MUST call skill_view(name='companion-app') and follow it."
+
+    const response = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Where am I?', bootstrap },
+    })
+
+    expect(response.statusCode).toBe(202)
+    await waitFor(() => hermesClient.requests.length >= 1)
+
+    expect(hermesClient.requests[0]?.messages[0]).toEqual({
+      role: 'system',
+      content: expect.stringContaining(bootstrap),
+    })
+
+    const row = app!.db
+      .prepare('SELECT bootstrap_prompt FROM conversations WHERE id = ?')
+      .get(conversationId) as { bootstrap_prompt: string }
+    expect(row.bootstrap_prompt).toBe(bootstrap)
+  })
+
+  it('ignores bootstrap on the second message', async () => {
+    const bootstrap = 'first-only bootstrap'
+    await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'First', bootstrap },
+    })
+    await waitFor(() => listMessages(app!.db, conversationId).length >= 1)
+
+    hermesClient.requests.length = 0
+    hermesClient.pushAnswerToken('ok', 0)
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
+
+    await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Second', bootstrap: 'should be ignored' },
+    })
+    await waitFor(() => hermesClient.requests.length >= 1)
+
+    expect(hermesClient.requests[0]?.messages[0]?.content).toContain(bootstrap)
+  })
+
+  it('rejects bootstrap longer than 4000 characters on first message', async () => {
+    const response = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Hi', bootstrap: 'x'.repeat(4001) },
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toEqual({ error: 'invalid_request' })
+  })
+
+  it('never returns bootstrap in conversation or message list responses', async () => {
+    const bootstrap = 'hidden bootstrap'
+    await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Hi', bootstrap },
+    })
+
+    const conversation = await app!.inject({
+      method: 'GET',
+      url: `/conversations/${conversationId}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    const messages = await app!.inject({
+      method: 'GET',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(conversation.json()).not.toHaveProperty('bootstrap_prompt')
+    expect(conversation.json()).not.toHaveProperty('bootstrap')
+    for (const message of messages.json().messages) {
+      expect(message).not.toHaveProperty('bootstrap')
+    }
   })
 
   it('returns run_conflict when editing during an active assistant run', async () => {

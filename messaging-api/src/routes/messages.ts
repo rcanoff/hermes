@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify'
-import { getConversationForUser } from '../db/repos/conversations.js'
+import { getConversationForUser, setBootstrapPrompt } from '../db/repos/conversations.js'
 import { insertMessage, listMessages, listMessagesPage } from '../db/repos/messages.js'
+import { validateBootstrap } from '../lib/bootstrap.js'
 import { buildHalLinks, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
 import { getProcessByAssistantMessageIds } from '../db/repos/process.js'
 import { createRun, getActiveRun } from '../db/repos/runs.js'
@@ -12,6 +13,13 @@ import type { StreamEvent } from '../streams/hub.js'
 interface MessageBody {
   text?: string
   content?: string
+  bootstrap?: string
+}
+
+class BootstrapValidationError extends Error {
+  constructor() {
+    super('bootstrap_validation_failed')
+  }
 }
 
 const messageRoutes: FastifyPluginAsync = async (app) => {
@@ -86,7 +94,21 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     }
 
     try {
+      let bootstrapPrompt = conversation.bootstrap_prompt
+
       const created = app.db.transaction(() => {
+        const existingMessages = listMessages(app.db, conversation.id)
+        const isFirstMessage = existingMessages.length === 0
+
+        if (isFirstMessage && request.body.bootstrap !== undefined) {
+          const bootstrap = validateBootstrap(request.body.bootstrap)
+          if (!bootstrap) {
+            throw new BootstrapValidationError()
+          }
+          setBootstrapPrompt(app.db, conversation.id, bootstrap)
+          bootstrapPrompt = bootstrap
+        }
+
         const messageId = insertMessage(app.db, {
           conversationId: conversation.id,
           role: 'user',
@@ -115,7 +137,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         hermesSessionId: conversation.hermes_session_id,
         userMessageId: created.message.id,
         companionUsername: request.username,
-        bootstrapPrompt: conversation.bootstrap_prompt,
+        bootstrapPrompt,
         runId: created.runId,
       }).catch((error) => {
         app.log.error({ err: error, conversationId: conversation.id }, 'assistant run failed')
@@ -135,6 +157,10 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
 
       return reply.code(202).send({ message: created.message })
     } catch (error) {
+      if (error instanceof BootstrapValidationError) {
+        return reply.code(400).send({ error: 'invalid_request' })
+      }
+
       if (error instanceof Error && error.message === 'run_conflict') {
         return reply.code(409).send({ error: 'run_conflict' })
       }
