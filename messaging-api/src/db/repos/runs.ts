@@ -8,6 +8,7 @@ export interface RunRow {
   conversation_id: string
   user_message_id: string
   assistant_message_id: string | null
+  origin_session_id: string
   status: RunStatus
   error_code: string | null
   error_detail: string | null
@@ -15,13 +16,18 @@ export interface RunRow {
   finished_at: string | null
 }
 
-export function createRun(db: Database.Database, conversationId: string, userMessageId: string): string {
+export function createRun(
+  db: Database.Database,
+  conversationId: string,
+  userMessageId: string,
+  originSessionId: string,
+): string {
   const id = randomUUID()
   try {
     db.prepare(`
-      INSERT INTO message_runs (id, conversation_id, user_message_id, status)
-      VALUES (?, ?, ?, 'running')
-    `).run(id, conversationId, userMessageId)
+      INSERT INTO message_runs (id, conversation_id, user_message_id, origin_session_id, status)
+      VALUES (?, ?, ?, ?, 'running')
+    `).run(id, conversationId, userMessageId, originSessionId)
   } catch (error) {
     if (isRunConflictError(error)) {
       throw new Error('run_conflict')
@@ -36,7 +42,7 @@ export function createRun(db: Database.Database, conversationId: string, userMes
 export function getActiveRun(db: Database.Database, conversationId: string): RunRow | undefined {
   return db
     .prepare(`
-      SELECT id, conversation_id, user_message_id, assistant_message_id, status, error_code, error_detail, started_at, finished_at
+      SELECT id, conversation_id, user_message_id, assistant_message_id, origin_session_id, status, error_code, error_detail, started_at, finished_at
       FROM message_runs
       WHERE conversation_id = ? AND status = 'running'
     `)

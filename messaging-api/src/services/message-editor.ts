@@ -74,7 +74,7 @@ export function applyMessageEdit(
     }
 
     const hermesSessionId = rotateHermesSessionId(db, conversationId)
-    const runId = createRun(db, conversationId, messageId)
+    const runId = createRun(db, conversationId, messageId, 'legacy')
 
     emitConversationMessagesRewound(db, userId, conversationId, [assistantMessage.id])
     emitConversationMessageUpsert(db, userId, conversationId, message)

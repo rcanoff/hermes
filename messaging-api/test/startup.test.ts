@@ -266,7 +266,7 @@ describe('durable run execution', () => {
       INSERT INTO message_runs (id, conversation_id, user_message_id, status) VALUES ('r1', 'c1', 'm1', 'running');
     `)
 
-    expect(() => createRun(db, 'c1', 'm1')).toThrow('run_conflict')
+    expect(() => createRun(db, 'c1', 'm1', 'legacy')).toThrow('run_conflict')
   })
 
   it('fails the run when Hermes closes without an explicit done event', async () => {

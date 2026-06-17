@@ -23,7 +23,7 @@ export interface ExecuteAssistantRunInput {
 }
 
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
-  const runId = input.runId ?? createRun(input.db, input.conversationId, input.userMessageId)
+  const runId = input.runId ?? createRun(input.db, input.conversationId, input.userMessageId, 'legacy')
   const history = listMessages(input.db, input.conversationId)
   const hermesMessages = buildHermesMessages(history, {
     bootstrapPrompt: input.bootstrapPrompt,

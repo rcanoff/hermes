@@ -63,6 +63,15 @@ describe('schema', () => {
     expect(columns.map((c) => c.name)).toContain('bootstrap_prompt')
   })
 
+  it('includes origin_session_id on message_runs', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const columns = db
+      .prepare(`PRAGMA table_info(message_runs)`)
+      .all() as Array<{ name: string }>
+    expect(columns.map((column) => column.name)).toContain('origin_session_id')
+  })
+
   it('creates the durable run tables', () => {
     const db = new Database(':memory:')
 

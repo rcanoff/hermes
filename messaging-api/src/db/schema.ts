@@ -136,7 +136,20 @@ export function initSchema(db: Database.Database): void {
   ensureLegacyUserColumns(db)
   ensureLegacyConversationColumns(db)
   ensureLegacyHealthDailySummaries(db)
+  ensureMessageRunsOriginSessionId(db)
   ensureChatSyncEvents(db)
+}
+
+function ensureMessageRunsOriginSessionId(db: Database.Database): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(message_runs)`)
+    .all() as Array<{ name: string }>
+  if (!columns.some((column) => column.name === 'origin_session_id')) {
+    db.exec(`
+      ALTER TABLE message_runs
+      ADD COLUMN origin_session_id TEXT NOT NULL DEFAULT 'legacy'
+    `)
+  }
 }
 
 function ensureLegacyConversationColumns(db: Database.Database): void {

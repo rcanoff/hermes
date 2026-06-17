@@ -116,7 +116,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
           role: 'user',
           content,
         })
-        const runId = createRun(app.db, conversation.id, messageId)
+        const runId = createRun(app.db, conversation.id, messageId, 'legacy')
         const messages = listMessages(app.db, conversation.id)
         const message = messages.find((entry) => entry.id === messageId)
 
