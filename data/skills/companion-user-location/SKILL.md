@@ -7,7 +7,7 @@ license: MIT
 metadata:
   hermes:
     tags: [companion, location, mcp, mobile, maps, travel, data]
-    related_skills: [companion-replies, companion-map-preview, companion-links, companion-account-management]
+    related_skills: [companion-replies, companion-map-preview, companion-links, companion-account-management, companion-user-health]
 ---
 
 # Companion User Location

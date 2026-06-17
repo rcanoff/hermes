@@ -6,7 +6,7 @@ author: Hermes Agent
 metadata:
   hermes:
     tags: [companion, index, routing, mobile]
-    related_skills: [companion-replies, companion-user-location, companion-map-preview, companion-links, companion-markdown-blocks]
+    related_skills: [companion-replies, companion-user-location, companion-user-health, companion-map-preview, companion-links, companion-markdown-blocks]
 ---
 
 # Companion App
@@ -34,6 +34,9 @@ Before writing any Companion App reply, load `companion-replies` and follow its 
 | "Where am I?" / current position | `companion-user-location` → `companion-replies` → `companion-map-preview` | Fetch data first |
 | Route / directions | `companion-user-location` (if origin is "here") → `companion-map-preview` (+ optional `companion-links`) | |
 | Location history | `companion-user-location` → plain text or `companion-markdown-blocks` | Map only if user asks to see a place |
+| Steps / activity today | `companion-user-health` → `companion-replies` | Fetch data first |
+| Steps to goal / ring progress | `companion-user-health` → `companion-replies` (optional `companion-markdown-blocks`) | Note `partial` + `synced_at` staleness |
+| Health history ("steps last Tuesday") | `companion-user-health` → plain text or `companion-markdown-blocks` | Use `get_user_health_daily` or history |
 
 ## Workflow
 
