@@ -10,6 +10,7 @@ import inviteLandingRoutes from './routes/invite-landing.js'
 import conversationRoutes from './routes/conversations.js'
 import messageRoutes from './routes/messages.js'
 import dataLocationRoutes from './routes/data-location.js'
+import dataHealthRoutes from './routes/data-health.js'
 import mcpRoutes from './routes/mcp.js'
 import { AddressEnrichmentQueue } from './services/address-enrichment.js'
 import { OpenAiHermesClient } from './services/hermes-client.js'
@@ -62,6 +63,7 @@ export function buildApp(options: AppOptions) {
   app.register(conversationRoutes)
   app.register(messageRoutes)
   app.register(dataLocationRoutes)
+  app.register(dataHealthRoutes)
   app.register(mcpRoutes)
 
   app.get('/health', async () => ({ ok: true }))
