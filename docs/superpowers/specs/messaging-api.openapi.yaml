@@ -1,9 +1,18 @@
 openapi: 3.1.0
 info:
   title: Hermes Messaging API
-  version: 1.9.0
+  version: 2.0.0
   description: |
     Private API bridging mobile clients to Hermes.
+
+    **v2.0.0 changes:** user-scoped health daily summary vault under
+    `/data/health/daily-summaries`. `POST` upserts by local calendar day
+    (`partial` / `finalized_at`); `GET .../latest` returns the newest day;
+    `GET .../daily-summaries` lists history with HAL `_links` (`limit`, `before`,
+    `after`). Companion MCP tools `get_user_health_today`, `get_user_health_daily`,
+    and `get_user_health_history` mirror REST read paths — MCP is not described in
+    this OpenAPI document. See
+    `docs/superpowers/specs/2026-06-17-companion-health-vault-backend-design.md`.
 
     **v1.9.0 changes:** iOS-authored Hermes bootstrap per conversation. Optional
     `bootstrap` on `POST /conversations` and on the **first** `POST
@@ -71,6 +80,7 @@ tags:
   - name: conversations
   - name: messages
   - name: data-location
+  - name: data-health
   - name: health
 
 components:
@@ -97,6 +107,7 @@ components:
             - run_conflict
             - no_active_run
             - edit_not_allowed
+            - day_finalized
 
     InviteMetadataValid:
       type: object
@@ -442,6 +453,93 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/LocationEvent'
+        _links:
+          $ref: '#/components/schemas/HalLinks'
+
+    HealthMetric:
+      type: object
+      required: [value, unit, goal, remaining]
+      properties:
+        value:
+          type: number
+          minimum: 0
+        unit:
+          type: string
+          enum: [count, m, kcal, min, h]
+        goal:
+          type: ['number', 'null']
+          minimum: 0
+        remaining:
+          type: ['number', 'null']
+          minimum: 0
+
+    HealthMetrics:
+      type: object
+      properties:
+        steps:
+          $ref: '#/components/schemas/HealthMetric'
+        distance_walking_running:
+          $ref: '#/components/schemas/HealthMetric'
+        active_energy:
+          $ref: '#/components/schemas/HealthMetric'
+        exercise_minutes:
+          $ref: '#/components/schemas/HealthMetric'
+        stand_hours:
+          $ref: '#/components/schemas/HealthMetric'
+
+    HealthDailySummary:
+      type: object
+      required: [id, user_id, date, timezone, partial, synced_at, source, metrics]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        date:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        timezone:
+          type: string
+        partial:
+          type: boolean
+        finalized_at:
+          type: ['string', 'null']
+        synced_at:
+          type: string
+        source:
+          type: string
+          enum: [healthkit]
+        metrics:
+          $ref: '#/components/schemas/HealthMetrics'
+
+    UpsertHealthDailySummaryRequest:
+      type: object
+      required: [date, timezone, partial, source, metrics]
+      properties:
+        date:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        timezone:
+          type: string
+          minLength: 1
+        partial:
+          type: boolean
+        source:
+          type: string
+          enum: [healthkit]
+        metrics:
+          $ref: '#/components/schemas/HealthMetrics'
+
+    HealthDailySummaryListResponse:
+      type: object
+      required: [summaries, _links]
+      properties:
+        summaries:
+          type: array
+          items:
+            $ref: '#/components/schemas/HealthDailySummary'
         _links:
           $ref: '#/components/schemas/HalLinks'
 
@@ -1214,6 +1312,126 @@ paths:
                 $ref: '#/components/schemas/LocationEvent'
         '404':
           description: No location events for this user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /data/health/daily-summaries:
+    post:
+      tags: [data-health]
+      summary: Upsert a health daily summary
+      description: |
+        Ingests or updates a user-scoped health daily summary for a local calendar
+        day. Upserts on `(user_id, date)`. When a day is finalized (`partial: false`),
+        subsequent upserts with `partial: true` are rejected with `409 day_finalized`.
+        Idempotent re-sync with `partial: false` on an already finalized day is allowed.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertHealthDailySummaryRequest'
+      responses:
+        '204':
+          description: Summary accepted
+        '400':
+          description: Invalid payload or metric validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Cannot reopen a finalized day
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                day_finalized:
+                  value: { error: day_finalized }
+
+    get:
+      tags: [data-health]
+      summary: List health daily summary history
+      description: |
+        Returns a paginated window of health daily summaries for the authenticated
+        user, newest days first. Default `limit=20`. Follow `_links.next` for older
+        days and `_links.prev` for newer days.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: before
+          in: query
+          description: Summary id — return days older than this anchor
+          schema:
+            type: string
+            format: uuid
+        - name: after
+          in: query
+          description: Summary id — return days newer than this anchor
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Paginated history (newest first)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthDailySummaryListResponse'
+        '400':
+          description: Invalid query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /data/health/daily-summaries/latest:
+    get:
+      tags: [data-health]
+      summary: Get latest health daily summary for the authenticated user
+      description: |
+        Returns the summary for the most recent local calendar `date` for the
+        authenticated user (typically today when syncing).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Latest summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthDailySummary'
+        '404':
+          description: No health summaries for this user
           content:
             application/json:
               schema:
