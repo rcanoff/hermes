@@ -13,7 +13,7 @@ Older specs and plans (dated before today’s active work) are archived in [`doc
 
 ## Current active work
 
-- **Companion health vault** (OpenAPI v2.0.0 — planned)
+- **Companion health vault** (OpenAPI v2.0.0 — backend shipped; iOS planned)
   - Overview: `specs/2026-06-17-companion-health-vault-design.md`
   - Backend: `specs/2026-06-17-companion-health-vault-backend-design.md`
   - Backend plan: `plans/2026-06-17-companion-health-vault-backend.md`

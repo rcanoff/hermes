@@ -409,6 +409,28 @@ Replace `<COMPANION_MCP_BEARER_TOKEN>` with the same value from `.env`. Reload M
 
 The `companion-user-location` skill in `data/skills/` calls `get_user_location` and `get_location_history` on this MCP server.
 
+### User health vault
+
+The companion app syncs daily HealthKit summaries to a user-scoped vault. Hermes reads health data only through the companion MCP skill — the API does not query HealthKit or finalize days.
+
+**API (v2.0.0):** Health routes under `/data/health/daily-summaries`:
+
+- `POST /data/health/daily-summaries` — upsert by local calendar day (`partial` / `finalized_at`)
+- `GET /data/health/daily-summaries/latest` — newest day for the authenticated user
+- `GET /data/health/daily-summaries` — HAL paginated history (`limit`, `before`, `after`)
+
+Full contract: [`docs/superpowers/specs/messaging-api.openapi.yaml`](docs/superpowers/specs/messaging-api.openapi.yaml).
+
+Companion MCP tools (same bearer token as location):
+
+- `get_user_health_today` — latest summary by `date`
+- `get_user_health_daily` — summary for a specific `YYYY-MM-DD`
+- `get_user_health_history` — paginated summaries with HAL `_links`
+
+The `companion-user-health` skill in `data/skills/` normalizes vault data for `companion-replies` and `companion-markdown-blocks`. Route health intents via `companion-app`.
+
+iOS owns HealthKit sync, step goals, and day finalization. Client implementation: [`docs/superpowers/plans/2026-06-17-companion-health-vault-ios.md`](docs/superpowers/plans/2026-06-17-companion-health-vault-ios.md).
+
 ## Persistence check
 
 Hermes state is stored on the host at `./data` and mounted into the container at `/opt/data`.

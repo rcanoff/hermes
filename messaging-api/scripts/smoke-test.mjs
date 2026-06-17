@@ -64,7 +64,7 @@ try {
     })
     const inviteText = inviteResult.content.find((part) => part.type === 'text')?.text
     const invite = JSON.parse(inviteText)
-    const rawToken = invite.url.split('/invite/')[1]
+    const rawToken = invite.token
     const username = `smoke_${Date.now().toString(36)}`
     const activate = await req('POST', '/auth/activate', {
       body: { token: rawToken, username, password: 'smoke-test-pass12' },
@@ -99,10 +99,17 @@ try {
   const id2 = c2.json.id
 
   const listBefore = await req('GET', '/conversations', { token })
-  const orderBefore = listBefore.json.map((conversation) => conversation.id)
+  const conversationsBefore = listBefore.json.conversations ?? []
+  const orderBefore = conversationsBefore.map((conversation) => conversation.id)
   const pairBefore = orderBefore.filter((conversationId) => conversationId === id1 || conversationId === id2)
-  const c2Before = listBefore.json.find((conversation) => conversation.id === id2)
-  const c1Before = listBefore.json.find((conversation) => conversation.id === id1)
+  const c2Before = conversationsBefore.find((conversation) => conversation.id === id2)
+  const c1Before = conversationsBefore.find((conversation) => conversation.id === id1)
+  if (listBefore.json._links?.self?.href) {
+    pass('GET /conversations returns HAL self link', listBefore.json._links.self.href)
+  } else {
+    fail('GET /conversations HAL self link', JSON.stringify(listBefore.json))
+  }
+
   if (
     listBefore.status === 200 &&
     pairBefore.length === 2 &&
@@ -125,8 +132,9 @@ try {
   await new Promise((resolve) => setTimeout(resolve, 2000))
 
   const listAfter = await req('GET', '/conversations', { token })
-  const orderAfter = listAfter.json.map((conversation) => conversation.id)
-  const bumped = listAfter.json.find((conversation) => conversation.id === id1)
+  const conversationsAfter = listAfter.json.conversations ?? []
+  const orderAfter = conversationsAfter.map((conversation) => conversation.id)
+  const bumped = conversationsAfter.find((conversation) => conversation.id === id1)
   const pairAfter = orderAfter.filter((conversationId) => conversationId === id1 || conversationId === id2)
   if (listAfter.status === 200 && pairAfter[0] === id1 && pairAfter[1] === id2) {
     pass('list order after message', 'messaged conversation ahead of sibling')
@@ -160,6 +168,39 @@ try {
     pass('MCP get_user_location', locPayload.available ? 'available' : 'unavailable')
   } else {
     fail('MCP get_user_location', locText)
+  }
+
+  const healthDate = new Date().toISOString().slice(0, 10)
+  const healthUpsert = await req('POST', '/data/health/daily-summaries', {
+    token,
+    body: {
+      date: healthDate,
+      timezone: 'Europe/Lisbon',
+      partial: true,
+      source: 'healthkit',
+      metrics: {
+        steps: { value: 6432, unit: 'count', goal: 10000, remaining: 3568 },
+      },
+    },
+  })
+  if (healthUpsert.status === 204) {
+    pass('POST /data/health/daily-summaries')
+  } else {
+    fail('POST /data/health/daily-summaries', `${healthUpsert.status} ${JSON.stringify(healthUpsert.json)}`)
+  }
+
+  const health = await client.callTool({
+    name: 'get_user_health_today',
+    arguments: { username: me.json.username },
+  })
+  const healthText = health.content.find((part) => part.type === 'text')?.text
+  const healthPayload = JSON.parse(healthText)
+  if (healthPayload.available && healthPayload.metrics?.steps?.value === 6432) {
+    pass('MCP get_user_health_today', `steps=${healthPayload.metrics.steps.value}`)
+  } else if (typeof healthPayload.available === 'boolean') {
+    pass('MCP get_user_health_today', healthPayload.available ? 'available' : 'unavailable')
+  } else {
+    fail('MCP get_user_health_today', healthText)
   }
 
   await transport.close()
