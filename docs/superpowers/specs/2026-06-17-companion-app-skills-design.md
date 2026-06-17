@@ -1,9 +1,9 @@
 # Companion App Skills Index & iOS Bootstrap — Design Spec
 
 **Date:** 2026-06-17  
-**Status:** Draft — pending review  
+**Status:** Approved  
 **API version:** v1.9.0 (OpenAPI)  
-**Plans (to be written after approval):**
+**Plans:**
 - `docs/superpowers/plans/2026-06-17-companion-app-skills-backend.md` — **this repo**
 - `docs/superpowers/plans/2026-06-17-companion-app-skills-ios.md` — **reference only; `assistant-companion` repo**  
 **OpenAPI:** `docs/superpowers/specs/messaging-api.openapi.yaml`  

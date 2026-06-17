@@ -1,9 +1,29 @@
 openapi: 3.1.0
 info:
   title: Hermes Messaging API
-  version: 1.6.0
+  version: 1.9.0
   description: |
     Private API bridging mobile clients to Hermes.
+
+    **v1.9.0 changes:** iOS-authored Hermes bootstrap per conversation. Optional
+    `bootstrap` on `POST /conversations` and on the **first** `POST
+    /conversations/{id}/messages` only (min 1, max 4000 chars). Stored server-side
+    as `bootstrap_prompt`, prepended to every Hermes call, **never** returned in
+    GET responses. Removes API-hardcoded companion skill routing; iOS sends
+    `skill_view(name='companion-app')` instructions. See
+    `2026-06-17-companion-app-skills-design.md`.
+
+    **v1.8.0 changes:** live process streaming — SSE `process_token` events stream
+    reasoning text incrementally; tool `Done:` lines emit when Hermes reports tool
+    completion. Requires companion app update for `process_token` handling.
+    See `2026-06-15-companion-live-streaming-ios.md`.
+
+    **v1.7.0 changes:** HAL `_links` pagination on all list endpoints:
+    `GET /conversations`, `GET /conversations/{id}/messages`, and
+    `GET /data/location/events`. Query params `limit` (default 20, max 100),
+    `before`, and `after` (mutually exclusive UUID anchors). MCP
+    `get_location_history` returns the same envelope. Replaces bare array and
+    events-only list responses. See `2026-06-15-list-pagination-hal-design.md`.
 
     **v1.6.0 changes:** invite-based account provisioning. Bootstrap user removed.
     New routes: `GET /invite/{token}`, `GET /auth/invite/{token}`,
@@ -243,9 +263,28 @@ components:
           $ref: '#/components/schemas/MessageProcess'
           description: Present on assistant messages when the turn had process activity
 
+    CreateConversationRequest:
+      type: object
+      description: |
+        Optional body when creating a conversation. All fields are optional.
+        `bootstrap` may also be sent on the first message instead.
+      properties:
+        bootstrap:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: |
+            Hermes system bootstrap for this conversation. Stored once;
+            never returned in GET responses. iOS typically sends
+            `skill_view(name='companion-app')` instructions here or on the
+            first message.
+
     CreateMessageRequest:
       type: object
-      description: Provide `text` (preferred) or `content` (legacy alias).
+      description: |
+        Provide `text` (preferred) or `content` (legacy alias). Optional
+        `bootstrap` is accepted only on the **first message** of a conversation
+        when no bootstrap is stored yet.
       properties:
         text:
           type: string
@@ -253,6 +292,15 @@ components:
         content:
           type: string
           minLength: 1
+        bootstrap:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: |
+            Hermes system bootstrap. Accepted only when this is the first
+            message in the conversation and `bootstrap_prompt` is not already
+            set. Ignored on subsequent messages. Not persisted as a message;
+            never returned in GET responses.
 
     EditMessageRequest:
       type: object
@@ -345,14 +393,57 @@ components:
         created_at:
           type: string
 
-    LocationEventList:
+    HalLink:
       type: object
-      required: [events]
+      required: [href]
+      properties:
+        href:
+          type: string
+          example: /conversations?limit=20&before=00000000-0000-4000-8000-000000000001
+
+    HalLinks:
+      type: object
+      required: [self]
+      properties:
+        self:
+          $ref: '#/components/schemas/HalLink'
+        next:
+          $ref: '#/components/schemas/HalLink'
+        prev:
+          $ref: '#/components/schemas/HalLink'
+
+    ConversationListResponse:
+      type: object
+      required: [conversations, _links]
+      properties:
+        conversations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Conversation'
+        _links:
+          $ref: '#/components/schemas/HalLinks'
+
+    MessageListResponse:
+      type: object
+      required: [messages, _links]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        _links:
+          $ref: '#/components/schemas/HalLinks'
+
+    LocationEventListResponse:
+      type: object
+      required: [events, _links]
       properties:
         events:
           type: array
           items:
             $ref: '#/components/schemas/LocationEvent'
+        _links:
+          $ref: '#/components/schemas/HalLinks'
 
     HealthResponse:
       type: object
@@ -378,6 +469,17 @@ components:
           enum: [reasoning, tool]
         text:
           type: string
+
+    SseProcessTokenEvent:
+      type: object
+      required: [kind, text]
+      properties:
+        kind:
+          type: string
+          const: reasoning
+        text:
+          type: string
+          description: Reasoning delta; append to the in-flight reasoning line in the process block
 
     SseProcessCompleteEvent:
       type: object
@@ -617,17 +719,45 @@ paths:
     get:
       tags: [conversations]
       summary: List conversations
+      description: |
+        Returns a paginated window of conversations for the authenticated user,
+        newest first. Default `limit=20`. Follow `_links.next` for older threads
+        and `_links.prev` for newer threads.
       security:
         - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: before
+          in: query
+          description: Conversation id — return page older than this anchor
+          schema:
+            type: string
+            format: uuid
+        - name: after
+          in: query
+          description: Conversation id — return page newer than this anchor
+          schema:
+            type: string
+            format: uuid
       responses:
         '200':
-          description: Conversations ordered by created_at descending
+          description: Paginated conversations (newest first)
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Conversation'
+                $ref: '#/components/schemas/ConversationListResponse'
+        '400':
+          description: Invalid pagination query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
     post:
       tags: [conversations]
@@ -635,8 +765,20 @@ paths:
       description: |
         Creates a conversation with `title: null`. Title is set later by
         auto-generation on the first message, or by PATCH.
+
+        Optional `bootstrap` stores Hermes skill-routing instructions for the
+        conversation (write-only; not returned in GET). If omitted here, iOS
+        may send `bootstrap` on the first message instead. When both are
+        provided, the first message wins only if no bootstrap was stored at
+        create time.
       security:
         - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConversationRequest'
       responses:
         '201':
           description: Conversation created
@@ -743,17 +885,46 @@ paths:
     get:
       tags: [messages]
       summary: List messages
+      description: |
+        Returns a paginated message window. Default (no anchors) returns the
+        **tail** — the last `limit` messages in chronological order within the
+        page. Follow `_links.prev` for older history and `_links.next` toward
+        the present.
       security:
         - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: before
+          in: query
+          description: Message id — return older messages before this anchor
+          schema:
+            type: string
+            format: uuid
+        - name: after
+          in: query
+          description: Message id — return newer messages after this anchor
+          schema:
+            type: string
+            format: uuid
       responses:
         '200':
-          description: Message history ordered by created_at ascending
+          description: Paginated messages (chronological within page)
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Message'
+                $ref: '#/components/schemas/MessageListResponse'
+        '400':
+          description: Invalid pagination query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: Not found or not owned
           content:
@@ -770,6 +941,11 @@ paths:
         On the **first message** of a conversation with `title: null`, the
         backend also starts background title generation (parallel Hermes call).
         Connected stream clients may receive a `title` SSE event.
+
+        Optional `bootstrap` on the first message stores Hermes skill-routing
+        instructions for the conversation (write-only; not returned in GET).
+        Ignored on second and later messages. Invalid `bootstrap` (empty or
+        longer than 4000 characters) returns `400 invalid_request`.
       security:
         - bearerAuth: []
       requestBody:
@@ -786,7 +962,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/CreateMessageResponse'
         '400':
-          description: Invalid or empty message
+          description: Invalid or empty message, or invalid bootstrap on first message
           content:
             application/json:
               schema:
@@ -890,16 +1066,18 @@ paths:
         Server-Sent Events for the current active run. Attaches only to the
         in-flight run; no replay. Stream ends on `done` or `error`.
 
-        **Two-phase assistant stream:** `process` events (reasoning + tool
-        labels) may precede `process_complete`, then `token` events for the
-        final reply. Instant replies may omit the process phase.
+        **Two-phase assistant stream:** `process_token` streams reasoning text
+        incrementally; `process` emits completed reasoning or tool lines (including
+        `Done:` tool completion); `process_complete` ends the process block; `token`
+        events carry the final reply. Instant replies may omit the process phase.
 
         **SSE events:**
 
         | event | data schema | when |
         |-------|-------------|------|
         | `rewind` | `SseRewindEvent` | Messages removed before a replacement run (message edit) |
-        | `process` | `SseProcessEvent` | Reasoning summary or friendly tool label (append in one process block) |
+        | `process_token` | `SseProcessTokenEvent` | Reasoning delta while Hermes is thinking |
+        | `process` | `SseProcessEvent` | Completed reasoning line, tool start label, or `Done:` tool completion |
         | `process_complete` | `SseProcessCompleteEvent` | Process phase ended; collapse process UI before reply |
         | `token` | `SseTokenEvent` | Assistant reply text chunk |
         | `title` | `SseTitleEvent` | Auto-generated title saved (first message only) |
@@ -910,6 +1088,8 @@ paths:
       x-sse-events:
         rewind:
           $ref: '#/components/schemas/SseRewindEvent'
+        process_token:
+          $ref: '#/components/schemas/SseProcessTokenEvent'
         process:
           $ref: '#/components/schemas/SseProcessEvent'
         process_complete:
@@ -989,7 +1169,13 @@ paths:
             default: 20
         - name: before
           in: query
-          description: Event id cursor — return events older than this id
+          description: Event id — return events older than this anchor
+          schema:
+            type: string
+            format: uuid
+        - name: after
+          in: query
+          description: Event id — return events newer than this anchor
           schema:
             type: string
             format: uuid
@@ -999,7 +1185,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LocationEventList'
+                $ref: '#/components/schemas/LocationEventListResponse'
         '400':
           description: Invalid query
           content:
