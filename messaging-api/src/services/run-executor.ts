@@ -17,6 +17,7 @@ import { buildHermesMessages } from './prompt-builder.js'
 import type { HermesClient } from './hermes-client.js'
 import { formatToolProcessLine } from './process-labeler.js'
 import { emitConversationMessageUpsert } from './chat-sync-emitter.js'
+import { generateAndSaveTitle } from './title-generator.js'
 
 export interface ExecuteAssistantRunInput {
   db: Database.Database
@@ -31,6 +32,8 @@ export interface ExecuteAssistantRunInput {
   rewindMessageIds?: string[]
   userId: string
   originSessionId: string | null
+  shouldGenerateTitle?: boolean
+  userMessageText?: string
 }
 
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
@@ -108,9 +111,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
         continue
       }
 
-      if (event.type === 'tool_complete' && event.name) {
-        const text = formatToolProcessLine(event.name, event.arguments, event.label)
-        publishProcessLine({ kind: 'tool', text: `Done: ${text}` })
+      if (event.type === 'tool_complete') {
         continue
       }
 
@@ -128,6 +129,22 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
     if (!sawDone) {
       throw new Error('Hermes stream ended without a done event')
+    }
+
+    if (input.shouldGenerateTitle && input.userMessageText) {
+      try {
+        await generateAndSaveTitle({
+          db: input.db,
+          hermesClient: input.hermesClient,
+          hub: input.hub,
+          conversationId: input.conversationId,
+          userId: input.userId,
+          userMessageText: input.userMessageText,
+          originSessionId: input.originSessionId,
+        })
+      } catch {
+        // Title generation is best-effort; do not fail the assistant run.
+      }
     }
 
     const assistantMessageId = persistCompletedRun(

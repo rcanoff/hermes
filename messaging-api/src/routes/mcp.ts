@@ -214,6 +214,37 @@ function createMcpServer(toolHandlers: McpToolHandlers): McpServer {
     async (input) => executeToolCall(() => toolHandlers.revoke_companion_invite(input)),
   )
 
+  server.registerTool(
+    'create_job_conversation',
+    {
+      description: 'Create a companion job conversation for a scheduled Hermes cron job',
+      inputSchema: {
+        username: z.string().describe('Companion account username'),
+        name: z.string().describe('Human-friendly job name / conversation title'),
+        schedule_display: z
+          .string()
+          .optional()
+          .describe('Human-readable schedule label (e.g. 30 9 * * *)'),
+      },
+    },
+    async (input) => executeToolCall(() => toolHandlers.create_job_conversation(input)),
+  )
+
+  server.registerTool(
+    'link_job_conversation',
+    {
+      description: 'Link a Hermes cron job id to an existing job conversation',
+      inputSchema: {
+        username: z.string().describe('Companion account username'),
+        conversation_id: z.string().describe('Job conversation id'),
+        hermes_job_id: z.string().describe('Hermes cron job id from cronjob create'),
+        schedule_display: z.string().optional().describe('Optional schedule label update'),
+        job_enabled: z.boolean().optional().describe('Optional cached enabled flag'),
+      },
+    },
+    async (input) => executeToolCall(() => toolHandlers.link_job_conversation(input)),
+  )
+
   return server
 }
 

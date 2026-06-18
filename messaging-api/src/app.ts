@@ -14,6 +14,8 @@ import eventsRoutes from './routes/events.js'
 import dataLocationRoutes from './routes/data-location.js'
 import dataHealthRoutes from './routes/data-health.js'
 import mcpRoutes from './routes/mcp.js'
+import jobRoutes from './routes/jobs.js'
+import cronInternalRoutes from './routes/cron-internal.js'
 import { AddressEnrichmentQueue } from './services/address-enrichment.js'
 import { OpenAiHermesClient } from './services/hermes-client.js'
 import { StreamHub } from './streams/hub.js'
@@ -27,6 +29,7 @@ declare module 'fastify' {
     streamHub: StreamHub
     addressEnrichmentQueue: AddressEnrichmentQueueType
     companionMcpBearerToken: string
+    cronWebhookBearer: string
     messagingApiHost: string
     inviteExpiryHours: number
     minPasswordLength: number
@@ -46,6 +49,7 @@ export function buildApp(options: AppOptions) {
   app.decorate('streamHub', options.streamHub ?? new StreamHub())
   app.decorate('streamWaitMs', options.streamWaitMs ?? 30_000)
   app.decorate('companionMcpBearerToken', options.companionMcpBearerToken)
+  app.decorate('cronWebhookBearer', options.cronWebhookBearer)
   app.decorate('messagingApiHost', options.messagingApiHost)
   app.decorate('inviteExpiryHours', options.inviteExpiryHours)
   app.decorate('minPasswordLength', options.minPasswordLength)
@@ -64,6 +68,8 @@ export function buildApp(options: AppOptions) {
   app.register(authRoutes)
   app.register(chatSyncRoutes)
   app.register(conversationRoutes)
+  app.register(jobRoutes)
+  app.register(cronInternalRoutes)
   app.register(messageRoutes)
   app.register(eventsRoutes)
   app.register(dataLocationRoutes)

@@ -225,15 +225,16 @@ describe('chat sync routes', () => {
     })
     expect(postResponse.statusCode).toBe(202)
 
-    completeTitleStream(hermesClient)
     hermesClient.pushAnswerToken('Reply', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
+    await completeTitleAfterReply(hermesClient)
     await waitFor(() => listMessages(app!.db, conversationId).some((message) => message.role === 'assistant'))
   }
 })
 
-function completeTitleStream(hermesClient: FakeHermesClient, title = 'Title'): void {
+async function completeTitleAfterReply(hermesClient: FakeHermesClient, title = 'Title'): Promise<void> {
+  await waitFor(() => hermesClient.requests.length >= 2)
   hermesClient.pushAnswerToken(title, 1)
   hermesClient.pushDone(1)
   hermesClient.closeWithoutDone(1)

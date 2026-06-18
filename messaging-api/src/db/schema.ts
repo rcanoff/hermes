@@ -135,6 +135,7 @@ export function initSchema(db: Database.Database): void {
 
   ensureLegacyUserColumns(db)
   ensureLegacyConversationColumns(db)
+  ensureJobConversationColumns(db)
   ensureLegacyHealthDailySummaries(db)
   ensureMessageRunsOriginSessionId(db)
   ensureChatSyncEvents(db)
@@ -169,6 +170,50 @@ function ensureLegacyConversationColumns(db: Database.Database): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS conversations_user_updated_idx
       ON conversations (user_id, updated_at DESC, id DESC)
+  `)
+}
+
+function ensureJobConversationColumns(db: Database.Database): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(conversations)`)
+    .all() as Array<{ name: string }>
+
+  if (!columns.some((column) => column.name === 'kind')) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN kind TEXT NOT NULL DEFAULT 'regular'`)
+  }
+
+  if (!columns.some((column) => column.name === 'hermes_job_id')) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN hermes_job_id TEXT`)
+  }
+
+  if (!columns.some((column) => column.name === 'schedule_display')) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN schedule_display TEXT`)
+  }
+
+  if (!columns.some((column) => column.name === 'job_enabled')) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN job_enabled INTEGER NOT NULL DEFAULT 1`)
+  }
+
+  if (!columns.some((column) => column.name === 'job_last_run_at')) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN job_last_run_at TEXT`)
+  }
+
+  if (!columns.some((column) => column.name === 'job_last_status')) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN job_last_status TEXT`)
+  }
+
+  db.exec(`UPDATE conversations SET kind = 'regular' WHERE kind IS NULL`)
+  db.exec(`UPDATE conversations SET job_enabled = 1 WHERE job_enabled IS NULL`)
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS conversations_hermes_job_id_idx
+      ON conversations (hermes_job_id)
+      WHERE hermes_job_id IS NOT NULL
+  `)
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS conversations_user_kind_updated_idx
+      ON conversations (user_id, kind, updated_at DESC, id DESC)
   `)
 }
 

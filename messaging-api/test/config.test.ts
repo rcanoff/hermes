@@ -35,6 +35,7 @@ describe('readConfig', () => {
       inviteExpiryHours: 48,
       minPasswordLength: 12,
       companionMcpBearerToken: '',
+      cronWebhookBearer: '',
       addressEnrichmentSessionId: 'companion-address-enrichment',
     })
   })

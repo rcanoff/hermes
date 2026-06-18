@@ -62,11 +62,11 @@ describe('session stream', () => {
 
     await waitFor(() => hermesClient.requests.length >= 1)
 
-    completeTitleStream(hermesClient)
     hermesClient.pushToolCall('skills_list', '{"category":"productivity"}', 0)
     hermesClient.pushAnswerToken('One skill', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
+    await completeTitleAfterReply(hermesClient)
 
     const payload = await readUntilReplyDone(reader!)
     expect(payload).toContain('"kind":"tool"')
@@ -104,10 +104,10 @@ describe('session stream', () => {
 
     await waitFor(() => hermesClient.requests.length >= 1)
 
-    completeTitleStream(hermesClient)
     hermesClient.pushAnswerToken('Hello', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
+    await completeTitleAfterReply(hermesClient)
 
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
 
@@ -154,7 +154,6 @@ describe('session stream', () => {
 
     await waitFor(() => hermesClient.requests.length >= 1)
 
-    completeTitleStream(hermesClient)
     hermesClient.closeWithoutDone(0)
 
     const payload = await readUntilError(reader!)
@@ -166,7 +165,8 @@ describe('session stream', () => {
   }, 15_000)
 })
 
-function completeTitleStream(hermesClient: FakeHermesClient, title = 'Title'): void {
+async function completeTitleAfterReply(hermesClient: FakeHermesClient, title = 'Title'): Promise<void> {
+  await waitFor(() => hermesClient.requests.length >= 2)
   hermesClient.pushAnswerToken(title, 1)
   hermesClient.pushDone(1)
   hermesClient.closeWithoutDone(1)

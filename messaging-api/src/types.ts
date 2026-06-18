@@ -11,6 +11,7 @@ export interface AppOptions {
   inviteExpiryHours: number
   minPasswordLength: number
   companionMcpBearerToken: string
+  cronWebhookBearer: string
   addressEnrichmentSessionId: string
   hermesClient?: HermesClient
   streamHub?: StreamHub

@@ -20,6 +20,12 @@ import {
 } from '../db/repos/location-events.js'
 import { parseHealthDate, type HealthMetrics } from '../lib/health-metrics.js'
 import { buildHalLinks } from '../lib/pagination.js'
+import {
+  createJobConversation,
+  linkJobConversation,
+  type ConversationRow,
+} from '../db/repos/conversations.js'
+import { emitAccountConversationUpsert } from './chat-sync-emitter.js'
 import { createInviteRecord } from './invites.js'
 import { formatFreshness } from './freshness.js'
 
@@ -121,6 +127,16 @@ export interface RevokeInviteResult {
   ok: true
 }
 
+export interface CreateJobConversationResult {
+  conversation_id: string
+  kind: 'job'
+}
+
+export interface LinkJobConversationResult {
+  conversation_id: string
+  hermes_job_id: string
+}
+
 export interface McpToolHandlers {
   get_user_location(input: { username: string }): Promise<UserLocationResult>
   get_location_history(input: {
@@ -141,6 +157,18 @@ export interface McpToolHandlers {
   create_password_reset_invite(input: { username: string }): Promise<CreateInviteResult>
   list_companion_accounts(): Promise<ListCompanionAccountsResult>
   revoke_companion_invite(input: { invite_id: string }): Promise<RevokeInviteResult>
+  create_job_conversation(input: {
+    username: string
+    name: string
+    schedule_display?: string
+  }): Promise<CreateJobConversationResult>
+  link_job_conversation(input: {
+    username: string
+    conversation_id: string
+    hermes_job_id: string
+    schedule_display?: string
+    job_enabled?: boolean
+  }): Promise<LinkJobConversationResult>
 }
 
 export function buildMcpToolHandlers(
@@ -299,6 +327,54 @@ export function buildMcpToolHandlers(
 
       return { ok: true }
     },
+
+    async create_job_conversation(input) {
+      const user = resolveUserByUsername(db, input.username)
+      const name = input.name?.trim()
+      if (!name) {
+        throw new Error('invalid_request')
+      }
+
+      const conversationId = createJobConversation(db, user.id, input.username, {
+        name,
+        scheduleDisplay: input.schedule_display,
+      })
+      emitAccountConversationUpsert(db, user.id, conversationId)
+
+      return {
+        conversation_id: conversationId,
+        kind: 'job' as const,
+      }
+    },
+
+    async link_job_conversation(input) {
+      const user = resolveUserByUsername(db, input.username)
+      const hermesJobId = input.hermes_job_id?.trim()
+      if (!hermesJobId || !input.conversation_id?.trim()) {
+        throw new Error('invalid_request')
+      }
+
+      const linked = linkJobConversation(db, user.id, {
+        conversationId: input.conversation_id.trim(),
+        hermesJobId,
+        scheduleDisplay: input.schedule_display,
+        jobEnabled: input.job_enabled,
+      })
+
+      emitAccountConversationUpsert(db, user.id, linked.id)
+      return serializeLinkedJobConversation(linked)
+    },
+  }
+}
+
+function serializeLinkedJobConversation(conversation: ConversationRow): LinkJobConversationResult {
+  if (!conversation.hermes_job_id) {
+    throw new Error('conversation_not_linked')
+  }
+
+  return {
+    conversation_id: conversation.id,
+    hermes_job_id: conversation.hermes_job_id,
   }
 }
 

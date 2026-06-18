@@ -7,7 +7,6 @@ import { getProcessByAssistantMessageIds } from '../db/repos/process.js'
 import { createRun, getActiveRun } from '../db/repos/runs.js'
 import { applyMessageEdit, MessageEditError } from '../services/message-editor.js'
 import { executeAssistantRun } from '../services/run-executor.js'
-import { generateAndSaveTitle } from '../services/title-generator.js'
 import { emitConversationMessageUpsert } from '../services/chat-sync-emitter.js'
 import type { StreamEvent } from '../streams/hub.js'
 
@@ -151,23 +150,11 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         bootstrapPrompt,
         runId: created.runId,
         originSessionId: request.sessionId,
+        shouldGenerateTitle: created.shouldGenerateTitle,
+        userMessageText: content,
       }).catch((error) => {
         app.log.error({ err: error, conversationId: conversation.id }, 'assistant run failed')
       })
-
-      if (created.shouldGenerateTitle) {
-        void generateAndSaveTitle({
-          db: app.db,
-          hermesClient: app.hermesClient,
-          hub: app.streamHub,
-          conversationId: conversation.id,
-          userId: request.userId,
-          userMessageText: content,
-          originSessionId: request.sessionId,
-        }).catch((error) => {
-          app.log.warn({ err: error, conversationId: conversation.id }, 'title generation failed')
-        })
-      }
 
       return reply.code(202).send({ message: created.message })
     } catch (error) {

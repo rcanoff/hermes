@@ -448,6 +448,26 @@ Replace `<COMPANION_MCP_BEARER_TOKEN>` with the same value from `.env`. Reload M
 
 The `companion-user-location` skill in `data/skills/` calls `get_user_location` and `get_location_history` on this MCP server.
 
+### Companion cron (job conversations)
+
+Hermes cron jobs for the companion app use **job conversations** (`kind: job`) plus a webhook into `messaging-api`. OpenAPI v2.3.0 adds `GET /jobs` and job fields on conversations.
+
+Add to `.env`:
+
+```dotenv
+CRON_WEBHOOK_BEARER=replace-with-long-random-token
+```
+
+Hermes cron `deliver` target (internal Docker network):
+
+```
+webhook:http://messaging-api:3000/internal/cron/deliver?job_id=<HERMES_JOB_ID>
+```
+
+Skills: `companion-cron` (create/link/manage), routed from `companion-app`. MCP tools: `create_job_conversation`, `link_job_conversation`.
+
+Design: [`docs/superpowers/specs/2026-06-18-companion-cron-design.md`](docs/superpowers/specs/2026-06-18-companion-cron-design.md). Backend plan: [`docs/superpowers/plans/2026-06-18-companion-cron-backend.md`](docs/superpowers/plans/2026-06-18-companion-cron-backend.md).
+
 ### User health vault
 
 The companion app syncs daily HealthKit summaries to a user-scoped vault. Hermes reads health data only through the companion MCP skill — the API does not query HealthKit or finalize days.

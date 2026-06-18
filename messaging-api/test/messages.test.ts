@@ -154,11 +154,11 @@ describe('message routes', () => {
       }),
     })
 
-    completeTitleStream(hermesClient, 'Time check')
     hermesClient.pushAnswerToken('It is', 0)
     hermesClient.pushAnswerToken(' noon', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
+    await completeTitleAfterReply(hermesClient, 'Time check')
 
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
 
@@ -207,9 +207,9 @@ describe('message routes', () => {
       expect.objectContaining({ role: 'user', content: 'First' }),
     ])
 
-    completeTitleStream(hermesClient)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
+    await completeTitleAfterReply(hermesClient)
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
   })
 
@@ -226,9 +226,9 @@ describe('message routes', () => {
       message: expect.objectContaining({ role: 'user', content: 'Legacy payload' }),
     })
 
-    completeTitleStream(hermesClient)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
+    await completeTitleAfterReply(hermesClient)
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
   })
 
@@ -264,12 +264,12 @@ describe('message routes', () => {
     })
     expect(postResponse.statusCode).toBe(202)
 
-    completeTitleStream(hermesClient)
     hermesClient.pushReasoning('Looking up weather…', 0)
     hermesClient.pushToolCall('lookup_weather', '{"query":"Lisbon"}', 0)
     hermesClient.pushAnswerToken('It is sunny', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
+    await completeTitleAfterReply(hermesClient)
 
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
 
@@ -325,10 +325,10 @@ describe('message routes', () => {
     })
     expect(postResponse.statusCode).toBe(202)
 
-    completeTitleStream(hermesClient)
     hermesClient.pushAnswerToken('Hello', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
+    await completeTitleAfterReply(hermesClient)
 
     const payload = await readUntilDone(reader!)
     expect(payload).toContain('event: token\ndata: {"text":"Hello"}')
@@ -391,12 +391,12 @@ describe('message routes', () => {
     const reader = response.body?.getReader()
     expect(reader).toBeTruthy()
 
-    completeTitleStream(hermesClient)
     hermesClient.pushReasoning('Thinking…', 0)
     hermesClient.pushToolCall('lookup_weather', '{"query":"Lisbon"}', 0)
     hermesClient.pushAnswerToken('Hello', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
+    await completeTitleAfterReply(hermesClient)
 
     const payload = await readUntilDone(reader!)
 
@@ -427,11 +427,11 @@ describe('message routes', () => {
     const reader = response.body?.getReader()
     expect(reader).toBeTruthy()
 
-    completeTitleStream(hermesClient, 'Porto weekend')
     hermesClient.pushAnswerToken('Here is', 0)
     hermesClient.pushAnswerToken(' an idea', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
+    await completeTitleAfterReply(hermesClient, 'Porto weekend')
 
     const payload = await readUntilTitleOrDone(reader!)
     expect(payload).toContain('event: title\ndata: {"title":"Porto weekend"}')
@@ -477,6 +477,10 @@ describe('message routes', () => {
     })
     expect(postResponse.statusCode).toBe(202)
 
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
+    await waitFor(() => hermesClient.requests.length >= 2)
+
     const patch = await app!.inject({
       method: 'PATCH',
       url: `/conversations/${conversationId}`,
@@ -486,8 +490,6 @@ describe('message routes', () => {
     expect(patch.statusCode).toBe(200)
 
     completeTitleStream(hermesClient, 'Generated title')
-    hermesClient.pushDone(0)
-    hermesClient.closeWithoutDone(0)
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
 
     const row = app!.db
@@ -510,10 +512,10 @@ describe('message routes', () => {
     expect(postResponse.statusCode).toBe(202)
     const userMessageId = (postResponse.json() as { message: { id: string } }).message.id
 
-    completeTitleStream(hermesClient)
     hermesClient.pushAnswerToken('Lisbon time', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
+    await completeTitleAfterReply(hermesClient)
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
 
     const oldSessionId = (
@@ -616,10 +618,12 @@ describe('message routes', () => {
     })
     await waitFor(() => listMessages(app!.db, conversationId).length >= 1)
 
-    hermesClient.requests.length = 0
     hermesClient.pushAnswerToken('ok', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
+    await completeTitleAfterReply(hermesClient)
+
+    hermesClient.requests.length = 0
 
     await app!.inject({
       method: 'POST',
@@ -691,12 +695,17 @@ describe('message routes', () => {
     expect(response.statusCode).toBe(409)
     expect(response.json()).toEqual({ error: 'run_conflict' })
 
-    completeTitleStream(hermesClient)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
+    await completeTitleAfterReply(hermesClient)
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
   })
 })
+
+async function completeTitleAfterReply(hermesClient: FakeHermesClient, title = 'Title'): Promise<void> {
+  await waitFor(() => hermesClient.requests.length >= 2)
+  completeTitleStream(hermesClient, title)
+}
 
 function completeTitleStream(hermesClient: FakeHermesClient, title = 'Title'): void {
   hermesClient.pushAnswerToken(title, 1)

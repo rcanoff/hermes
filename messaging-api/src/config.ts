@@ -29,6 +29,7 @@ export function readConfig(env: NodeJS.ProcessEnv): AppOptions {
     inviteExpiryHours: readPositiveInt(env.INVITE_EXPIRY_HOURS, 48),
     minPasswordLength: readPositiveInt(env.MIN_PASSWORD_LENGTH, 12),
     companionMcpBearerToken: env.COMPANION_MCP_BEARER_TOKEN ?? '',
+    cronWebhookBearer: env.CRON_WEBHOOK_BEARER ?? '',
     addressEnrichmentSessionId: env.ADDRESS_ENRICHMENT_SESSION_ID ?? 'companion-address-enrichment',
   }
 }

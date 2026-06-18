@@ -1,12 +1,21 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
+import { buildJobConversationBootstrap } from '../../lib/job-conversation.js'
+
+export type ConversationKind = 'regular' | 'job'
 
 export interface ConversationRow {
   id: string
   user_id: string
   hermes_session_id: string
+  kind: ConversationKind
   title: string | null
   bootstrap_prompt: string | null
+  hermes_job_id: string | null
+  schedule_display: string | null
+  job_enabled: number
+  job_last_run_at: string | null
+  job_last_status: string | null
   created_at: string
   updated_at: string
 }
@@ -21,6 +30,16 @@ export interface ListPageAnchors {
   before?: string
   after?: string
 }
+
+export interface ListConversationsFilter {
+  kind?: ConversationKind
+}
+
+const CONVERSATION_COLUMNS = `
+  id, user_id, hermes_session_id, kind, title, bootstrap_prompt,
+  hermes_job_id, schedule_display, job_enabled, job_last_run_at, job_last_status,
+  created_at, updated_at
+`
 
 export function touchConversationUpdatedAt(db: Database.Database, conversationId: string): void {
   db.prepare(`
@@ -61,10 +80,95 @@ export function createConversation(
   return id
 }
 
+export function createJobConversation(
+  db: Database.Database,
+  userId: string,
+  username: string,
+  input: { name: string; scheduleDisplay?: string | null },
+): string {
+  const title = normalizeConversationTitle(input.name) ?? input.name.trim().slice(0, 120)
+  const id = randomUUID()
+  const hermesSessionId = randomUUID()
+
+  db.prepare(`
+    INSERT INTO conversations (
+      id, user_id, hermes_session_id, kind, title, bootstrap_prompt,
+      schedule_display, updated_at
+    )
+    VALUES (?, ?, ?, 'job', ?, ?, ?, datetime('now'))
+  `).run(
+    id,
+    userId,
+    hermesSessionId,
+    title,
+    buildJobConversationBootstrap(username),
+    input.scheduleDisplay?.trim() || null,
+  )
+
+  return id
+}
+
+export function linkJobConversation(
+  db: Database.Database,
+  userId: string,
+  input: {
+    conversationId: string
+    hermesJobId: string
+    scheduleDisplay?: string | null
+    jobEnabled?: boolean
+  },
+): ConversationRow {
+  const conversation = getConversationForUser(db, userId, input.conversationId)
+  if (!conversation) {
+    throw new Error('conversation_not_found')
+  }
+  if (conversation.kind !== 'job') {
+    throw new Error('conversation_not_job')
+  }
+  if (conversation.hermes_job_id) {
+    throw new Error('conversation_already_linked')
+  }
+
+  const existing = findConversationByHermesJobId(db, input.hermesJobId)
+  if (existing) {
+    throw new Error('hermes_job_id_already_linked')
+  }
+
+  const jobEnabled = input.jobEnabled === false ? 0 : 1
+  const scheduleDisplay =
+    input.scheduleDisplay !== undefined
+      ? input.scheduleDisplay?.trim() || null
+      : conversation.schedule_display
+
+  db.prepare(`
+    UPDATE conversations
+    SET hermes_job_id = ?,
+        schedule_display = ?,
+        job_enabled = ?,
+        updated_at = datetime('now')
+    WHERE id = ?
+  `).run(input.hermesJobId.trim(), scheduleDisplay, jobEnabled, conversation.id)
+
+  return getConversationForUser(db, userId, conversation.id)!
+}
+
+export function findConversationByHermesJobId(
+  db: Database.Database,
+  hermesJobId: string,
+): ConversationRow | undefined {
+  return db
+    .prepare(`
+      SELECT ${CONVERSATION_COLUMNS}
+      FROM conversations
+      WHERE hermes_job_id = ? AND kind = 'job'
+    `)
+    .get(hermesJobId.trim()) as ConversationRow | undefined
+}
+
 export function listConversations(db: Database.Database, userId: string): ConversationRow[] {
   return db
     .prepare(`
-      SELECT id, user_id, hermes_session_id, title, bootstrap_prompt, created_at, updated_at
+      SELECT ${CONVERSATION_COLUMNS}
       FROM conversations
       WHERE user_id = ?
       ORDER BY updated_at DESC, id DESC
@@ -77,18 +181,23 @@ export function listConversationsPage(
   userId: string,
   limit: number,
   anchors: ListPageAnchors = {},
+  filter: ListConversationsFilter = {},
 ): ConversationPage | null {
+  const kindClause = filter.kind ? 'AND kind = ?' : ''
+  const kindParams = filter.kind ? [filter.kind] : []
+
   if (anchors.before) {
     const cursor = getConversationForUser(db, userId, anchors.before)
-    if (!cursor) {
+    if (!cursor || (filter.kind && cursor.kind !== filter.kind)) {
       return null
     }
 
     const conversations = db
       .prepare(`
-        SELECT id, user_id, hermes_session_id, title, bootstrap_prompt, created_at, updated_at
+        SELECT ${CONVERSATION_COLUMNS}
         FROM conversations
         WHERE user_id = ?
+          ${kindClause}
           AND (
             updated_at < ?
             OR (updated_at = ? AND id < ?)
@@ -96,22 +205,23 @@ export function listConversationsPage(
         ORDER BY updated_at DESC, id DESC
         LIMIT ?
       `)
-      .all(userId, cursor.updated_at, cursor.updated_at, cursor.id, limit) as ConversationRow[]
+      .all(userId, ...kindParams, cursor.updated_at, cursor.updated_at, cursor.id, limit) as ConversationRow[]
 
-    return buildConversationPage(db, userId, conversations)
+    return buildConversationPage(db, userId, conversations, filter)
   }
 
   if (anchors.after) {
     const cursor = getConversationForUser(db, userId, anchors.after)
-    if (!cursor) {
+    if (!cursor || (filter.kind && cursor.kind !== filter.kind)) {
       return null
     }
 
     const conversations = db
       .prepare(`
-        SELECT id, user_id, hermes_session_id, title, bootstrap_prompt, created_at, updated_at
+        SELECT ${CONVERSATION_COLUMNS}
         FROM conversations
         WHERE user_id = ?
+          ${kindClause}
           AND (
             updated_at > ?
             OR (updated_at = ? AND id > ?)
@@ -119,23 +229,24 @@ export function listConversationsPage(
         ORDER BY updated_at ASC, id ASC
         LIMIT ?
       `)
-      .all(userId, cursor.updated_at, cursor.updated_at, cursor.id, limit) as ConversationRow[]
+      .all(userId, ...kindParams, cursor.updated_at, cursor.updated_at, cursor.id, limit) as ConversationRow[]
 
     conversations.reverse()
-    return buildConversationPage(db, userId, conversations)
+    return buildConversationPage(db, userId, conversations, filter)
   }
 
   const conversations = db
     .prepare(`
-      SELECT id, user_id, hermes_session_id, title, bootstrap_prompt, created_at, updated_at
+      SELECT ${CONVERSATION_COLUMNS}
       FROM conversations
       WHERE user_id = ?
+        ${kindClause}
       ORDER BY updated_at DESC, id DESC
       LIMIT ?
     `)
-    .all(userId, limit) as ConversationRow[]
+    .all(userId, ...kindParams, limit) as ConversationRow[]
 
-  return buildConversationPage(db, userId, conversations)
+  return buildConversationPage(db, userId, conversations, filter)
 }
 
 export function getConversationForUser(
@@ -145,7 +256,7 @@ export function getConversationForUser(
 ): ConversationRow | undefined {
   return db
     .prepare(`
-      SELECT id, user_id, hermes_session_id, title, bootstrap_prompt, created_at, updated_at
+      SELECT ${CONVERSATION_COLUMNS}
       FROM conversations
       WHERE user_id = ? AND id = ?
     `)
@@ -197,7 +308,7 @@ export function updateConversationTitle(
 
   return db
     .prepare(`
-      SELECT id, user_id, hermes_session_id, title, bootstrap_prompt, created_at, updated_at
+      SELECT ${CONVERSATION_COLUMNS}
       FROM conversations
       WHERE id = ?
     `)
@@ -237,6 +348,7 @@ function buildConversationPage(
   db: Database.Database,
   userId: string,
   conversations: ConversationRow[],
+  filter: ListConversationsFilter = {},
 ): ConversationPage {
   if (conversations.length === 0) {
     return {
@@ -246,6 +358,9 @@ function buildConversationPage(
     }
   }
 
+  const kindClause = filter.kind ? 'AND kind = ?' : ''
+  const kindParams = filter.kind ? [filter.kind] : []
+
   const first = conversations[0]!
   const last = conversations[conversations.length - 1]!
 
@@ -254,26 +369,28 @@ function buildConversationPage(
       SELECT 1
       FROM conversations
       WHERE user_id = ?
+        ${kindClause}
         AND (
           updated_at > ?
           OR (updated_at = ? AND id > ?)
         )
       LIMIT 1
     `)
-    .get(userId, first.updated_at, first.updated_at, first.id) as { 1: number } | undefined
+    .get(userId, ...kindParams, first.updated_at, first.updated_at, first.id) as { 1: number } | undefined
 
   const hasOlder = db
     .prepare(`
       SELECT 1
       FROM conversations
       WHERE user_id = ?
+        ${kindClause}
         AND (
           updated_at < ?
           OR (updated_at = ? AND id < ?)
         )
       LIMIT 1
     `)
-    .get(userId, last.updated_at, last.updated_at, last.id) as { 1: number } | undefined
+    .get(userId, ...kindParams, last.updated_at, last.updated_at, last.id) as { 1: number } | undefined
 
   return {
     conversations,

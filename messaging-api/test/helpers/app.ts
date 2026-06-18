@@ -11,6 +11,7 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
     inviteExpiryHours: 48,
     minPasswordLength: 12,
     companionMcpBearerToken: 'test-mcp-token',
+    cronWebhookBearer: 'test-cron-webhook-bearer',
     addressEnrichmentSessionId: 'companion-address-enrichment',
     ...overrides,
   })

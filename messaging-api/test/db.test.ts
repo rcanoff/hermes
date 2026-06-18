@@ -63,6 +63,21 @@ describe('schema', () => {
     expect(columns.map((c) => c.name)).toContain('bootstrap_prompt')
   })
 
+  it('includes job conversation columns on conversations', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const columns = db
+      .prepare(`PRAGMA table_info(conversations)`)
+      .all() as Array<{ name: string }>
+    const names = columns.map((c) => c.name)
+    expect(names).toContain('kind')
+    expect(names).toContain('hermes_job_id')
+    expect(names).toContain('schedule_display')
+    expect(names).toContain('job_enabled')
+    expect(names).toContain('job_last_run_at')
+    expect(names).toContain('job_last_status')
+  })
+
   it('includes origin_session_id on message_runs', () => {
     const db = new Database(':memory:')
     initSchema(db)

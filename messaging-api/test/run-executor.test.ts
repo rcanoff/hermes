@@ -84,7 +84,7 @@ describe('executeAssistantRun process stream', () => {
     ])
   })
 
-  it('streams reasoning drafts and emits tool completion tooling lines', async () => {
+  it('streams reasoning drafts and ignores tool completion events', async () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedConversation(db)
@@ -122,7 +122,6 @@ describe('executeAssistantRun process stream', () => {
       'tooling',
       'tooling',
       'tooling',
-      'tooling',
       'reply',
       'reply',
     ])
@@ -150,9 +149,63 @@ describe('executeAssistantRun process stream', () => {
       data: {
         conversationId: 'c1',
         runId: 'run-1',
-        kind: 'tool',
-        text: 'Done: Running command',
+        phase: 'complete',
       },
     })
+  })
+
+  it('generates title after the reply stream and before publishing done', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedConversation(db)
+
+    const hermes = new FakeHermesClient()
+    const hub = new StreamHub()
+    const legacyEvents: Array<{ event: string; data: unknown }> = []
+    hub.subscribeLegacy('c1', (event) => legacyEvents.push(event))
+
+    const runPromise = executeAssistantRun({
+      db,
+      hermesClient: hermes,
+      hub,
+      conversationId: 'c1',
+      hermesSessionId: 'sess-1',
+      userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
+      runId: 'run-1',
+      userId: 'u1',
+      originSessionId: 'sess-1',
+      shouldGenerateTitle: true,
+      userMessageText: 'Plan a weekend in Porto',
+    })
+
+    hermes.pushAnswerToken('Here is an idea')
+    hermes.pushDone()
+    hermes.closeWithoutDone()
+
+    await new Promise<void>((resolve, reject) => {
+      const startedAt = Date.now()
+      const tick = () => {
+        if (hermes.requests.length >= 2) {
+          resolve()
+          return
+        }
+        if (Date.now() - startedAt > 1000) {
+          reject(new Error('Timed out waiting for title request'))
+          return
+        }
+        setTimeout(tick, 10)
+      }
+      tick()
+    })
+
+    hermes.pushAnswerToken('Porto weekend', 1)
+    hermes.pushDone(1)
+    hermes.closeWithoutDone(1)
+
+    await runPromise
+
+    expect(hermes.requests).toHaveLength(2)
+    expect(legacyEvents.map((event) => event.event)).toEqual(['token', 'title', 'done'])
+    expect(db.prepare('SELECT title FROM conversations WHERE id = ?').pluck().get('c1')).toBe('Porto weekend')
   })
 })

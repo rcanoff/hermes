@@ -1,12 +1,12 @@
 ---
 name: companion-app
 description: REQUIRED entry point for Companion App replies. iOS bootstrap tells Hermes to load this skill first. Routes intents to reply, block, and data skills. Does not own fence syntax.
-version: 1.0.0
+version: 1.1.0
 author: Hermes Agent
 metadata:
   hermes:
     tags: [companion, index, routing, mobile]
-    related_skills: [companion-replies, companion-user-location, companion-user-health, companion-map-preview, companion-links, companion-markdown-blocks]
+    related_skills: [companion-replies, companion-cron, companion-user-location, companion-user-health, companion-map-preview, companion-links, companion-markdown-blocks]
 ---
 
 # Companion App
@@ -32,21 +32,36 @@ Before writing any Companion App reply, load `companion-replies` and follow its 
 | Show a place on map | `companion-replies` → `companion-map-preview` | Known coordinates required |
 | Share tappable URL | `companion-replies` → `companion-links` | URLs outside `map` fences |
 | "Where am I?" / current position | `companion-user-location` → `companion-replies` → `companion-map-preview` | Fetch data first |
-| Route / directions | `companion-user-location` (if origin is "here") → `companion-map-preview` (+ optional `companion-links`) | |
-| Location history | `companion-user-location` → plain text or `companion-markdown-blocks` | Map only if user asks to see a place |
+| Route / directions | `companion-user-location` (if origin is "here") → `companion-replies` → `companion-map-preview` (+ optional `companion-links`) | |
+| Location history | `companion-user-location` → `companion-replies` → plain text or `companion-markdown-blocks` | Map only if user asks to see a place |
 | Steps / activity today | `companion-user-health` → `companion-replies` | Fetch data first |
 | Steps to goal / ring progress | `companion-user-health` → `companion-replies` (optional `companion-markdown-blocks`) | Note `partial` + `synced_at` staleness |
 | Health history ("steps last Tuesday") | `companion-user-health` → plain text or `companion-markdown-blocks` | Use `get_user_health_daily` or history |
+| Remind me / run every day / cron / job | `companion-cron` | Creates job conversation + Hermes cron job |
+
+## Data → present pipeline (required)
+
+For any vault data intent (location, health):
+
+| Phase | What to do | Skills |
+|-------|------------|--------|
+| **GET** | Call MCP, normalize to a record | `companion-user-location`, `companion-user-health`, … |
+| **PRESENT** | Load reply + block skills | `companion-replies` → `companion-map-preview` / `companion-markdown-blocks` / `companion-links` |
+| **REPLY** | Compose user-facing text from the record | per child skills |
+
+**GET alone is never enough.** If you have vault data but have not loaded `companion-replies`, do not send a reply yet.
 
 ## Workflow
 
 1. Parse user intent from the message.
-2. Load data skills if the answer needs vault data.
-3. Load `companion-replies`, then only the block skills the reply needs.
-4. Compose sibling parts — plain text, blocks, links — per child skills.
+2. **GET** — if vault data is needed, load the data skill, call MCP, normalize to a record. Do not format the answer here.
+3. **PRESENT** — load `companion-replies`, then only the block skills the reply needs.
+4. **REPLY** — compose sibling parts (plain text, blocks, links) from the record.
 
 ## Do not
 
+- Send a reply after a data skill without loading `companion-replies`
+- Format location or health answers inside data skills
 - Duplicate fence syntax from `companion-map-preview`, `companion-links`, or `companion-markdown-blocks`
 - Call Home Assistant for companion user location
 - Route account invites from this skill

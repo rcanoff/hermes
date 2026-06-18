@@ -44,6 +44,7 @@ describe('conversation routes', () => {
       id: expect.any(String),
       user_id: expect.any(String),
       hermes_session_id: expect.any(String),
+      kind: 'regular',
       title: null,
       created_at: expect.any(String),
       updated_at: expect.any(String),

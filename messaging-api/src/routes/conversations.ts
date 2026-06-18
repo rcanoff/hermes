@@ -12,6 +12,7 @@ import {
 import { validateBootstrap } from '../lib/bootstrap.js'
 import { getActiveRun } from '../db/repos/runs.js'
 import { buildHalLinks, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
+import { toConversationResponse } from '../lib/conversation-response.js'
 import {
   emitAccountConversationUpsert,
   emitConversationDeleted,
@@ -125,11 +126,6 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
 }
 
 export default conversationRoutes
-
-function toConversationResponse(conversation: ConversationRow) {
-  const { bootstrap_prompt: _bootstrapPrompt, ...response } = conversation
-  return response
-}
 
 function isCreateConversationBody(value: unknown): value is { bootstrap?: string } {
   return typeof value === 'object' && value !== null

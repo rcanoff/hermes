@@ -2,17 +2,23 @@ import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { buildConversationSyncEntry } from '../../lib/conversation-sync-entry.js'
 import { isSyncMarkerOrigin, SYNC_MARKER_ORIGIN } from '../../lib/sync-marker.js'
-import { getConversationForUser, type ConversationRow } from './conversations.js'
+import { getConversationForUser } from './conversations.js'
 import type { MessageRow } from './messages.js'
 
 export interface ConversationSyncEntryPayload {
   id: string
   hermes_session_id: string
+  kind: 'regular' | 'job'
   title: string | null
   created_at: string
   updated_at: string
   latest_message_id: string | null
   latest_message_created_at: string | null
+  hermes_job_id?: string | null
+  schedule_display?: string | null
+  job_enabled?: boolean
+  job_last_run_at?: string | null
+  job_last_status?: string | null
 }
 
 export type AccountSyncEvent =
@@ -462,13 +468,7 @@ export function backfillAccountSyncEvents(db: Database.Database): void {
     .all() as Array<{ id: string; user_id: string }>
 
   for (const row of conversations) {
-    const conversation = db
-      .prepare(`
-        SELECT id, user_id, hermes_session_id, title, bootstrap_prompt, created_at, updated_at
-        FROM conversations
-        WHERE id = ?
-      `)
-      .get(row.id) as ConversationRow | undefined
+    const conversation = getConversationForUser(db, row.user_id, row.id)
 
     if (!conversation) {
       continue
