@@ -3,6 +3,16 @@ import { insertMessage, listMessages } from '../db/repos/messages.js'
 import { insertMessageProcess, type ProcessLine } from '../db/repos/process.js'
 import { createRun, markRunCompleted, markRunFailed } from '../db/repos/runs.js'
 import type { StreamHub } from '../streams/hub.js'
+import {
+  publishReplyDone,
+  publishReplyToken,
+  publishRewind,
+  publishRunError,
+  publishToolingComplete,
+  publishToolingDraft,
+  publishToolingLine,
+  type RunEventContext,
+} from '../streams/run-event-publisher.js'
 import { buildHermesMessages } from './prompt-builder.js'
 import type { HermesClient } from './hermes-client.js'
 import { formatToolProcessLine } from './process-labeler.js'
@@ -20,15 +30,25 @@ export interface ExecuteAssistantRunInput {
   runId?: string
   rewindMessageIds?: string[]
   userId: string
+  originSessionId: string | null
 }
 
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
-  const runId = input.runId ?? createRun(input.db, input.conversationId, input.userMessageId, 'legacy')
+  const runId =
+    input.runId ??
+    createRun(input.db, input.conversationId, input.userMessageId, input.originSessionId ?? 'legacy')
   const history = listMessages(input.db, input.conversationId)
   const hermesMessages = buildHermesMessages(history, {
     bootstrapPrompt: input.bootstrapPrompt,
     companionUsername: input.companionUsername,
   })
+
+  const streamCtx: RunEventContext = {
+    hub: input.hub,
+    conversationId: input.conversationId,
+    runId,
+    originSessionId: input.originSessionId,
+  }
 
   let assistantText = ''
   let sawDone = false
@@ -40,7 +60,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
   const publishProcessLine = (line: ProcessLine) => {
     processLines.push(line)
     sawProcessActivity = true
-    input.hub.publish(input.conversationId, { event: 'process', data: line })
+    publishToolingLine(streamCtx, line)
   }
 
   const flushReasoningBuffer = () => {
@@ -61,16 +81,12 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     flushReasoningBuffer()
     inReplyPhase = true
     if (sawProcessActivity) {
-      input.hub.publish(input.conversationId, { event: 'process_complete', data: {} })
+      publishToolingComplete(streamCtx)
     }
   }
 
   if (input.rewindMessageIds && input.rewindMessageIds.length > 0) {
-    input.hub.setPendingRewind(input.conversationId, input.rewindMessageIds)
-    input.hub.publish(input.conversationId, {
-      event: 'rewind',
-      data: { removedMessageIds: input.rewindMessageIds },
-    })
+    publishRewind(streamCtx, input.rewindMessageIds)
   }
 
   try {
@@ -81,10 +97,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       if (event.type === 'reasoning' && event.text) {
         reasoningBuffer += event.text
         sawProcessActivity = true
-        input.hub.publish(input.conversationId, {
-          event: 'process_token',
-          data: { kind: 'reasoning', text: event.text },
-        })
+        publishToolingDraft(streamCtx, event.text)
         continue
       }
 
@@ -104,7 +117,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       if (event.type === 'answer_token' && event.text) {
         beginReplyPhase()
         assistantText += event.text
-        input.hub.publish(input.conversationId, { event: 'token', data: { text: event.text } })
+        publishReplyToken(streamCtx, event.text)
         continue
       }
 
@@ -125,12 +138,12 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       assistantText,
       processLines,
     )
-    input.hub.publish(input.conversationId, { event: 'done', data: { messageId: assistantMessageId } })
+    publishReplyDone(streamCtx, assistantMessageId)
     return assistantMessageId
   } catch (error) {
     const message = error instanceof Error ? error.message : 'unknown'
     markRunFailed(input.db, runId, 'hermes_stream_failed', message)
-    input.hub.publish(input.conversationId, { event: 'error', data: { code: 'hermes_stream_failed' } })
+    publishRunError(streamCtx, 'hermes_stream_failed')
     throw error
   }
 }

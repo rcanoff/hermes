@@ -4,33 +4,34 @@ import { initSchema } from '../src/db/schema.js'
 import { insertMessage } from '../src/db/repos/messages.js'
 import { getProcessByAssistantMessageIds } from '../src/db/repos/process.js'
 import { executeAssistantRun } from '../src/services/run-executor.js'
-import type { StreamEvent } from '../src/streams/hub.js'
+import type { SessionStreamEvent } from '../src/streams/hub.js'
 import { StreamHub } from '../src/streams/hub.js'
 import { FakeHermesClient } from './helpers/hermes.js'
 
-function seedConversation(db: Database.Database) {
+function seedConversation(db: Database.Database, originSessionId = 'sess-1') {
   db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'op', 'hash')`).run()
   db.prepare(`
     INSERT INTO conversations (id, user_id, hermes_session_id) VALUES ('c1', 'u1', 'sess-1')
   `).run()
   db.prepare(`
-    INSERT INTO message_runs (id, conversation_id, user_message_id, status)
-    VALUES ('run-1', 'c1', ?, 'running')
+    INSERT INTO message_runs (id, conversation_id, user_message_id, origin_session_id, status)
+    VALUES ('run-1', 'c1', ?, ?, 'running')
   `).run(
     insertMessage(db, { conversationId: 'c1', role: 'user', content: 'Where am I?' }),
+    originSessionId,
   )
 }
 
 describe('executeAssistantRun process stream', () => {
-  it('emits process, process_complete, token, persists process blob', async () => {
+  it('emits tooling and reply session events and persists process blob', async () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedConversation(db)
 
     const hermes = new FakeHermesClient()
     const hub = new StreamHub()
-    const events: StreamEvent[] = []
-    hub.subscribe('c1', (event) => events.push(event))
+    const events: SessionStreamEvent[] = []
+    hub.subscribeSession('sess-1', (event) => events.push(event))
 
     const runPromise = executeAssistantRun({
       db,
@@ -41,6 +42,7 @@ describe('executeAssistantRun process stream', () => {
       userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
       runId: 'run-1',
       userId: 'u1',
+      originSessionId: 'sess-1',
     })
 
     hermes.pushReasoning('Searching for tools…')
@@ -52,13 +54,28 @@ describe('executeAssistantRun process stream', () => {
     const assistantMessageId = await runPromise
 
     expect(events.map((e) => e.event)).toEqual([
-      'process_token',
-      'process',
-      'process',
-      'process_complete',
-      'token',
-      'done',
+      'tooling',
+      'tooling',
+      'tooling',
+      'tooling',
+      'reply',
+      'reply',
     ])
+
+    expect(events[0]).toEqual({
+      event: 'tooling',
+      data: {
+        conversationId: 'c1',
+        runId: 'run-1',
+        kind: 'reasoning',
+        text: 'Searching for tools…',
+        draft: true,
+      },
+    })
+    expect(events.at(-1)).toEqual({
+      event: 'reply',
+      data: expect.objectContaining({ phase: 'done', messageId: assistantMessageId }),
+    })
 
     const process = getProcessByAssistantMessageIds(db, [assistantMessageId]).get(assistantMessageId)
     expect(process?.lines).toEqual([
@@ -67,15 +84,15 @@ describe('executeAssistantRun process stream', () => {
     ])
   })
 
-  it('streams reasoning tokens and emits tool completion lines', async () => {
+  it('streams reasoning drafts and emits tool completion tooling lines', async () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedConversation(db)
 
     const hermes = new FakeHermesClient()
     const hub = new StreamHub()
-    const events: StreamEvent[] = []
-    hub.subscribe('c1', (event) => events.push(event))
+    const events: SessionStreamEvent[] = []
+    hub.subscribeSession('sess-1', (event) => events.push(event))
 
     const runPromise = executeAssistantRun({
       db,
@@ -86,6 +103,7 @@ describe('executeAssistantRun process stream', () => {
       userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
       runId: 'run-1',
       userId: 'u1',
+      originSessionId: 'sess-1',
     })
 
     hermes.pushReasoning('Think')
@@ -99,17 +117,42 @@ describe('executeAssistantRun process stream', () => {
     await runPromise
 
     expect(events.map((e) => e.event)).toEqual([
-      'process_token',
-      'process_token',
-      'process',
-      'process',
-      'process',
-      'process_complete',
-      'token',
-      'done',
+      'tooling',
+      'tooling',
+      'tooling',
+      'tooling',
+      'tooling',
+      'tooling',
+      'reply',
+      'reply',
     ])
-    expect(events[0]).toEqual({ event: 'process_token', data: { kind: 'reasoning', text: 'Think' } })
-    expect(events[2]).toEqual({ event: 'process', data: { kind: 'reasoning', text: 'Thinking' } })
-    expect(events[4]).toEqual({ event: 'process', data: { kind: 'tool', text: 'Done: Running command' } })
+    expect(events[0]).toEqual({
+      event: 'tooling',
+      data: {
+        conversationId: 'c1',
+        runId: 'run-1',
+        kind: 'reasoning',
+        text: 'Think',
+        draft: true,
+      },
+    })
+    expect(events[2]).toEqual({
+      event: 'tooling',
+      data: {
+        conversationId: 'c1',
+        runId: 'run-1',
+        kind: 'reasoning',
+        text: 'Thinking',
+      },
+    })
+    expect(events[4]).toEqual({
+      event: 'tooling',
+      data: {
+        conversationId: 'c1',
+        runId: 'run-1',
+        kind: 'tool',
+        text: 'Done: Running command',
+      },
+    })
   })
 })
