@@ -222,6 +222,42 @@ describe('companion MCP routes', () => {
     await client.close()
   })
 
+  it('get_user_health_today passes through v2 metrics', async () => {
+    await app!.inject({
+      method: 'POST',
+      url: '/data/health/daily-summaries',
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: {
+        date: '2026-06-18',
+        timezone: 'Europe/Lisbon',
+        partial: true,
+        source: 'healthkit',
+        metrics: {
+          sleep_duration: { value: 420, unit: 'min', goal: null, remaining: null },
+          workout_types: { types: ['running', 'walking'] },
+        },
+      },
+    })
+
+    const { client, transport } = await createMcpClient(app!, 'test-mcp-token')
+    const result = await client.callTool({
+      name: 'get_user_health_today',
+      arguments: { username: 'operator' },
+    })
+    const payload = parseToolResult(result) as {
+      metrics: {
+        sleep_duration: { value: number }
+        workout_types: { types: string[] }
+      }
+    }
+
+    expect(payload.metrics.sleep_duration.value).toBe(420)
+    expect(payload.metrics.workout_types.types).toEqual(['running', 'walking'])
+
+    await transport.close()
+    await client.close()
+  })
+
   it('get_user_health_daily returns unavailable for missing date', async () => {
     const { client, transport } = await createMcpClient(app!, 'test-mcp-token')
     const result = await client.callTool({

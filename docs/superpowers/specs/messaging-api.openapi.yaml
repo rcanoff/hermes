@@ -1,9 +1,16 @@
 openapi: 3.1.0
 info:
   title: Hermes Messaging API
-  version: 2.3.0
+  version: 2.4.0
   description: |
     Private API bridging mobile clients to Hermes.
+
+    **v2.4.0 changes:** extended health daily summary metrics on existing
+    `/data/health/daily-summaries` routes. New optional scalar keys: sleep, heart,
+    workout, body, nutrition, mindfulness, and flights climbed. New `workout_types`
+    object on `metrics`. Extended `HealthMetric.unit` enum (`bpm`, `ms`, `kg`,
+    `pct`, `g`, `ml`). No new routes or MCP tools. See
+    `docs/superpowers/specs/2026-06-18-companion-health-vault-v2-metrics-design.md`.
 
     **v2.3.0 changes:** companion cron job conversations. `Conversation.kind` is
     `regular` (default) or `job`. Job conversations expose `hermes_job_id`,
@@ -786,13 +793,28 @@ components:
           minimum: 0
         unit:
           type: string
-          enum: [count, m, kcal, min, h]
+          enum: [count, m, kcal, min, h, bpm, ms, kg, pct, g, ml]
         goal:
           type: ['number', 'null']
           minimum: 0
         remaining:
           type: ['number', 'null']
           minimum: 0
+
+    HealthWorkoutTypes:
+      type: object
+      required: [types]
+      properties:
+        types:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: '^[a-z][a-z0-9_]*$'
+          minItems: 1
+          maxItems: 20
+          uniqueItems: true
 
     HealthMetrics:
       type: object
@@ -807,6 +829,44 @@ components:
           $ref: '#/components/schemas/HealthMetric'
         stand_hours:
           $ref: '#/components/schemas/HealthMetric'
+        flights_climbed:
+          $ref: '#/components/schemas/HealthMetric'
+        sleep_duration:
+          $ref: '#/components/schemas/HealthMetric'
+        sleep_in_bed:
+          $ref: '#/components/schemas/HealthMetric'
+        sleep_deep:
+          $ref: '#/components/schemas/HealthMetric'
+        sleep_rem:
+          $ref: '#/components/schemas/HealthMetric'
+        sleep_core:
+          $ref: '#/components/schemas/HealthMetric'
+        resting_heart_rate:
+          $ref: '#/components/schemas/HealthMetric'
+        heart_rate_avg:
+          $ref: '#/components/schemas/HealthMetric'
+        hrv_sdnn:
+          $ref: '#/components/schemas/HealthMetric'
+        workout_count:
+          $ref: '#/components/schemas/HealthMetric'
+        workout_minutes:
+          $ref: '#/components/schemas/HealthMetric'
+        weight:
+          $ref: '#/components/schemas/HealthMetric'
+        bmi:
+          $ref: '#/components/schemas/HealthMetric'
+        body_fat_percentage:
+          $ref: '#/components/schemas/HealthMetric'
+        dietary_energy:
+          $ref: '#/components/schemas/HealthMetric'
+        protein:
+          $ref: '#/components/schemas/HealthMetric'
+        water:
+          $ref: '#/components/schemas/HealthMetric'
+        mindfulness_minutes:
+          $ref: '#/components/schemas/HealthMetric'
+        workout_types:
+          $ref: '#/components/schemas/HealthWorkoutTypes'
 
     HealthDailySummary:
       type: object

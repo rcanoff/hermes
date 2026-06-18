@@ -472,7 +472,7 @@ Design: [`docs/superpowers/specs/2026-06-18-companion-cron-design.md`](docs/supe
 
 The companion app syncs daily HealthKit summaries to a user-scoped vault. Hermes reads health data only through the companion MCP skill — the API does not query HealthKit or finalize days.
 
-**API (v2.0.0):** Health routes under `/data/health/daily-summaries`:
+**API (v2.4.0):** Health routes under `/data/health/daily-summaries`:
 
 - `POST /data/health/daily-summaries` — upsert by local calendar day (`partial` / `finalized_at`)
 - `GET /data/health/daily-summaries/latest` — newest day for the authenticated user
@@ -486,9 +486,11 @@ Companion MCP tools (same bearer token as location):
 - `get_user_health_daily` — summary for a specific `YYYY-MM-DD`
 - `get_user_health_history` — paginated summaries with HAL `_links`
 
+**v2 metrics** (optional keys on the same daily row): activity (`flights_climbed`), sleep (`sleep_duration`, `sleep_in_bed`, `sleep_deep`, `sleep_rem`, `sleep_core`), heart (`resting_heart_rate`, `heart_rate_avg`, `hrv_sdnn`), workouts (`workout_count`, `workout_minutes`, `workout_types`), body (`weight`, `bmi`, `body_fat_percentage`), nutrition (`dietary_energy`, `protein`, `water`), mindfulness (`mindfulness_minutes`). Design: [`docs/superpowers/specs/2026-06-18-companion-health-vault-v2-metrics-design.md`](docs/superpowers/specs/2026-06-18-companion-health-vault-v2-metrics-design.md).
+
 The `companion-user-health` skill in `data/skills/` normalizes vault data for `companion-replies` and `companion-markdown-blocks`. Route health intents via `companion-app`.
 
-iOS owns HealthKit sync, step goals, and day finalization. Client implementation: [`docs/superpowers/plans/2026-06-17-companion-health-vault-ios.md`](docs/superpowers/plans/2026-06-17-companion-health-vault-ios.md).
+iOS owns HealthKit sync, step goals, and day finalization. Client implementation: [`docs/superpowers/plans/2026-06-17-companion-health-vault-ios.md`](docs/superpowers/plans/2026-06-17-companion-health-vault-ios.md). v2 metric sync: [`docs/superpowers/plans/2026-06-18-companion-health-vault-v2-metrics-ios.md`](docs/superpowers/plans/2026-06-18-companion-health-vault-v2-metrics-ios.md).
 
 ## Persistence check
 

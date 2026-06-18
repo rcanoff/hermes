@@ -1,7 +1,7 @@
 ---
 name: companion-app
 description: REQUIRED entry point for Companion App replies. iOS bootstrap tells Hermes to load this skill first. Routes intents to reply, block, and data skills. Does not own fence syntax.
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent
 metadata:
   hermes:
@@ -37,6 +37,12 @@ Before writing any Companion App reply, load `companion-replies` and follow its 
 | Steps / activity today | `companion-user-health` → `companion-replies` | Fetch data first |
 | Steps to goal / ring progress | `companion-user-health` → `companion-replies` (optional `companion-markdown-blocks`) | Note `partial` + `synced_at` staleness |
 | Health history ("steps last Tuesday") | `companion-user-health` → plain text or `companion-markdown-blocks` | Use `get_user_health_daily` or history |
+| Sleep / rest questions | `companion-user-health` → `companion-replies` | Fetch data first |
+| Heart rate / HRV | `companion-user-health` → `companion-replies` | Fetch data first |
+| Workouts today / this week | `companion-user-health` → `companion-replies` (optional `companion-markdown-blocks`) | Fetch data first |
+| Weight / body composition | `companion-user-health` → `companion-replies` | Fetch data first |
+| Nutrition / water / protein | `companion-user-health` → `companion-replies` | Fetch data first |
+| Mindfulness / meditation | `companion-user-health` → `companion-replies` | Fetch data first |
 | Remind me / run every day / cron / job | `companion-cron` | Creates job conversation + Hermes cron job |
 
 ## Data → present pipeline (required)

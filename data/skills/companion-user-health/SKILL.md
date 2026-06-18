@@ -1,7 +1,7 @@
 ---
 name: companion-user-health
-description: Data skill — fetch and normalize a companion user's daily health summaries from the vault via MCP. Use for steps today, activity rings, goals, or historical health questions. Never Home Assistant.
-version: 1.0.0
+description: Data skill — fetch and normalize a companion user's daily health summaries from the vault via MCP. Use for steps, rings, sleep, heart, workouts, body, nutrition, mindfulness, or historical health questions. Never Home Assistant.
+version: 1.1.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -24,8 +24,9 @@ iOS owns HealthKit sync and day finalization. The API is passive storage — it 
 
 - "how many steps today?", "steps so far", or current-day activity totals
 - "how many steps left to my goal?", move/exercise/stand ring progress
+- sleep, heart rate, HRV, workouts, weight, nutrition, water, mindfulness, or flights climbed
 - "how many steps last Tuesday?", "what was my exercise on …?", or other historical health questions
-- Any skill needs the operator's daily activity metrics for a specific calendar day
+- Any skill needs the operator's daily health metrics for a specific calendar day
 
 ## Username resolution
 
@@ -66,9 +67,28 @@ metrics:
   active_energy: { value, unit, goal, remaining }
   exercise_minutes: { value, unit, goal, remaining }
   stand_hours: { value, unit, goal, remaining }
+  flights_climbed: { value, unit, goal, remaining }
+  sleep_duration: { value, unit, goal, remaining }
+  sleep_in_bed: { value, unit, goal, remaining }
+  sleep_deep: { value, unit, goal, remaining }
+  sleep_rem: { value, unit, goal, remaining }
+  sleep_core: { value, unit, goal, remaining }
+  resting_heart_rate: { value, unit, goal, remaining }
+  heart_rate_avg: { value, unit, goal, remaining }
+  hrv_sdnn: { value, unit, goal, remaining }
+  workout_count: { value, unit, goal, remaining }
+  workout_minutes: { value, unit, goal, remaining }
+  weight: { value, unit, goal, remaining }
+  bmi: { value, unit, goal, remaining }
+  body_fat_percentage: { value, unit, goal, remaining }
+  dietary_energy: { value, unit, goal, remaining }
+  protein: { value, unit, goal, remaining }
+  water: { value, unit, goal, remaining }
+  mindfulness_minutes: { value, unit, goal, remaining }
+  workout_types: { types: [<lowercase slug>, ...] }
 ```
 
-Metric keys are optional — only include keys present in the MCP response.
+Metric keys are optional — only include keys present in the MCP response. Sleep is attributed to the wake-day calendar date iOS sends.
 
 ### Unavailable
 
@@ -98,6 +118,7 @@ Do not emit user-facing prose from raw MCP JSON. Always normalize first.
 
 - "How many steps today?" → report `metrics.steps.value` with unit; note `partial` and `synced_at` staleness.
 - "How many steps left to my goal?" → report `metrics.steps.remaining` when `goal` is set; otherwise say goal is unknown.
+- If the record has steps but no goal/remaining, do not estimate the target from pace, time of day, or other sensors; answer with the available step total and say the goal is unavailable.
 - "How's my exercise ring?" → report `metrics.exercise_minutes` value, goal, and remaining; optional ring-style layout via `companion-markdown-blocks`.
 
 ## Data workflow — specific day
@@ -108,6 +129,24 @@ For "steps last Tuesday" or a named date:
 2. Convert the user's date reference to `YYYY-MM-DD` in their timezone when possible.
 3. Call `get_user_health_daily` with `username` and `date`.
 4. Normalize into a HealthDayRecord and summarize the requested metrics.
+
+## Data workflow — sleep
+
+1. Resolve `username`.
+2. Call `get_user_health_today` or `get_user_health_daily`.
+3. Report `sleep_duration` (and stages if present). State the record `date` — wake-day attribution may differ from colloquial "last night".
+
+## Data workflow — heart
+
+Report `resting_heart_rate`, `heart_rate_avg`, or `hrv_sdnn` when asked. Include unit in the answer.
+
+## Data workflow — workouts
+
+Report `workout_count`, `workout_minutes`, and humanize `workout_types.types` (e.g. `traditional_strength_training` → "traditional strength training").
+
+## Data workflow — body / nutrition / mindfulness
+
+Report latest-day `weight`, `bmi`, `body_fat_percentage`, or daily sums `dietary_energy`, `protein`, `water`, `mindfulness_minutes`, `flights_climbed`.
 
 ## Data workflow — history
 

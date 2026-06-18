@@ -267,6 +267,47 @@ describe('data health routes', () => {
     })
   })
 
+  it('upserts and returns v2 health metrics', async () => {
+    const metrics = {
+      steps: { value: 5000, unit: 'count', goal: 10000, remaining: 5000 },
+      sleep_duration: { value: 390, unit: 'min', goal: null, remaining: null },
+      resting_heart_rate: { value: 60, unit: 'bpm', goal: null, remaining: null },
+      workout_count: { value: 1, unit: 'count', goal: null, remaining: null },
+      workout_minutes: { value: 32, unit: 'min', goal: null, remaining: null },
+      workout_types: { types: ['running'] },
+      water: { value: 1500, unit: 'ml', goal: null, remaining: null },
+    }
+
+    const upsert = await app!.inject({
+      method: 'POST',
+      url: '/data/health/daily-summaries',
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: {
+        date: '2026-06-18',
+        timezone: 'Europe/Lisbon',
+        partial: true,
+        source: 'healthkit',
+        metrics,
+      },
+    })
+    expect(upsert.statusCode).toBe(204)
+
+    const latest = await app!.inject({
+      method: 'GET',
+      url: '/data/health/daily-summaries/latest',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    expect(latest.statusCode).toBe(200)
+    const body = latest.json() as {
+      metrics: {
+        sleep_duration: { value: number }
+        workout_types: { types: string[] }
+      }
+    }
+    expect(body.metrics.sleep_duration.value).toBe(390)
+    expect(body.metrics.workout_types.types).toEqual(['running'])
+  })
+
   it('isolates health data per user', async () => {
     await app!.inject({
       method: 'POST',
