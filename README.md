@@ -338,17 +338,37 @@ curl http://<tailscale-ip>:3000/health
 make messaging-api-logs
 ```
 
-### Assistant process stream
+### Assistant session stream (v2.2.0)
 
-The messaging API streams Hermes reasoning and tool activity over SSE while a reply is in progress, then persists it on the assistant message for scroll-back.
+The messaging API exposes a **persistent per-auth-session** SSE at `GET /events/stream`. Open it once at login (after storing the JWT); it stays open across runs until logout or disconnect. Requires a JWT with a `jti` session claim (re-login if you have an older token without `jti`).
 
-Live stream events (in order):
+**Session SSE event lanes** (all include `conversationId`; run-scoped events include `runId`):
 
-- `process_token` — reasoning text deltas while Hermes is thinking (`{"kind":"reasoning","text":"..."}`)
-- `process` — completed reasoning line, tool start label, or `Done:` tool completion
-- `process_complete` — signals the process section is finished (`{}`)
-- `token` — answer text chunks
-- `done` — final assistant message id
+| event | purpose |
+|-------|---------|
+| `tooling` | Reasoning drafts (`draft: true`), completed process lines, tool labels, `phase: "complete"` |
+| `reply` | Answer token deltas and `phase: "done"` with `messageId` |
+| `title` | Auto-generated conversation title saved on first message |
+| `rewind` | Messages removed before an edit rerun |
+| `error` | Run failed (`code`); stream **stays open** |
+
+After `reply` with `phase: "done"`, commit locally and reconcile via `GET /conversations/{id}/sync`. Other devices logged into the same account do **not** receive live SSE for runs they did not start — use sync feeds for cross-device state.
+
+**Deprecated:** `GET /conversations/:id/stream` (legacy per-conversation stream). Retained until the iOS companion migrates.
+
+**Operator smoke test:**
+
+```bash
+# Terminal 1 — persistent session stream
+curl -N -H "Authorization: Bearer $TOKEN" http://localhost:3000/events/stream
+
+# Terminal 2 — send a message (no per-send stream open)
+curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"text":"Use skills_list with category productivity; one skill name only."}' \
+  http://localhost:3000/conversations/$CONV_ID/messages
+```
+
+Expect `tooling` lines before `reply` tokens; stream stays open after `"phase":"done"`.
 
 After the run completes, `GET /conversations/:id/messages` includes an optional `process` field on assistant messages:
 
