@@ -4,6 +4,7 @@ import { updateConversationTitleIfNull } from '../db/repos/conversations.js'
 import type { HermesClient } from './hermes-client.js'
 import type { HermesPromptMessage } from './prompt-builder.js'
 import type { StreamHub } from '../streams/hub.js'
+import { publishSessionTitle } from '../streams/run-event-publisher.js'
 import { emitAccountConversationUpsert } from './chat-sync-emitter.js'
 
 const TITLE_SYSTEM_PROMPT =
@@ -55,6 +56,7 @@ export async function generateAndSaveTitle(input: {
   conversationId: string
   userId: string
   userMessageText: string
+  originSessionId: string | null
 }): Promise<void> {
   const title = await generateConversationTitle(input.hermesClient, input.userMessageText)
   if (!title) {
@@ -64,6 +66,6 @@ export async function generateAndSaveTitle(input: {
   const updated = updateConversationTitleIfNull(input.db, input.conversationId, title)
   if (updated) {
     emitAccountConversationUpsert(input.db, input.userId, input.conversationId)
-    input.hub.publish(input.conversationId, { event: 'title', data: { title } })
+    publishSessionTitle(input.hub, input.originSessionId, input.conversationId, title)
   }
 }

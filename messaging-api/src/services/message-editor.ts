@@ -60,6 +60,7 @@ export function applyMessageEdit(
   conversationId: string,
   messageId: string,
   content: string,
+  originSessionId: string,
 ): ApplyMessageEditResult {
   const messages = listMessages(db, conversationId)
   const { assistantMessage } = findEditablePair(messages, messageId)
@@ -74,7 +75,7 @@ export function applyMessageEdit(
     }
 
     const hermesSessionId = rotateHermesSessionId(db, conversationId)
-    const runId = createRun(db, conversationId, messageId, 'legacy')
+    const runId = createRun(db, conversationId, messageId, originSessionId)
 
     emitConversationMessagesRewound(db, userId, conversationId, [assistantMessage.id])
     emitConversationMessageUpsert(db, userId, conversationId, message)

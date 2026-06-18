@@ -116,7 +116,8 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
           role: 'user',
           content,
         })
-        const runId = createRun(app.db, conversation.id, messageId, 'legacy')
+        const originSessionId = request.sessionId ?? 'legacy'
+        const runId = createRun(app.db, conversation.id, messageId, originSessionId)
         const messages = listMessages(app.db, conversation.id)
         const message = messages.find((entry) => entry.id === messageId)
 
@@ -149,6 +150,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         companionUsername: request.username,
         bootstrapPrompt,
         runId: created.runId,
+        originSessionId: request.sessionId,
       }).catch((error) => {
         app.log.error({ err: error, conversationId: conversation.id }, 'assistant run failed')
       })
@@ -161,6 +163,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
           conversationId: conversation.id,
           userId: request.userId,
           userMessageText: content,
+          originSessionId: request.sessionId,
         }).catch((error) => {
           app.log.warn({ err: error, conversationId: conversation.id }, 'title generation failed')
         })
@@ -202,7 +205,15 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     const messageId = (request.params as { messageId: string }).messageId
 
     try {
-      const edited = applyMessageEdit(app.db, request.userId, conversation.id, messageId, content)
+      const originSessionId = request.sessionId ?? 'legacy'
+      const edited = applyMessageEdit(
+        app.db,
+        request.userId,
+        conversation.id,
+        messageId,
+        content,
+        originSessionId,
+      )
 
       void executeAssistantRun({
         db: app.db,
@@ -216,6 +227,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         bootstrapPrompt: conversation.bootstrap_prompt,
         runId: edited.runId,
         rewindMessageIds: [edited.removedAssistantMessageId],
+        originSessionId: request.sessionId,
       }).catch((error) => {
         app.log.error({ err: error, conversationId: conversation.id }, 'assistant rerun after edit failed')
       })
@@ -263,7 +275,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       reply.sseEnd()
     }
 
-    const unsubscribe = app.streamHub.subscribe(conversation.id, (event) => {
+    const unsubscribe = app.streamHub.subscribeLegacy(conversation.id, (event) => {
       if (waitTimeout) {
         clearTimeout(waitTimeout)
         waitTimeout = undefined
