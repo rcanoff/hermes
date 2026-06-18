@@ -1,9 +1,20 @@
 openapi: 3.1.0
 info:
   title: Hermes Messaging API
-  version: 2.2.0
+  version: 2.3.0
   description: |
     Private API bridging mobile clients to Hermes.
+
+    **v2.3.0 changes:** companion cron job conversations. `Conversation.kind` is
+    `regular` (default) or `job`. Job conversations expose `hermes_job_id`,
+    `schedule_display`, `job_enabled`, `job_last_run_at`, and `job_last_status`.
+    New HAL list `GET /jobs` returns job conversations only. Hermes cron delivery
+    uses internal `POST /internal/cron/deliver` (not in this document). See
+    `docs/superpowers/specs/2026-06-18-companion-cron-design.md`.
+
+    **v2.2.1 changes:** tooling stream no longer emits `Done:` completion lines on
+    tool finish — only tool-start labels and reasoning lines are sent. Hermes
+    `hermes.tool.progress` completion frames are ignored for SSE output.
 
     **v2.2.0 changes:** session-scoped SSE at `GET /events/stream` for companion
     live UX. One persistent stream per auth session (JWT `jti` claim); events carry
@@ -224,9 +235,17 @@ components:
         username:
           type: string
 
+    ConversationKind:
+      type: string
+      enum: [regular, job]
+      default: regular
+      description: |
+        `regular` — default user chat. `job` — Hermes cron job conversation;
+        see job metadata fields below.
+
     Conversation:
       type: object
-      required: [id, user_id, hermes_session_id, title, created_at]
+      required: [id, user_id, hermes_session_id, title, created_at, kind]
       properties:
         id:
           type: string
@@ -237,6 +256,8 @@ components:
         hermes_session_id:
           type: string
           format: uuid
+        kind:
+          $ref: '#/components/schemas/ConversationKind'
         title:
           type: ["string", "null"]
           description: |
@@ -245,6 +266,22 @@ components:
         created_at:
           type: string
           description: SQLite datetime string (e.g. `2026-06-13 12:00:00`)
+        hermes_job_id:
+          type: ["string", "null"]
+          description: Present when `kind` is `job`. Hermes cron job id (hex).
+        schedule_display:
+          type: ["string", "null"]
+          description: Human-readable schedule (e.g. `30 9 * * *`, `once at …`).
+        job_enabled:
+          type: boolean
+          description: Cached enabled flag. Omitted on `kind=regular` (always treated as true).
+        job_last_run_at:
+          type: ["string", "null"]
+          description: SQLite datetime of last successful or failed cron delivery.
+        job_last_status:
+          type: ["string", "null"]
+          enum: [ok, error]
+          description: Last cron run status from webhook delivery.
 
     UpdateConversationRequest:
       type: object
@@ -458,6 +495,18 @@ components:
         _links:
           $ref: '#/components/schemas/HalLinks'
 
+    JobListResponse:
+      type: object
+      required: [jobs, _links]
+      properties:
+        jobs:
+          type: array
+          description: Job conversations (`kind=job`) newest first.
+          items:
+            $ref: '#/components/schemas/Conversation'
+        _links:
+          $ref: '#/components/schemas/HalLinks'
+
     ConversationSyncEntry:
       type: object
       description: |
@@ -472,6 +521,7 @@ components:
         - updated_at
         - latest_message_id
         - latest_message_created_at
+        - kind
       properties:
         id:
           type: string
@@ -479,6 +529,8 @@ components:
         hermes_session_id:
           type: string
           format: uuid
+        kind:
+          $ref: '#/components/schemas/ConversationKind'
         title:
           type: ["string", "null"]
         created_at:
@@ -494,6 +546,18 @@ components:
         latest_message_created_at:
           type: ["string", "null"]
           description: SQLite datetime of `latest_message_id`; null when no messages
+        hermes_job_id:
+          type: ["string", "null"]
+          description: Present when `kind` is `job`.
+        schedule_display:
+          type: ["string", "null"]
+        job_enabled:
+          type: boolean
+        job_last_run_at:
+          type: ["string", "null"]
+        job_last_status:
+          type: ["string", "null"]
+          enum: [ok, error]
 
     ConversationSyncEventConversationUpsert:
       type: object
@@ -892,7 +956,7 @@ components:
           enum: [reasoning, tool]
         text:
           type: string
-          description: Committed process line, tool start label, or `Done:` tool completion
+          description: Committed process line or tool start label
         draft:
           type: boolean
           const: true
@@ -1244,6 +1308,57 @@ paths:
                 type: string
         '401':
           description: Unauthorized or denied token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /jobs:
+    get:
+      tags: [jobs]
+      summary: List job conversations
+      description: |
+        Returns a paginated window of **job** conversations (`kind=job`) for the
+        authenticated user, newest first. Same HAL pagination as `GET /conversations`
+        (`limit`, `before`, `after`). Use for a cron/jobs index without filtering
+        the main conversation list client-side.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: before
+          in: query
+          description: Conversation id — return page older than this anchor
+          schema:
+            type: string
+            format: uuid
+        - name: after
+          in: query
+          description: Conversation id — return page newer than this anchor
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Paginated job conversations (newest first)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListResponse'
+        '400':
+          description: Invalid pagination query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
           content:
             application/json:
               schema:
@@ -1785,8 +1900,8 @@ paths:
         in-flight run; no replay. Stream ends on `done` or `error`.
 
         **Two-phase assistant stream:** `process_token` streams reasoning text
-        incrementally; `process` emits completed reasoning or tool lines (including
-        `Done:` tool completion); `process_complete` ends the process block; `token`
+        incrementally; `process` emits completed reasoning or tool-start lines;
+        `process_complete` ends the process block; `token`
         events carry the final reply. Instant replies may omit the process phase.
 
         **SSE events:**
@@ -1795,7 +1910,7 @@ paths:
         |-------|-------------|------|
         | `rewind` | `SseRewindEvent` | Messages removed before a replacement run (message edit) |
         | `process_token` | `SseProcessTokenEvent` | Reasoning delta while Hermes is thinking |
-        | `process` | `SseProcessEvent` | Completed reasoning line, tool start label, or `Done:` tool completion |
+        | `process` | `SseProcessEvent` | Completed reasoning line or tool start label |
         | `process_complete` | `SseProcessCompleteEvent` | Process phase ended; collapse process UI before reply |
         | `token` | `SseTokenEvent` | Assistant reply text chunk |
         | `title` | `SseTitleEvent` | Auto-generated title saved (first message only) |

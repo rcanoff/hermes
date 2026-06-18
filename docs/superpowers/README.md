@@ -13,6 +13,11 @@ Older specs and plans (dated before today’s active work) are archived in [`doc
 
 ## Current active work
 
+- **Companion cron / job conversations** (OpenAPI v2.3.0 — planned)
+  - Design: `specs/2026-06-18-companion-cron-design.md`
+  - Backend plan: `plans/2026-06-18-companion-cron-backend.md`
+  - iOS reference: `specs/2026-06-18-companion-cron-ios-design.md`
+  - iOS plan stub: `plans/2026-06-18-companion-cron-ios.md` (iOS agent fills in)
 - **Companion health vault** (OpenAPI v2.0.0 — backend shipped; iOS planned)
   - Overview: `specs/2026-06-17-companion-health-vault-design.md`
   - Backend: `specs/2026-06-17-companion-health-vault-backend-design.md`
