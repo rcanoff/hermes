@@ -1,23 +1,39 @@
 openapi: 3.1.0
 info:
   title: Hermes Messaging API
-  version: 2.4.0
+  version: 2.6.0
   description: |
     Private API bridging mobile clients to Hermes.
+
+    **v2.6.0 changes:** per-device sync inbox. `PUT /devices/me` registers a stable
+    install `device_id` per authenticated user. `GET /sync/inbox` returns a coalesced
+    `changes[]` (`deleted` | `updated`) since the server-stored cursor for
+    `(user_id, device_id)`. `reset_required: true` when the cursor is missing, invalid,
+    or the account gap exceeds `SYNC_INBOX_MAX_GAP` (default 500). Existing
+    `GET /conversations/sync` and `GET /conversations/{id}/sync` are unchanged.
+    See `docs/superpowers/specs/2026-06-20-companion-sync-inbox-design.md`.
+
+    **v2.5.0 changes:** APNs push device registration at `PUT /push/device` and
+    `DELETE /push/device`. Server sends alert pushes when assistant messages or
+    cron output commit while the device has no active session SSE. APNs custom
+    payload includes `companion.destination` (`conversation` or `jobs`),
+    `conversation_id`, `message_id`, and `kind` (`assistant_reply` or
+    `cron_run`). Requires `APNS_ENABLED=true` on the server. See
+    `docs/history/parked/push/2026-06-19-companion-push-design.md` (parked).
 
     **v2.4.0 changes:** extended health daily summary metrics on existing
     `/data/health/daily-summaries` routes. New optional scalar keys: sleep, heart,
     workout, body, nutrition, mindfulness, and flights climbed. New `workout_types`
     object on `metrics`. Extended `HealthMetric.unit` enum (`bpm`, `ms`, `kg`,
     `pct`, `g`, `ml`). No new routes or MCP tools. See
-    `docs/superpowers/specs/2026-06-18-companion-health-vault-v2-metrics-design.md`.
+    `docs/history/implemented/specs/2026-06-18-companion-health-vault-v2-metrics-design.md`.
 
     **v2.3.0 changes:** companion cron job conversations. `Conversation.kind` is
     `regular` (default) or `job`. Job conversations expose `hermes_job_id`,
     `schedule_display`, `job_enabled`, `job_last_run_at`, and `job_last_status`.
     New HAL list `GET /jobs` returns job conversations only. Hermes cron delivery
     uses internal `POST /internal/cron/deliver` (not in this document). See
-    `docs/superpowers/specs/2026-06-18-companion-cron-design.md`.
+    `docs/history/implemented/specs/2026-06-18-companion-cron-design.md`.
 
     **v2.2.1 changes:** tooling stream no longer emits `Done:` completion lines on
     tool finish — only tool-start labels and reasoning lines are sent. Hermes
@@ -29,7 +45,7 @@ info:
     `reply`, `title` (plus structural `rewind`, `error`). `GET
     /conversations/{id}/stream` is deprecated — connect at login via the session
     stream instead. See
-    `docs/superpowers/specs/2026-06-18-companion-session-stream-design.md`.
+    `docs/history/implemented/specs/2026-06-18-companion-session-stream-design.md`.
 
     **v2.1.0 changes:** local-first chat sync feeds for the companion app.
     `GET /conversations/sync` returns account-scoped conversation deltas;
@@ -37,8 +53,8 @@ info:
     deltas. Both return ordered mutation events plus opaque `next_sync_marker`
     and `has_more`. Existing HAL list/history routes and SSE streaming are
     unchanged — sync is the durable reconciliation layer. See
-    `docs/superpowers/specs/2026-06-17-companion-chat-local-sync-backend-design.md`
-    and `docs/superpowers/plans/2026-06-17-companion-chat-local-sync-backend.md`.
+    `docs/history/implemented/specs/2026-06-17-companion-chat-local-sync-backend-design.md`
+    and `docs/history/implemented/plans/2026-06-17-companion-chat-local-sync-backend.md`.
 
     **v2.0.0 changes:** user-scoped health daily summary vault under
     `/data/health/daily-summaries`. `POST` upserts by local calendar day
@@ -47,7 +63,7 @@ info:
     `after`). Companion MCP tools `get_user_health_today`, `get_user_health_daily`,
     and `get_user_health_history` mirror REST read paths — MCP is not described in
     this OpenAPI document. See
-    `docs/superpowers/specs/2026-06-17-companion-health-vault-backend-design.md`.
+    `docs/history/implemented/specs/2026-06-17-companion-health-vault-backend-design.md`.
 
     **v1.9.0 changes:** iOS-authored Hermes bootstrap per conversation. Optional
     `bootstrap` on `POST /conversations` and on the **first** `POST
@@ -55,7 +71,7 @@ info:
     as `bootstrap_prompt`, prepended to every Hermes call, **never** returned in
     GET responses. Removes API-hardcoded companion skill routing; iOS sends
     `skill_view(name='companion-app')` instructions. See
-    `docs/superpowers/specs/2026-06-17-companion-app-skills-design.md`.
+    `docs/history/implemented/specs/2026-06-17-companion-app-skills-design.md`.
 
     **v1.8.0 changes:** live process streaming — SSE `process_token` events stream
     reasoning text incrementally; tool `Done:` lines emit when Hermes reports tool
@@ -123,6 +139,7 @@ tags:
   - name: data-location
   - name: data-health
   - name: health
+  - name: push
 
 components:
   securitySchemes:
@@ -231,6 +248,88 @@ components:
         ok:
           type: boolean
           const: true
+
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+
+    PushDeviceRegisterRequest:
+      type: object
+      required: [device_token, environment]
+      properties:
+        device_token:
+          type: string
+          pattern: '^[0-9a-fA-F]{64}$'
+          description: APNs device token (hex)
+        environment:
+          type: string
+          enum: [development, production]
+
+    PushDeviceDeleteRequest:
+      type: object
+      required: [device_token]
+      properties:
+        device_token:
+          type: string
+          pattern: '^[0-9a-fA-F]{64}$'
+
+    RegisterDeviceRequest:
+      type: object
+      required: [device_id]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+          description: Stable install-scoped identifier from the companion app
+
+    RegisterDeviceResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+
+    SyncInboxChangeKind:
+      type: string
+      enum: [deleted, updated]
+
+    SyncInboxChange:
+      type: object
+      required: [conversation_id, kind]
+      properties:
+        conversation_id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/SyncInboxChangeKind'
+
+    SyncInboxResponse:
+      type: object
+      required: [changes, next_cursor, has_more, reset_required]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/SyncInboxChange'
+        next_cursor:
+          type: string
+          format: uuid
+          description: |
+            Account feed tip after this poll. Server persists per (user, device).
+            Origin sentinel `00000000-0000-4000-8000-000000000000` when feed is empty.
+        has_more:
+          type: boolean
+          description: Always false in v2.6.0; gap overflow uses reset_required instead
+        reset_required:
+          type: boolean
+          description: |
+            When true, client must run full account bootstrap via GET /conversations/sync
+            before resuming inbox polling.
 
     User:
       type: object
@@ -1315,6 +1414,160 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+
+  /devices/me:
+    put:
+      tags: [sync-inbox]
+      summary: Register stable device identity
+      description: |
+        Upserts `(user_id, device_id)` in `device_sync_state`. Does not reset an
+        existing cursor. Required before `GET /sync/inbox`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterDeviceRequest'
+      responses:
+        '200':
+          description: Device registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterDeviceResponse'
+        '400':
+          description: Invalid body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sync/inbox:
+    get:
+      tags: [sync-inbox]
+      summary: Coalesced per-device change feed
+      description: |
+        Returns a coalesced dirty set for the authenticated user and registered device.
+
+        **Coalescing (per conversation_id in cursor window):**
+        - Any account `conversation_deleted` → `kind: deleted` (wins)
+        - Else account `conversation_upsert` or any conversation-scoped event → `kind: updated`
+        - At most one row per conversation; `deleted` rows before `updated`; `updated`
+          ordered by latest activity descending
+
+        **Cursor:** omit `since` to use the server-stored cursor. First poll after
+        registration returns `reset_required: true` (null cursor).
+
+        **Fallback:** `reset_required: true` when cursor is unknown or account events
+        since cursor exceed `SYNC_INBOX_MAX_GAP`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: device_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: since
+          in: query
+          required: false
+          description: Override stored cursor (advanced debugging)
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Inbox page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncInboxResponse'
+        '400':
+          description: Invalid params or unregistered device
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /push/device:
+    put:
+      tags: [push]
+      summary: Register or refresh an APNs device token
+      description: |
+        Upserts the device token for the authenticated user. Stores the JWT
+        `jti` as the device session id for SSE-aware push suppression.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushDeviceRegisterRequest'
+      responses:
+        '200':
+          description: Token registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [push]
+      summary: Unregister an APNs device token
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushDeviceDeleteRequest'
+      responses:
+        '200':
+          description: Token removed (idempotent)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /events/stream:
     get:

@@ -36,7 +36,62 @@ describe('readConfig', () => {
       minPasswordLength: 12,
       companionMcpBearerToken: '',
       cronWebhookBearer: '',
+      cronOutputDir: '/opt/data/cron/output',
+      cronJobsPath: '/opt/data/cron/jobs.json',
+      cronOutputPollMs: 5,
       addressEnrichmentSessionId: 'companion-address-enrichment',
+      apns: {
+        enabled: false,
+        teamId: '',
+        keyId: '',
+        bundleId: '',
+        keyPath: '',
+        environment: 'development',
+        previewMaxChars: 120,
+      },
+      syncInboxMaxGap: 500,
     })
+  })
+
+  it('parses SYNC_INBOX_MAX_GAP with default 500', () => {
+    expect(
+      readConfig({
+        JWT_SECRET: 'test-secret',
+        HERMES_BASE_URL: 'http://hermes:8642',
+        MESSAGING_API_HOST: '100.64.0.1:3000',
+      }).syncInboxMaxGap,
+    ).toBe(500)
+  })
+
+  it('parses SYNC_INBOX_MAX_GAP override', () => {
+    expect(
+      readConfig({
+        JWT_SECRET: 'test-secret',
+        HERMES_BASE_URL: 'http://hermes:8642',
+        MESSAGING_API_HOST: '100.64.0.1:3000',
+        SYNC_INBOX_MAX_GAP: '250',
+      }).syncInboxMaxGap,
+    ).toBe(250)
+  })
+
+  it('parses APNS_ENABLED false by default', () => {
+    expect(
+      readConfig({
+        JWT_SECRET: 'test-secret',
+        HERMES_BASE_URL: 'http://hermes:8642',
+        MESSAGING_API_HOST: '100.64.0.1:3000',
+      }).apns.enabled,
+    ).toBe(false)
+  })
+
+  it('requires APNS fields when enabled', () => {
+    expect(() =>
+      readConfig({
+        JWT_SECRET: 'test-secret',
+        HERMES_BASE_URL: 'http://hermes:8642',
+        MESSAGING_API_HOST: '100.64.0.1:3000',
+        APNS_ENABLED: 'true',
+      }),
+    ).toThrow(/APNS_TEAM_ID/)
   })
 })

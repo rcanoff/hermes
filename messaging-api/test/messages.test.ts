@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify'
 import { listMessages } from '../src/db/repos/messages.js'
 import { getActiveRun } from '../src/db/repos/runs.js'
 import { FakeHermesClient } from './helpers/hermes.js'
+import { completeTitleAfterReply, prepareTitleResponse } from './helpers/title.js'
 import { createTestApp } from './helpers/app.js'
 import { seedTestUser } from './helpers/users.js'
 
@@ -154,6 +155,7 @@ describe('message routes', () => {
       }),
     })
 
+    prepareTitleResponse(hermesClient, 'Time check')
     hermesClient.pushAnswerToken('It is', 0)
     hermesClient.pushAnswerToken(' noon', 0)
     hermesClient.pushDone(0)
@@ -168,7 +170,7 @@ describe('message routes', () => {
       expect.objectContaining({ role: 'assistant', content: 'It is noon' }),
     ])
     expect(getActiveRun(app!.db, conversationId)).toBeUndefined()
-    expect(hermesClient.requests).toHaveLength(2)
+    expect(hermesClient.requests).toHaveLength(1)
     expect(hermesClient.requests[0]).toEqual({
       hermesSessionId: expect.any(String),
       messages: [
@@ -181,7 +183,7 @@ describe('message routes', () => {
         { role: 'user', content: 'What time is it?' },
       ],
     })
-    expect(hermesClient.requests[1]?.messages[0]?.role).toBe('system')
+    expect(hermesClient.completeRequests).toHaveLength(1)
   })
 
   it('returns conflict when posting while a run is already active', async () => {
@@ -207,6 +209,7 @@ describe('message routes', () => {
       expect.objectContaining({ role: 'user', content: 'First' }),
     ])
 
+    prepareTitleResponse(hermesClient)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
     await completeTitleAfterReply(hermesClient)
@@ -226,6 +229,7 @@ describe('message routes', () => {
       message: expect.objectContaining({ role: 'user', content: 'Legacy payload' }),
     })
 
+    prepareTitleResponse(hermesClient)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
     await completeTitleAfterReply(hermesClient)
@@ -264,6 +268,7 @@ describe('message routes', () => {
     })
     expect(postResponse.statusCode).toBe(202)
 
+    prepareTitleResponse(hermesClient)
     hermesClient.pushReasoning('Looking up weather…', 0)
     hermesClient.pushToolCall('lookup_weather', '{"query":"Lisbon"}', 0)
     hermesClient.pushAnswerToken('It is sunny', 0)
@@ -325,6 +330,7 @@ describe('message routes', () => {
     })
     expect(postResponse.statusCode).toBe(202)
 
+    prepareTitleResponse(hermesClient)
     hermesClient.pushAnswerToken('Hello', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
@@ -391,6 +397,7 @@ describe('message routes', () => {
     const reader = response.body?.getReader()
     expect(reader).toBeTruthy()
 
+    prepareTitleResponse(hermesClient)
     hermesClient.pushReasoning('Thinking…', 0)
     hermesClient.pushToolCall('lookup_weather', '{"query":"Lisbon"}', 0)
     hermesClient.pushAnswerToken('Hello', 0)
@@ -427,6 +434,7 @@ describe('message routes', () => {
     const reader = response.body?.getReader()
     expect(reader).toBeTruthy()
 
+    prepareTitleResponse(hermesClient, 'Porto weekend')
     hermesClient.pushAnswerToken('Here is', 0)
     hermesClient.pushAnswerToken(' an idea', 0)
     hermesClient.pushDone(0)
@@ -444,8 +452,8 @@ describe('message routes', () => {
       return row.title === 'Porto weekend'
     })
 
-    expect(hermesClient.requests).toHaveLength(2)
-    expect(hermesClient.requests[1]?.messages[0]?.role).toBe('system')
+    expect(hermesClient.requests).toHaveLength(1)
+    expect(hermesClient.completeRequests).toHaveLength(1)
   })
 
   it('does not auto-generate a title when one is already set', async () => {
@@ -477,9 +485,10 @@ describe('message routes', () => {
     })
     expect(postResponse.statusCode).toBe(202)
 
+    prepareTitleResponse(hermesClient, 'Generated title')
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
-    await waitFor(() => hermesClient.requests.length >= 2)
+    await waitFor(() => hermesClient.completeRequests.length >= 1)
 
     const patch = await app!.inject({
       method: 'PATCH',
@@ -489,7 +498,6 @@ describe('message routes', () => {
     })
     expect(patch.statusCode).toBe(200)
 
-    completeTitleStream(hermesClient, 'Generated title')
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
 
     const row = app!.db
@@ -512,6 +520,7 @@ describe('message routes', () => {
     expect(postResponse.statusCode).toBe(202)
     const userMessageId = (postResponse.json() as { message: { id: string } }).message.id
 
+    prepareTitleResponse(hermesClient)
     hermesClient.pushAnswerToken('Lisbon time', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
@@ -618,6 +627,7 @@ describe('message routes', () => {
     })
     await waitFor(() => listMessages(app!.db, conversationId).length >= 1)
 
+    prepareTitleResponse(hermesClient)
     hermesClient.pushAnswerToken('ok', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
@@ -695,23 +705,38 @@ describe('message routes', () => {
     expect(response.statusCode).toBe(409)
     expect(response.json()).toEqual({ error: 'run_conflict' })
 
+    prepareTitleResponse(hermesClient)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
     await completeTitleAfterReply(hermesClient)
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
   })
+
+  it('returns the existing message when the same content is posted again within 60 seconds', async () => {
+    const firstResponse = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Remind me in 2 minutes' },
+    })
+    expect(firstResponse.statusCode).toBe(202)
+    const firstMessage = (firstResponse.json() as { message: { id: string } }).message
+
+    const secondResponse = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Remind me in 2 minutes' },
+    })
+
+    expect(secondResponse.statusCode).toBe(202)
+    expect(secondResponse.json()).toEqual({ message: firstMessage })
+    expect(listMessages(app!.db, conversationId)).toEqual([
+      expect.objectContaining({ id: firstMessage.id, role: 'user', content: 'Remind me in 2 minutes' }),
+    ])
+    expect(hermesClient.requests).toHaveLength(1)
+  })
 })
-
-async function completeTitleAfterReply(hermesClient: FakeHermesClient, title = 'Title'): Promise<void> {
-  await waitFor(() => hermesClient.requests.length >= 2)
-  completeTitleStream(hermesClient, title)
-}
-
-function completeTitleStream(hermesClient: FakeHermesClient, title = 'Title'): void {
-  hermesClient.pushAnswerToken(title, 1)
-  hermesClient.pushDone(1)
-  hermesClient.closeWithoutDone(1)
-}
 
 async function waitFor(check: () => boolean, timeoutMs = 1000): Promise<void> {
   const startedAt = Date.now()

@@ -13,7 +13,15 @@ export interface DeliverCronRunInput {
 
 export type DeliverCronRunResult =
   | { kind: 'silent' }
-  | { kind: 'delivered'; messageId: string }
+  | {
+      kind: 'delivered'
+      messageId: string
+      userId: string
+      conversationId: string
+      content: string
+      title: string | null
+      scheduleDisplay: string | null
+    }
 
 export function deliverCronRun(
   db: Database.Database,
@@ -67,5 +75,13 @@ export function deliverCronRun(
 
   emitConversationMessageUpsert(db, conversation.user_id, conversation.id, message)
 
-  return { kind: 'delivered', messageId }
+  return {
+    kind: 'delivered',
+    messageId,
+    userId: conversation.user_id,
+    conversationId: conversation.id,
+    content: trimmed,
+    title: conversation.title,
+    scheduleDisplay: conversation.schedule_display,
+  }
 }

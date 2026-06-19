@@ -1,6 +1,11 @@
 import type { FastifyPluginAsync } from 'fastify'
 import { getConversationForUser, setBootstrapPrompt } from '../db/repos/conversations.js'
-import { insertMessage, listMessages, listMessagesPage } from '../db/repos/messages.js'
+import {
+  findRecentDuplicateUserMessage,
+  insertMessage,
+  listMessages,
+  listMessagesPage,
+} from '../db/repos/messages.js'
 import { validateBootstrap } from '../lib/bootstrap.js'
 import { buildHalLinks, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
 import { getProcessByAssistantMessageIds } from '../db/repos/process.js'
@@ -94,6 +99,11 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
+    const duplicate = findRecentDuplicateUserMessage(app.db, conversation.id, content)
+    if (duplicate) {
+      return reply.code(202).send({ message: duplicate })
+    }
+
     try {
       let bootstrapPrompt = conversation.bootstrap_prompt
 
@@ -152,6 +162,20 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         originSessionId: request.sessionId,
         shouldGenerateTitle: created.shouldGenerateTitle,
         userMessageText: content,
+        cronJobsPath: app.cronJobsPath,
+        conversationTitle: conversation.title,
+        onAssistantMessageCommitted: async (ctx) => {
+          await app.pushNotifications.notifyAssistantMessage({
+            userId: request.userId,
+            conversationId: conversation.id,
+            messageId: ctx.messageId,
+            content: ctx.content,
+            conversationTitle: conversation.title,
+          })
+        },
+        log: (message, meta) => {
+          app.log.info(meta ?? {}, message)
+        },
       }).catch((error) => {
         app.log.error({ err: error, conversationId: conversation.id }, 'assistant run failed')
       })
@@ -215,6 +239,20 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         runId: edited.runId,
         rewindMessageIds: [edited.removedAssistantMessageId],
         originSessionId: request.sessionId,
+        cronJobsPath: app.cronJobsPath,
+        conversationTitle: conversation.title,
+        onAssistantMessageCommitted: async (ctx) => {
+          await app.pushNotifications.notifyAssistantMessage({
+            userId: request.userId,
+            conversationId: conversation.id,
+            messageId: ctx.messageId,
+            content: ctx.content,
+            conversationTitle: conversation.title,
+          })
+        },
+        log: (message, meta) => {
+          app.log.info(meta ?? {}, message)
+        },
       }).catch((error) => {
         app.log.error({ err: error, conversationId: conversation.id }, 'assistant rerun after edit failed')
       })

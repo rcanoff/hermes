@@ -1,6 +1,16 @@
 import { buildApp } from '../../src/app.js'
 import type { AppOptions } from '../../src/types.js'
 
+const defaultApns = {
+  enabled: false,
+  teamId: '',
+  keyId: '',
+  bundleId: '',
+  keyPath: '',
+  environment: 'development' as const,
+  previewMaxChars: 120,
+}
+
 export async function createTestApp(overrides: Partial<AppOptions> = {}) {
   return buildApp({
     dbPath: ':memory:',
@@ -12,7 +22,12 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
     minPasswordLength: 12,
     companionMcpBearerToken: 'test-mcp-token',
     cronWebhookBearer: 'test-cron-webhook-bearer',
+    cronOutputDir: '/tmp/hermes-cron-output-test',
+    cronJobsPath: '/tmp/hermes-cron-jobs-test.json',
+    cronOutputPollMs: 5,
     addressEnrichmentSessionId: 'companion-address-enrichment',
+    apns: defaultApns,
+    syncInboxMaxGap: 500,
     ...overrides,
   })
 }

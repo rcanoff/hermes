@@ -56,6 +56,10 @@ export class StreamHub {
     }
   }
 
+  hasSessionListener(sessionId: string): boolean {
+    return this.sessionListeners.has(sessionId)
+  }
+
   replaceSessionConnection(sessionId: string, listener: SessionListener): () => void {
     const previous = this.sessionListeners.get(sessionId)
     if (previous) {

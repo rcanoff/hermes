@@ -18,6 +18,8 @@ import type { HermesClient } from './hermes-client.js'
 import { formatToolProcessLine } from './process-labeler.js'
 import { emitConversationMessageUpsert } from './chat-sync-emitter.js'
 import { generateAndSaveTitle } from './title-generator.js'
+import { listHermesJobIdsFromFile } from '../lib/hermes-cron-jobs.js'
+import { autoLinkNewCompanionCronJobs } from './companion-cron-auto-link.js'
 
 export interface ExecuteAssistantRunInput {
   db: Database.Database
@@ -34,6 +36,13 @@ export interface ExecuteAssistantRunInput {
   originSessionId: string | null
   shouldGenerateTitle?: boolean
   userMessageText?: string
+  cronJobsPath?: string
+  conversationTitle?: string | null
+  onAssistantMessageCommitted?: (ctx: {
+    messageId: string
+    content: string
+  }) => void | Promise<void>
+  log?: (message: string, meta?: Record<string, unknown>) => void
 }
 
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
@@ -59,6 +68,10 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
   let reasoningBuffer = ''
   let inReplyPhase = false
   let sawProcessActivity = false
+  let sawCronjobTool = false
+  const knownJobIdsBefore = input.cronJobsPath
+    ? await listHermesJobIdsFromFile(input.cronJobsPath)
+    : new Set<string>()
 
   const publishProcessLine = (line: ProcessLine) => {
     processLines.push(line)
@@ -106,12 +119,18 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
       if (event.type === 'tool' && event.name) {
         flushReasoningBuffer()
+        if (event.name === 'cronjob') {
+          sawCronjobTool = true
+        }
         const text = formatToolProcessLine(event.name, event.arguments, event.label)
         publishProcessLine({ kind: 'tool', text })
         continue
       }
 
       if (event.type === 'tool_complete') {
+        if (event.name === 'cronjob') {
+          sawCronjobTool = true
+        }
         continue
       }
 
@@ -155,6 +174,32 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       assistantText,
       processLines,
     )
+
+    if (input.cronJobsPath && input.companionUsername) {
+      try {
+        await autoLinkNewCompanionCronJobs({
+          db: input.db,
+          userId: input.userId,
+          username: input.companionUsername,
+          sourceConversationId: input.conversationId,
+          cronJobsPath: input.cronJobsPath,
+          knownJobIdsBefore,
+          sawCronjobTool,
+          log: input.log,
+        })
+      } catch (error) {
+        input.log?.('companion cron auto-link pass failed', {
+          conversationId: input.conversationId,
+          err: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+
+    await input.onAssistantMessageCommitted?.({
+      messageId: assistantMessageId,
+      content: assistantText,
+    })
+
     publishReplyDone(streamCtx, assistantMessageId)
     return assistantMessageId
   } catch (error) {

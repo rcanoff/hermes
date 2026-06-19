@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify'
 import { listMessages } from '../src/db/repos/messages.js'
 import { SYNC_MARKER_ORIGIN } from '../src/lib/sync-marker.js'
 import { FakeHermesClient } from './helpers/hermes.js'
+import { completeTitleAfterReply, prepareTitleResponse } from './helpers/title.js'
 import { createTestApp } from './helpers/app.js'
 import { seedTestUser } from './helpers/users.js'
 
@@ -165,7 +166,7 @@ describe('chat sync routes', () => {
     })
     expect(edit.statusCode).toBe(202)
 
-    await waitFor(() => hermesClient.requests.length === 3)
+    await waitFor(() => hermesClient.requests.length === 2)
     const rerunStreamId = hermesClient.requests.length - 1
     hermesClient.pushAnswerToken('Edited reply', rerunStreamId)
     hermesClient.pushDone(rerunStreamId)
@@ -225,6 +226,7 @@ describe('chat sync routes', () => {
     })
     expect(postResponse.statusCode).toBe(202)
 
+    prepareTitleResponse(hermesClient)
     hermesClient.pushAnswerToken('Reply', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
@@ -232,13 +234,6 @@ describe('chat sync routes', () => {
     await waitFor(() => listMessages(app!.db, conversationId).some((message) => message.role === 'assistant'))
   }
 })
-
-async function completeTitleAfterReply(hermesClient: FakeHermesClient, title = 'Title'): Promise<void> {
-  await waitFor(() => hermesClient.requests.length >= 2)
-  hermesClient.pushAnswerToken(title, 1)
-  hermesClient.pushDone(1)
-  hermesClient.closeWithoutDone(1)
-}
 
 async function waitFor(check: () => boolean, timeoutMs = 1000): Promise<void> {
   const startedAt = Date.now()

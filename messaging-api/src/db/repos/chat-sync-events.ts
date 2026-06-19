@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { buildConversationSyncEntry } from '../../lib/conversation-sync-entry.js'
 import { isSyncMarkerOrigin, SYNC_MARKER_ORIGIN } from '../../lib/sync-marker.js'
-import { getConversationForUser } from './conversations.js'
+import { getConversationForUser, type ConversationRow } from './conversations.js'
 import type { MessageRow } from './messages.js'
 
 export interface ConversationSyncEntryPayload {
@@ -227,7 +227,14 @@ function getStoredEvent(
     .get(eventId, scope, userId) as StoredEventRow | undefined
 }
 
-function resolveAccountFeedTip(db: Database.Database, userId: string): string {
+export interface AccountEventRow {
+  id: string
+  conversation_id: string
+  event_type: string
+  occurred_at: string
+}
+
+export function resolveAccountFeedTip(db: Database.Database, userId: string): string {
   const row = db
     .prepare(`
       SELECT id
@@ -267,6 +274,78 @@ function validateSinceMarker(
   }
 
   return getStoredEvent(db, since!, scope, userId, conversationId) !== undefined
+}
+
+export function accountSyncMarkerExists(
+  db: Database.Database,
+  userId: string,
+  marker: string | null | undefined,
+): boolean {
+  if (marker === null || marker === undefined) {
+    return false
+  }
+
+  return validateSinceMarker(db, marker, 'account', userId)
+}
+
+export function listAccountEventRowsAfterMarker(
+  db: Database.Database,
+  userId: string,
+  since: string | undefined,
+  limit: number,
+): AccountEventRow[] {
+  return fetchScopedRows(db, 'account', userId, undefined, since, limit).map((row) => ({
+    id: row.id,
+    conversation_id: row.conversation_id,
+    event_type: row.event_type,
+    occurred_at: row.occurred_at,
+  }))
+}
+
+export function listConversationActivitySinceMarker(
+  db: Database.Database,
+  userId: string,
+  since: string | undefined,
+): Array<{ conversation_id: string; latest_occurred_at: string }> {
+  if (isSyncMarkerOrigin(since)) {
+    return db
+      .prepare(`
+        SELECT conversation_id, MAX(occurred_at) AS latest_occurred_at
+        FROM chat_sync_events
+        WHERE scope = 'conversation' AND user_id = ?
+        GROUP BY conversation_id
+      `)
+      .all(userId) as Array<{ conversation_id: string; latest_occurred_at: string }>
+  }
+
+  const cursor = db
+    .prepare(`
+      SELECT id, occurred_at
+      FROM chat_sync_events
+      WHERE id = ? AND scope = 'account' AND user_id = ?
+    `)
+    .get(since!, userId) as { id: string; occurred_at: string } | undefined
+
+  if (!cursor) {
+    return []
+  }
+
+  return db
+    .prepare(`
+      SELECT conversation_id, MAX(occurred_at) AS latest_occurred_at
+      FROM chat_sync_events
+      WHERE scope = 'conversation'
+        AND user_id = ?
+        AND (
+          occurred_at > ?
+          OR (occurred_at = ? AND id > ?)
+        )
+      GROUP BY conversation_id
+    `)
+    .all(userId, cursor.occurred_at, cursor.occurred_at, cursor.id) as Array<{
+      conversation_id: string
+      latest_occurred_at: string
+    }>
 }
 
 function fetchScopedRows(

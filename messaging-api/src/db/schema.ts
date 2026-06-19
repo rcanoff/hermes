@@ -136,9 +136,58 @@ export function initSchema(db: Database.Database): void {
   ensureLegacyUserColumns(db)
   ensureLegacyConversationColumns(db)
   ensureJobConversationColumns(db)
+  ensureCronOutputDeliveries(db)
   ensureLegacyHealthDailySummaries(db)
   ensureMessageRunsOriginSessionId(db)
   ensureChatSyncEvents(db)
+  ensurePushDevices(db)
+  ensureDeviceSyncState(db)
+}
+
+function ensureDeviceSyncState(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS device_sync_state (
+      user_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      last_account_event_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, device_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS device_sync_state_user_idx
+      ON device_sync_state (user_id);
+  `)
+}
+
+function ensurePushDevices(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS push_devices (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      device_token TEXT NOT NULL,
+      platform TEXT NOT NULL DEFAULT 'ios' CHECK (platform IN ('ios')),
+      environment TEXT NOT NULL CHECK (environment IN ('development', 'production')),
+      session_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS push_devices_device_token_idx ON push_devices (device_token);
+    CREATE INDEX IF NOT EXISTS push_devices_user_id_idx ON push_devices (user_id);
+  `)
+}
+
+function ensureCronOutputDeliveries(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cron_output_deliveries (
+      output_path TEXT PRIMARY KEY,
+      hermes_job_id TEXT NOT NULL,
+      delivered_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
 }
 
 function ensureMessageRunsOriginSessionId(db: Database.Database): void {

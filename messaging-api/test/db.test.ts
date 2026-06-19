@@ -45,6 +45,24 @@ describe('schema', () => {
     expect(columns.map((c) => c.name)).toContain('updated_at')
   })
 
+  it('includes push_devices table', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const row = db
+      .prepare(`SELECT name FROM sqlite_master WHERE name = 'push_devices'`)
+      .get()
+    expect(row).toBeTruthy()
+  })
+
+  it('includes device_sync_state table', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const row = db
+      .prepare(`SELECT name FROM sqlite_master WHERE name = 'device_sync_state'`)
+      .get()
+    expect(row).toBeDefined()
+  })
+
   it('includes chat_sync_events table', () => {
     const db = new Database(':memory:')
     initSchema(db)

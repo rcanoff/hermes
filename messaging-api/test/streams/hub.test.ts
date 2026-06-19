@@ -18,6 +18,13 @@ describe('StreamHub session listeners', () => {
     expect(b).toHaveLength(0)
   })
 
+  it('hasSessionListener reflects active subscription', () => {
+    const hub = new StreamHub()
+    expect(hub.hasSessionListener('sess-a')).toBe(false)
+    hub.subscribeSession('sess-a', () => {})
+    expect(hub.hasSessionListener('sess-a')).toBe(true)
+  })
+
   it('replaces the previous session connection on reconnect', () => {
     const hub = new StreamHub()
     const first: SessionStreamEvent[] = []

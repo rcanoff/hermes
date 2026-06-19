@@ -178,33 +178,15 @@ describe('executeAssistantRun process stream', () => {
       userMessageText: 'Plan a weekend in Porto',
     })
 
+    hermes.queueCompleteChatResponse('Porto weekend')
     hermes.pushAnswerToken('Here is an idea')
     hermes.pushDone()
     hermes.closeWithoutDone()
 
-    await new Promise<void>((resolve, reject) => {
-      const startedAt = Date.now()
-      const tick = () => {
-        if (hermes.requests.length >= 2) {
-          resolve()
-          return
-        }
-        if (Date.now() - startedAt > 1000) {
-          reject(new Error('Timed out waiting for title request'))
-          return
-        }
-        setTimeout(tick, 10)
-      }
-      tick()
-    })
-
-    hermes.pushAnswerToken('Porto weekend', 1)
-    hermes.pushDone(1)
-    hermes.closeWithoutDone(1)
-
     await runPromise
 
-    expect(hermes.requests).toHaveLength(2)
+    expect(hermes.requests).toHaveLength(1)
+    expect(hermes.completeRequests).toHaveLength(1)
     expect(legacyEvents.map((event) => event.event)).toEqual(['token', 'title', 'done'])
     expect(db.prepare('SELECT title FROM conversations WHERE id = ?').pluck().get('c1')).toBe('Porto weekend')
   })

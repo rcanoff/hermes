@@ -415,7 +415,18 @@ Both return ordered `events`, `has_more`, and **always** return `next_sync_marke
 - Missing thread marker → HAL-rehydrate `GET /conversations/{id}/messages`, then thread sync with `since` omitted.
 - Invalid marker → clear stored marker and repeat the missing-marker path for that scope.
 
-No MCP tools for sync in v2.1.0. Design: [`docs/superpowers/specs/2026-06-17-companion-chat-local-sync-backend-design.md`](docs/superpowers/specs/2026-06-17-companion-chat-local-sync-backend-design.md). Full contract: [`docs/superpowers/specs/messaging-api.openapi.yaml`](docs/superpowers/specs/messaging-api.openapi.yaml).
+No MCP tools for sync in v2.1.0. Design: [`docs/history/implemented/specs/2026-06-17-companion-chat-local-sync-backend-design.md`](docs/history/implemented/specs/2026-06-17-companion-chat-local-sync-backend-design.md). Full contract: [`docs/superpowers/specs/messaging-api.openapi.yaml`](docs/superpowers/specs/messaging-api.openapi.yaml).
+
+### Sync inbox (v2.6.0)
+
+Per-device reconciliation for multi-device companion use:
+
+- `PUT /devices/me` — register stable `device_id` per user
+- `GET /sync/inbox?device_id=…` — coalesced `changes[]` since server cursor
+
+Config: `SYNC_INBOX_MAX_GAP` (default `500`) — gap overflow returns `reset_required: true`.
+
+Spec: [`docs/superpowers/specs/2026-06-20-companion-sync-inbox-design.md`](docs/superpowers/specs/2026-06-20-companion-sync-inbox-design.md)
 
 ### User location vault
 
@@ -450,23 +461,31 @@ The `companion-user-location` skill in `data/skills/` calls `get_user_location` 
 
 ### Companion cron (job conversations)
 
-Hermes cron jobs for the companion app use **job conversations** (`kind: job`) plus a webhook into `messaging-api`. OpenAPI v2.3.0 adds `GET /jobs` and job fields on conversations.
+Hermes cron jobs for the companion app use **job conversations** (`kind: job`). OpenAPI v2.3.0 adds `GET /jobs` and job fields on conversations.
 
 Add to `.env`:
 
 ```dotenv
 CRON_WEBHOOK_BEARER=replace-with-long-random-token
+CRON_OUTPUT_DIR=/opt/data/cron/output
+CRON_OUTPUT_POLL_MS=5
 ```
 
-Hermes cron `deliver` target (internal Docker network):
+**Delivery (v1):** Hermes agent creates jobs with `deliver: local`. `messaging-api` polls `CRON_OUTPUT_DIR` for new run markdown files and commits assistant messages into the linked job conversation when `hermes_job_id` is set.
+
+**Webhook (optional):** `POST /internal/cron/deliver` with `Authorization: Bearer <CRON_WEBHOOK_BEARER>` — for future Hermes outbound webhook deliver:
 
 ```
 webhook:http://messaging-api:3000/internal/cron/deliver?job_id=<HERMES_JOB_ID>
 ```
 
-Skills: `companion-cron` (create/link/manage), routed from `companion-app`. MCP tools: `create_job_conversation`, `link_job_conversation`.
+Skills: `companion-cron` (create/link/manage, `deliver: local` only), routed from `companion-app`. MCP tools: `create_job_conversation`, `link_job_conversation`.
 
-Design: [`docs/superpowers/specs/2026-06-18-companion-cron-design.md`](docs/superpowers/specs/2026-06-18-companion-cron-design.md). Backend plan: [`docs/superpowers/plans/2026-06-18-companion-cron-backend.md`](docs/superpowers/plans/2026-06-18-companion-cron-backend.md).
+Design: [`docs/history/implemented/specs/2026-06-18-companion-cron-design.md`](docs/history/implemented/specs/2026-06-18-companion-cron-design.md). Backend plan: [`docs/history/implemented/plans/2026-06-18-companion-cron-backend.md`](docs/history/implemented/plans/2026-06-18-companion-cron-backend.md).
+
+### Push notifications (parked)
+
+OpenAPI v2.5.0 includes `PUT /push/device` and `DELETE /push/device`; backend code ships with `APNS_ENABLED=false` (no-op). **Parked** until Apple Developer (paid) credentials are available. See [`docs/history/parked/README.md`](docs/history/parked/README.md).
 
 ### User health vault
 
@@ -486,11 +505,11 @@ Companion MCP tools (same bearer token as location):
 - `get_user_health_daily` — summary for a specific `YYYY-MM-DD`
 - `get_user_health_history` — paginated summaries with HAL `_links`
 
-**v2 metrics** (optional keys on the same daily row): activity (`flights_climbed`), sleep (`sleep_duration`, `sleep_in_bed`, `sleep_deep`, `sleep_rem`, `sleep_core`), heart (`resting_heart_rate`, `heart_rate_avg`, `hrv_sdnn`), workouts (`workout_count`, `workout_minutes`, `workout_types`), body (`weight`, `bmi`, `body_fat_percentage`), nutrition (`dietary_energy`, `protein`, `water`), mindfulness (`mindfulness_minutes`). Design: [`docs/superpowers/specs/2026-06-18-companion-health-vault-v2-metrics-design.md`](docs/superpowers/specs/2026-06-18-companion-health-vault-v2-metrics-design.md).
+**v2 metrics** (optional keys on the same daily row): activity (`flights_climbed`), sleep (`sleep_duration`, `sleep_in_bed`, `sleep_deep`, `sleep_rem`, `sleep_core`), heart (`resting_heart_rate`, `heart_rate_avg`, `hrv_sdnn`), workouts (`workout_count`, `workout_minutes`, `workout_types`), body (`weight`, `bmi`, `body_fat_percentage`), nutrition (`dietary_energy`, `protein`, `water`), mindfulness (`mindfulness_minutes`). Design: [`docs/history/implemented/specs/2026-06-18-companion-health-vault-v2-metrics-design.md`](docs/history/implemented/specs/2026-06-18-companion-health-vault-v2-metrics-design.md).
 
 The `companion-user-health` skill in `data/skills/` normalizes vault data for `companion-replies` and `companion-markdown-blocks`. Route health intents via `companion-app`.
 
-iOS owns HealthKit sync, step goals, and day finalization. Client implementation: [`docs/superpowers/plans/2026-06-17-companion-health-vault-ios.md`](docs/superpowers/plans/2026-06-17-companion-health-vault-ios.md). v2 metric sync: [`docs/superpowers/plans/2026-06-18-companion-health-vault-v2-metrics-ios.md`](docs/superpowers/plans/2026-06-18-companion-health-vault-v2-metrics-ios.md).
+iOS owns HealthKit sync, step goals, and day finalization. Client implementation: [`docs/history/implemented/plans/2026-06-17-companion-health-vault-ios.md`](docs/history/implemented/plans/2026-06-17-companion-health-vault-ios.md). v2 metric sync: [`docs/history/implemented/plans/2026-06-18-companion-health-vault-v2-metrics-ios.md`](docs/history/implemented/plans/2026-06-18-companion-health-vault-v2-metrics-ios.md).
 
 ## Persistence check
 

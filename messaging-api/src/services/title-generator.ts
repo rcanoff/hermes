@@ -1,7 +1,9 @@
-import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { updateConversationTitleIfNull } from '../db/repos/conversations.js'
-import type { HermesClient } from './hermes-client.js'
+import {
+  COMPANION_TITLE_GENERATION_SESSION_KEY,
+  type HermesClient,
+} from './hermes-client.js'
 import type { HermesPromptMessage } from './prompt-builder.js'
 import type { StreamHub } from '../streams/hub.js'
 import { publishSessionTitle } from '../streams/run-event-publisher.js'
@@ -31,22 +33,15 @@ export async function generateConversationTitle(
   hermesClient: HermesClient,
   userMessageText: string,
 ): Promise<string | null> {
-  let raw = ''
-
   try {
-    for await (const event of hermesClient.streamChat({
-      hermesSessionId: randomUUID(),
+    const raw = await hermesClient.completeChat({
+      hermesSessionId: COMPANION_TITLE_GENERATION_SESSION_KEY,
       messages: buildTitlePromptMessages(userMessageText),
-    })) {
-      if (event.type === 'answer_token' && event.text) {
-        raw += event.text
-      }
-    }
+    })
+    return sanitizeGeneratedTitle(raw)
   } catch {
     return null
   }
-
-  return sanitizeGeneratedTitle(raw)
 }
 
 export async function generateAndSaveTitle(input: {

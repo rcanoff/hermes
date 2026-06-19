@@ -26,6 +26,28 @@ interface MessageCursorRow extends MessageRow {
   rowid: number
 }
 
+export const DUPLICATE_MESSAGE_WINDOW_SECONDS = 60
+
+export function findRecentDuplicateUserMessage(
+  db: Database.Database,
+  conversationId: string,
+  content: string,
+  windowSeconds = DUPLICATE_MESSAGE_WINDOW_SECONDS,
+): MessageRow | undefined {
+  return db
+    .prepare(`
+      SELECT id, conversation_id, role, content, created_at
+      FROM messages
+      WHERE conversation_id = ?
+        AND role = 'user'
+        AND content = ?
+        AND created_at >= datetime('now', '-' || ? || ' seconds')
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT 1
+    `)
+    .get(conversationId, content, windowSeconds) as MessageRow | undefined
+}
+
 export function insertMessage(db: Database.Database, input: InsertMessageInput): string {
   const id = randomUUID()
   db.prepare(`

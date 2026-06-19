@@ -40,6 +40,19 @@ const cronInternalRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(204).send()
     }
 
+    void app.pushNotifications
+      .notifyCronMessage({
+        userId: result.userId,
+        conversationId: result.conversationId,
+        messageId: result.messageId,
+        content: result.content,
+        conversationTitle: result.title,
+        scheduleDisplay: result.scheduleDisplay,
+      })
+      .catch((error) => {
+        app.log.error({ err: error, hermesJobId }, 'cron push notification failed')
+      })
+
     return { message_id: result.messageId }
   })
 }

@@ -3,6 +3,9 @@ import type { HermesPromptMessage } from './prompt-builder.js'
 /** Stable Hermes gateway session key — identifies messaging-api traffic as Companion App. */
 export const COMPANION_APP_SESSION_KEY = 'companion-app'
 
+/** Stable Hermes session for one-shot title generation (non-agent completeChat). */
+export const COMPANION_TITLE_GENERATION_SESSION_KEY = 'companion-title-generation'
+
 export interface StreamChatInput {
   hermesSessionId: string
   messages: HermesPromptMessage[]

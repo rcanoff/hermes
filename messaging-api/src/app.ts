@@ -8,6 +8,8 @@ import ssePlugin from './plugins/sse.js'
 import authRoutes from './routes/auth.js'
 import inviteLandingRoutes from './routes/invite-landing.js'
 import chatSyncRoutes from './routes/chat-sync.js'
+import devicesRoutes from './routes/devices.js'
+import syncInboxRoutes from './routes/sync-inbox.js'
 import conversationRoutes from './routes/conversations.js'
 import messageRoutes from './routes/messages.js'
 import eventsRoutes from './routes/events.js'
@@ -16,11 +18,18 @@ import dataHealthRoutes from './routes/data-health.js'
 import mcpRoutes from './routes/mcp.js'
 import jobRoutes from './routes/jobs.js'
 import cronInternalRoutes from './routes/cron-internal.js'
+import pushRoutes from './routes/push.js'
 import { AddressEnrichmentQueue } from './services/address-enrichment.js'
+import { createApnsClient } from './services/apns-client.js'
+import { CronOutputBridge } from './services/cron-output-bridge.js'
 import { OpenAiHermesClient } from './services/hermes-client.js'
+import { PushNotificationService } from './services/push-notifications.js'
 import { StreamHub } from './streams/hub.js'
+import type { ApnsConfig } from './config.js'
+import type { ApnsClient } from './services/apns-client.js'
 import type { HermesClient } from './services/hermes-client.js'
 import type { AddressEnrichmentQueue as AddressEnrichmentQueueType } from './services/address-enrichment.js'
+import type { PushNotificationService as PushNotificationServiceType } from './services/push-notifications.js'
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -30,10 +39,16 @@ declare module 'fastify' {
     addressEnrichmentQueue: AddressEnrichmentQueueType
     companionMcpBearerToken: string
     cronWebhookBearer: string
+    cronJobsPath: string
+    cronOutputBridge: CronOutputBridge
+    apnsConfig: ApnsConfig
+    apnsClient: ApnsClient
+    pushNotifications: PushNotificationServiceType
     messagingApiHost: string
     inviteExpiryHours: number
     minPasswordLength: number
     streamWaitMs: number
+    syncInboxMaxGap: number
   }
 }
 
@@ -50,9 +65,38 @@ export function buildApp(options: AppOptions) {
   app.decorate('streamWaitMs', options.streamWaitMs ?? 30_000)
   app.decorate('companionMcpBearerToken', options.companionMcpBearerToken)
   app.decorate('cronWebhookBearer', options.cronWebhookBearer)
+  app.decorate('cronJobsPath', options.cronJobsPath)
+  app.decorate('apnsConfig', options.apns)
+  const apnsClient = options.apnsClient ?? createApnsClient(options.apns)
+  app.decorate('apnsClient', apnsClient)
+  const pushNotifications =
+    options.pushNotifications ??
+    new PushNotificationService(
+      app.db,
+      app.streamHub,
+      apnsClient,
+      options.apns,
+      (message, meta) => {
+        app.log.info(meta ?? {}, message)
+      },
+    )
+  app.decorate('pushNotifications', pushNotifications)
+  const cronOutputBridge =
+    options.cronOutputBridge ??
+    new CronOutputBridge({
+      db: app.db,
+      outputDir: options.cronOutputDir,
+      pollMs: options.cronOutputPollMs * 1000,
+      pushNotifications,
+      log: (message, meta) => {
+        app.log.info(meta ?? {}, message)
+      },
+    })
+  app.decorate('cronOutputBridge', cronOutputBridge)
   app.decorate('messagingApiHost', options.messagingApiHost)
   app.decorate('inviteExpiryHours', options.inviteExpiryHours)
   app.decorate('minPasswordLength', options.minPasswordLength)
+  app.decorate('syncInboxMaxGap', options.syncInboxMaxGap)
   app.decorate(
     'addressEnrichmentQueue',
     options.addressEnrichmentQueue ??
@@ -67,6 +111,8 @@ export function buildApp(options: AppOptions) {
   app.register(inviteLandingRoutes)
   app.register(authRoutes)
   app.register(chatSyncRoutes)
+  app.register(devicesRoutes)
+  app.register(syncInboxRoutes)
   app.register(conversationRoutes)
   app.register(jobRoutes)
   app.register(cronInternalRoutes)
@@ -75,6 +121,7 @@ export function buildApp(options: AppOptions) {
   app.register(dataLocationRoutes)
   app.register(dataHealthRoutes)
   app.register(mcpRoutes)
+  app.register(pushRoutes)
 
   app.get('/health', async () => ({ ok: true }))
 

@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import type { FastifyInstance } from 'fastify'
 import { listMessages } from '../src/db/repos/messages.js'
 import { FakeHermesClient } from './helpers/hermes.js'
+import { completeTitleAfterReply, prepareTitleResponse } from './helpers/title.js'
 import { createTestApp } from './helpers/app.js'
 import { seedTestUser } from './helpers/users.js'
 
@@ -62,6 +63,7 @@ describe('session stream', () => {
 
     await waitFor(() => hermesClient.requests.length >= 1)
 
+    prepareTitleResponse(hermesClient)
     hermesClient.pushToolCall('skills_list', '{"category":"productivity"}', 0)
     hermesClient.pushAnswerToken('One skill', 0)
     hermesClient.pushDone(0)
@@ -104,6 +106,7 @@ describe('session stream', () => {
 
     await waitFor(() => hermesClient.requests.length >= 1)
 
+    prepareTitleResponse(hermesClient)
     hermesClient.pushAnswerToken('Hello', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
@@ -164,13 +167,6 @@ describe('session stream', () => {
     expect(stillOpen).toBe(true)
   }, 15_000)
 })
-
-async function completeTitleAfterReply(hermesClient: FakeHermesClient, title = 'Title'): Promise<void> {
-  await waitFor(() => hermesClient.requests.length >= 2)
-  hermesClient.pushAnswerToken(title, 1)
-  hermesClient.pushDone(1)
-  hermesClient.closeWithoutDone(1)
-}
 
 async function waitFor(check: () => boolean, timeoutMs = 1000): Promise<void> {
   const startedAt = Date.now()

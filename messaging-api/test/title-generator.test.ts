@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { buildTitlePromptMessages, sanitizeGeneratedTitle } from '../src/services/title-generator.js'
+import { COMPANION_TITLE_GENERATION_SESSION_KEY } from '../src/services/hermes-client.js'
+import {
+  buildTitlePromptMessages,
+  generateConversationTitle,
+  sanitizeGeneratedTitle,
+} from '../src/services/title-generator.js'
+import { FakeHermesClient } from './helpers/hermes.js'
 
 describe('sanitizeGeneratedTitle', () => {
   it('trims whitespace and strips wrapping quotes', () => {
@@ -37,5 +43,23 @@ describe('buildTitlePromptMessages', () => {
     const long = 'x'.repeat(600)
     const messages = buildTitlePromptMessages(long)
     expect(messages[1]?.content).toHaveLength(500)
+  })
+})
+
+describe('generateConversationTitle', () => {
+  it('uses completeChat with the stable title-generation session key', async () => {
+    const hermesClient = new FakeHermesClient()
+    hermesClient.queueCompleteChatResponse('Grocery list')
+
+    const title = await generateConversationTitle(hermesClient, 'Add milk and eggs')
+
+    expect(title).toBe('Grocery list')
+    expect(hermesClient.completeRequests).toEqual([
+      {
+        hermesSessionId: COMPANION_TITLE_GENERATION_SESSION_KEY,
+        messages: buildTitlePromptMessages('Add milk and eggs'),
+      },
+    ])
+    expect(hermesClient.requests).toHaveLength(0)
   })
 })

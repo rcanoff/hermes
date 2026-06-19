@@ -14,6 +14,7 @@ export class FakeHermesClient implements HermesClient {
   readonly requests: StreamChatInput[] = []
   readonly completeRequests: CompleteChatInput[] = []
 
+  private readonly completeResponses: Array<string | Error> = []
   private readonly queues = new Map<number, QueueEntry[]>()
   private readonly waiters = new Map<number, Array<() => void>>()
   private readonly preStartQueue: QueueEntry[] = []
@@ -47,9 +48,17 @@ export class FakeHermesClient implements HermesClient {
     this.enqueue(streamId, { kind: 'error', error })
   }
 
+  queueCompleteChatResponse(response: string | Error): void {
+    this.completeResponses.push(response)
+  }
+
   async completeChat(input: CompleteChatInput): Promise<string> {
     this.completeRequests.push(input)
-    return ''
+    const next = this.completeResponses.shift()
+    if (next instanceof Error) {
+      throw next
+    }
+    return next ?? ''
   }
 
   async *streamChat(input: StreamChatInput): AsyncIterable<HermesStreamEvent> {
