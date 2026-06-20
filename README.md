@@ -346,7 +346,7 @@ The messaging API exposes a **persistent per-auth-session** SSE at `GET /events/
 
 | event | purpose |
 |-------|---------|
-| `tooling` | Reasoning drafts (`draft: true`), completed process lines, tool labels, `phase: "complete"` |
+| `tooling` | Reasoning drafts (`draft: true`), structured tooling lines (`phase`, `tool`, `args`), `phase: "complete"` |
 | `reply` | Answer token deltas and `phase: "done"` with `messageId` |
 | `title` | Auto-generated conversation title saved on first message |
 | `rewind` | Messages removed before an edit rerun |
@@ -370,6 +370,8 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 
 Expect `tooling` lines before `reply` tokens; stream stays open after `"phase":"done"`.
 
+**Tooling lines (v2.7.0):** committed `tooling` events and persisted `process.lines` use `phase` (`reasoning` | `activity` | `status`), `text`, optional Hermes `tool`, and optional `args`. Interim narration before tool calls uses `phase: status`. Deploy messaging-api and the iOS companion together — v2.6 clients expecting `kind` will break. Design: [`docs/superpowers/specs/2026-06-21-companion-tooling-lines-design.md`](docs/superpowers/specs/2026-06-21-companion-tooling-lines-design.md).
+
 After the run completes, `GET /conversations/:id/messages` includes an optional `process` field on assistant messages:
 
 ```json
@@ -378,8 +380,13 @@ After the run completes, `GET /conversations/:id/messages` includes an optional 
   "content": "It is sunny in Lisbon.",
   "process": {
     "lines": [
-      { "kind": "reasoning", "text": "Looking up weather…" },
-      { "kind": "tool", "text": "Running lookup weather" }
+      { "phase": "reasoning", "text": "Looking up weather…" },
+      {
+        "phase": "activity",
+        "text": "Running lookup weather",
+        "tool": "lookup_weather",
+        "args": { "query": "Lisbon" }
+      }
     ]
   }
 }

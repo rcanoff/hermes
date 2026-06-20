@@ -70,7 +70,7 @@ describe('applyMessageEdit', () => {
     insertMessageProcess(db, {
       assistantMessageId: 'a1',
       conversationId: 'c1',
-      lines: [{ kind: 'tool', text: 'Running lookup weather' }],
+      lines: [{ phase: 'activity', text: 'Running lookup weather', tool: 'lookup_weather' }],
     })
 
     const result = applyMessageEdit(db, 'u1', 'c1', 'u1', 'new text', 'sess-edit')
@@ -98,7 +98,11 @@ describe('applyMessageEdit', () => {
     const assistantMessageId = await runPromise
     const process = getProcessByAssistantMessageIds(db, [assistantMessageId]).get(assistantMessageId)
     expect(process?.lines).toEqual([
-      { kind: 'tool', text: expect.stringContaining('lookup weather') },
+      expect.objectContaining({
+        phase: 'activity',
+        tool: 'lookup_weather',
+        text: expect.stringContaining('lookup weather'),
+      }),
     ])
     expect(assistantMessageId).not.toBe('a1')
   })

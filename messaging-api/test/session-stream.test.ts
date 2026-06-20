@@ -71,7 +71,8 @@ describe('session stream', () => {
     await completeTitleAfterReply(hermesClient)
 
     const payload = await readUntilReplyDone(reader!)
-    expect(payload).toContain('"kind":"tool"')
+    expect(payload).toContain('"phase":"activity"')
+    expect(payload).toContain('"tool":"skills_list"')
     expect(payload).toContain('event: tooling')
     expect(payload).toContain('"phase":"complete"')
     expect(payload).toContain('event: reply')

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import { insertMessage, listMessages } from '../db/repos/messages.js'
-import { insertMessageProcess, type ProcessLine } from '../db/repos/process.js'
+import { insertMessageProcess, type ToolingLine } from '../db/repos/process.js'
 import { createRun, markRunCompleted, markRunFailed } from '../db/repos/runs.js'
 import type { StreamHub } from '../streams/hub.js'
 import {
@@ -15,7 +15,11 @@ import {
 } from '../streams/run-event-publisher.js'
 import { buildHermesMessages } from './prompt-builder.js'
 import type { HermesClient } from './hermes-client.js'
-import { formatToolProcessLine } from './process-labeler.js'
+import {
+  buildActivityLine,
+  buildReasoningLine,
+  buildStatusLine,
+} from './tooling-line.js'
 import { emitConversationMessageUpsert } from './chat-sync-emitter.js'
 import { generateAndSaveTitle } from './title-generator.js'
 import { listHermesJobIdsFromFile } from '../lib/hermes-cron-jobs.js'
@@ -64,19 +68,31 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
   let assistantText = ''
   let sawDone = false
-  const processLines: ProcessLine[] = []
+  const processLines: ToolingLine[] = []
   let reasoningBuffer = ''
   let inReplyPhase = false
-  let sawProcessActivity = false
+  let sawFirstTool = false
+  let outstandingTools = 0
+  let sawToolingActivity = false
+  let pendingStatusText: string | null = null
   let sawCronjobTool = false
   const knownJobIdsBefore = input.cronJobsPath
     ? await listHermesJobIdsFromFile(input.cronJobsPath)
     : new Set<string>()
 
-  const publishProcessLine = (line: ProcessLine) => {
+  const publishProcessLine = (line: ToolingLine) => {
     processLines.push(line)
-    sawProcessActivity = true
+    sawToolingActivity = true
     publishToolingLine(streamCtx, line)
+  }
+
+  const flushPendingStatus = (tool: string) => {
+    if (!pendingStatusText) {
+      return
+    }
+
+    publishProcessLine(buildStatusLine({ text: pendingStatusText, tool }))
+    pendingStatusText = null
   }
 
   const flushReasoningBuffer = () => {
@@ -86,7 +102,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       return
     }
 
-    publishProcessLine({ kind: 'reasoning', text })
+    publishProcessLine(buildReasoningLine(text))
   }
 
   const beginReplyPhase = () => {
@@ -96,9 +112,22 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
     flushReasoningBuffer()
     inReplyPhase = true
-    if (sawProcessActivity) {
+    if (sawToolingActivity) {
       publishToolingComplete(streamCtx)
     }
+  }
+
+  const flushPendingInstantReply = (options?: { persist?: boolean }) => {
+    if (!pendingStatusText || sawFirstTool || inReplyPhase) {
+      return
+    }
+
+    beginReplyPhase()
+    if (options?.persist !== false) {
+      assistantText += pendingStatusText
+    }
+    publishReplyToken(streamCtx, pendingStatusText)
+    pendingStatusText = null
   }
 
   if (input.rewindMessageIds && input.rewindMessageIds.length > 0) {
@@ -112,22 +141,30 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     })) {
       if (event.type === 'reasoning' && event.text) {
         reasoningBuffer += event.text
-        sawProcessActivity = true
+        sawToolingActivity = true
         publishToolingDraft(streamCtx, event.text)
         continue
       }
 
       if (event.type === 'tool' && event.name) {
         flushReasoningBuffer()
+        sawFirstTool = true
+        outstandingTools++
         if (event.name === 'cronjob') {
           sawCronjobTool = true
         }
-        const text = formatToolProcessLine(event.name, event.arguments, event.label)
-        publishProcessLine({ kind: 'tool', text })
+        flushPendingStatus(event.name)
+        const line = buildActivityLine({
+          tool: event.name,
+          label: event.label,
+          argumentsJson: event.arguments,
+        })
+        publishProcessLine(line)
         continue
       }
 
       if (event.type === 'tool_complete') {
+        outstandingTools = Math.max(0, outstandingTools - 1)
         if (event.name === 'cronjob') {
           sawCronjobTool = true
         }
@@ -135,6 +172,21 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       }
 
       if (event.type === 'answer_token' && event.text) {
+        if (inReplyPhase) {
+          assistantText += event.text
+          publishReplyToken(streamCtx, event.text)
+          continue
+        }
+
+        if (!sawFirstTool) {
+          pendingStatusText = pendingStatusText == null ? event.text : pendingStatusText + event.text
+          continue
+        }
+
+        if (outstandingTools > 0) {
+          outstandingTools = 0
+        }
+
         beginReplyPhase()
         assistantText += event.text
         publishReplyToken(streamCtx, event.text)
@@ -149,6 +201,8 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     if (!sawDone) {
       throw new Error('Hermes stream ended without a done event')
     }
+
+    flushPendingInstantReply()
 
     if (input.shouldGenerateTitle && input.userMessageText) {
       try {
@@ -203,6 +257,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     publishReplyDone(streamCtx, assistantMessageId)
     return assistantMessageId
   } catch (error) {
+    flushPendingInstantReply({ persist: false })
     const message = error instanceof Error ? error.message : 'unknown'
     markRunFailed(input.db, runId, 'hermes_stream_failed', message)
     publishRunError(streamCtx, 'hermes_stream_failed')
@@ -216,7 +271,7 @@ function persistCompletedRun(
   runId: string,
   conversationId: string,
   assistantText: string,
-  processLines: ProcessLine[],
+  processLines: ToolingLine[],
 ): string {
   return db.transaction(() => {
     const assistantMessageId = insertMessage(db, {
@@ -225,7 +280,7 @@ function persistCompletedRun(
       content: assistantText,
     })
 
-    let process: { lines: ProcessLine[] } | undefined
+    let process: { lines: ToolingLine[] } | undefined
     if (processLines.length > 0) {
       insertMessageProcess(db, {
         assistantMessageId,

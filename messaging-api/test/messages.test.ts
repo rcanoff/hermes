@@ -289,7 +289,7 @@ describe('message routes', () => {
       messages: Array<{
         role: string
         content: string
-        process?: { lines: Array<{ kind: string; text: string }> }
+        process?: { lines: Array<{ phase: string; text: string; tool?: string }> }
       }>
     }).messages
     expect(messages).toHaveLength(2)
@@ -299,8 +299,12 @@ describe('message routes', () => {
       content: 'It is sunny',
       process: {
         lines: [
-          { kind: 'reasoning', text: 'Looking up weather…' },
-          { kind: 'tool', text: expect.stringContaining('lookup weather') },
+          { phase: 'reasoning', text: 'Looking up weather…' },
+          expect.objectContaining({
+            phase: 'activity',
+            tool: 'lookup_weather',
+            text: expect.stringContaining('lookup weather'),
+          }),
         ],
       },
     })
@@ -407,8 +411,8 @@ describe('message routes', () => {
 
     const payload = await readUntilDone(reader!)
 
-    expect(payload).toContain('event: process\ndata: {"kind":"reasoning","text":"Thinking…"}')
-    expect(payload).toContain('event: process\ndata: {"kind":"tool","text":')
+    expect(payload).toContain('event: process\ndata: {"phase":"reasoning","text":"Thinking…"}')
+    expect(payload).toContain('event: process\ndata: {"phase":"activity","text":')
     expect(payload).toContain('event: process_complete\ndata: {}')
     expect(payload).toContain('event: token\ndata: {"text":"Hello"}')
     expect(payload).toContain('event: done\ndata: {"messageId":')

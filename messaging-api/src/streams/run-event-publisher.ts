@@ -1,4 +1,4 @@
-import type { ProcessLineKind } from './hub.js'
+import type { ToolingLine } from '../db/repos/process.js'
 import type { StreamHub } from './hub.js'
 
 export interface RunEventContext {
@@ -9,6 +9,17 @@ export interface RunEventContext {
   legacyStreamEnabled?: boolean
 }
 
+function toolingLinePayload(ctx: RunEventContext, line: ToolingLine) {
+  return {
+    conversationId: ctx.conversationId,
+    runId: ctx.runId,
+    phase: line.phase,
+    text: line.text,
+    ...(line.tool != null ? { tool: line.tool } : {}),
+    ...(line.args != null ? { args: line.args } : {}),
+  }
+}
+
 export function publishToolingDraft(ctx: RunEventContext, text: string): void {
   if (ctx.originSessionId) {
     ctx.hub.publishSession(ctx.originSessionId, {
@@ -16,7 +27,7 @@ export function publishToolingDraft(ctx: RunEventContext, text: string): void {
       data: {
         conversationId: ctx.conversationId,
         runId: ctx.runId,
-        kind: 'reasoning',
+        phase: 'reasoning',
         text,
         draft: true,
       },
@@ -25,24 +36,17 @@ export function publishToolingDraft(ctx: RunEventContext, text: string): void {
   if (ctx.legacyStreamEnabled !== false) {
     ctx.hub.publishLegacy(ctx.conversationId, {
       event: 'process_token',
-      data: { kind: 'reasoning', text },
+      data: { phase: 'reasoning', text },
     })
   }
 }
 
-export function publishToolingLine(
-  ctx: RunEventContext,
-  line: { kind: ProcessLineKind; text: string },
-): void {
+export function publishToolingLine(ctx: RunEventContext, line: ToolingLine): void {
+  const payload = toolingLinePayload(ctx, line)
   if (ctx.originSessionId) {
     ctx.hub.publishSession(ctx.originSessionId, {
       event: 'tooling',
-      data: {
-        conversationId: ctx.conversationId,
-        runId: ctx.runId,
-        kind: line.kind,
-        text: line.text,
-      },
+      data: payload,
     })
   }
   if (ctx.legacyStreamEnabled !== false) {

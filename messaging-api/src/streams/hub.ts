@@ -1,9 +1,11 @@
-export type ProcessLineKind = 'reasoning' | 'tool'
+import type { ToolingLine, ToolingPhase } from '../db/repos/process.js'
+
+export type { ToolingLine, ToolingPhase } from '../db/repos/process.js'
 
 export type LegacyStreamEvent =
   | { event: 'rewind'; data: { removedMessageIds: string[] } }
-  | { event: 'process'; data: { kind: ProcessLineKind; text: string } }
-  | { event: 'process_token'; data: { kind: 'reasoning'; text: string } }
+  | { event: 'process'; data: ToolingLine }
+  | { event: 'process_token'; data: { phase: 'reasoning'; text: string } }
   | { event: 'process_complete'; data: Record<string, never> }
   | { event: 'token'; data: { text: string } }
   | { event: 'title'; data: { title: string } }
@@ -16,10 +18,11 @@ export type SessionStreamEvent =
       data: {
         conversationId: string
         runId: string
-        kind?: ProcessLineKind
+        phase?: ToolingPhase | 'complete'
         text?: string
+        tool?: string | null
+        args?: Record<string, unknown> | null
         draft?: true
-        phase?: 'complete'
       }
     }
   | {

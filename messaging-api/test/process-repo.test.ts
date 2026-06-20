@@ -27,16 +27,16 @@ describe('message_process repo', () => {
       assistantMessageId: assistantId,
       conversationId: 'c1',
       lines: [
-        { kind: 'reasoning', text: 'Thinking…' },
-        { kind: 'tool', text: 'Loading skill: demo' },
+        { phase: 'reasoning', text: 'Thinking…' },
+        { phase: 'activity', text: 'Loading skill: demo', tool: 'skill_view', args: { name: 'demo' } },
       ],
     })
 
     const map = getProcessByAssistantMessageIds(db, [assistantId])
     expect(map.get(assistantId)).toEqual({
       lines: [
-        { kind: 'reasoning', text: 'Thinking…' },
-        { kind: 'tool', text: 'Loading skill: demo' },
+        { phase: 'reasoning', text: 'Thinking…' },
+        { phase: 'activity', text: 'Loading skill: demo', tool: 'skill_view', args: { name: 'demo' } },
       ],
     })
   })
@@ -59,7 +59,7 @@ describe('message_process repo', () => {
     insertMessageProcess(db, {
       assistantMessageId: assistantId,
       conversationId: 'c1',
-      lines: [{ kind: 'tool', text: 'Running command' }],
+      lines: [{ phase: 'activity', text: 'Running command', tool: 'terminal' }],
     })
 
     db.prepare(`DELETE FROM messages WHERE id = ?`).run(assistantId)

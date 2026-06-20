@@ -115,7 +115,7 @@ describe('durable run execution', () => {
     expect(assistantMessageId).toEqual(expect.any(String))
     expect(listMessages(db, 'c1')).toEqual([
       expect.objectContaining({ id: 'm1', role: 'user', content: 'hello' }),
-      expect.objectContaining({ id: assistantMessageId, role: 'assistant', content: 'Hi there' }),
+      expect.objectContaining({ id: assistantMessageId, role: 'assistant', content: ' there' }),
     ])
     expect(
       db
@@ -132,8 +132,15 @@ describe('durable run execution', () => {
       }),
     )
     expect(events).toEqual([
-      { event: 'token', data: { text: 'Hi' } },
-      { event: 'process', data: { kind: 'tool', text: 'Running lookup weather' } },
+      {
+        event: 'process',
+        data: { phase: 'status', text: 'Hi', tool: 'lookup_weather', args: null },
+      },
+      {
+        event: 'process',
+        data: { phase: 'activity', text: 'Running lookup weather', tool: 'lookup_weather' },
+      },
+      { event: 'process_complete', data: {} },
       { event: 'token', data: { text: ' there' } },
       { event: 'done', data: { messageId: assistantMessageId } },
     ])

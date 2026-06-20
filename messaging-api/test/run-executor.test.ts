@@ -67,7 +67,7 @@ describe('executeAssistantRun process stream', () => {
       data: {
         conversationId: 'c1',
         runId: 'run-1',
-        kind: 'reasoning',
+        phase: 'reasoning',
         text: 'Searching for tools…',
         draft: true,
       },
@@ -79,9 +79,66 @@ describe('executeAssistantRun process stream', () => {
 
     const process = getProcessByAssistantMessageIds(db, [assistantMessageId]).get(assistantMessageId)
     expect(process?.lines).toEqual([
-      { kind: 'reasoning', text: 'Searching for tools…' },
-      { kind: 'tool', text: 'Loading skill: demo' },
+      { phase: 'reasoning', text: 'Searching for tools…' },
+      {
+        phase: 'activity',
+        text: 'Loading skill: demo',
+        tool: 'skill_view',
+        args: { name: 'demo' },
+      },
     ])
+  })
+
+  it('emits status line for pre-tool answer tokens then activity for memory', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedConversation(db)
+
+    const hermes = new FakeHermesClient()
+    const hub = new StreamHub()
+    const events: SessionStreamEvent[] = []
+    hub.subscribeSession('sess-1', (event) => events.push(event))
+
+    const runPromise = executeAssistantRun({
+      db,
+      hermesClient: hermes,
+      hub,
+      conversationId: 'c1',
+      hermesSessionId: 'sess-1',
+      userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
+      runId: 'run-1',
+      userId: 'u1',
+      originSessionId: 'sess-1',
+    })
+
+    hermes.pushAnswerToken('Updating user preferences…')
+    hermes.pushToolCall('memory', '{"action":"add","target":"user","content":"likes tea"}')
+    hermes.pushAnswerToken('Got it.')
+    hermes.pushDone()
+    hermes.closeWithoutDone()
+
+    const assistantMessageId = await runPromise
+
+    expect(events).toContainEqual({
+      event: 'tooling',
+      data: expect.objectContaining({
+        phase: 'status',
+        text: 'Updating user preferences…',
+        tool: 'memory',
+      }),
+    })
+
+    const process = getProcessByAssistantMessageIds(db, [assistantMessageId]).get(assistantMessageId)
+    expect(process?.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: 'status', tool: 'memory' }),
+        expect.objectContaining({
+          phase: 'activity',
+          tool: 'memory',
+          args: { action: 'add', target: 'user' },
+        }),
+      ]),
+    )
   })
 
   it('streams reasoning drafts and ignores tool completion events', async () => {
@@ -130,7 +187,7 @@ describe('executeAssistantRun process stream', () => {
       data: {
         conversationId: 'c1',
         runId: 'run-1',
-        kind: 'reasoning',
+        phase: 'reasoning',
         text: 'Think',
         draft: true,
       },
@@ -140,7 +197,7 @@ describe('executeAssistantRun process stream', () => {
       data: {
         conversationId: 'c1',
         runId: 'run-1',
-        kind: 'reasoning',
+        phase: 'reasoning',
         text: 'Thinking',
       },
     })

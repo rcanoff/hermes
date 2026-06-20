@@ -1,15 +1,20 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 
-export type ProcessLineKind = 'reasoning' | 'tool'
+export type ToolingPhase = 'reasoning' | 'activity' | 'status'
 
-export interface ProcessLine {
-  kind: ProcessLineKind
+export interface ToolingLine {
+  phase: ToolingPhase
   text: string
+  tool?: string | null
+  args?: Record<string, unknown> | null
 }
 
+/** @deprecated alias — same shape as ToolingLine */
+export type ProcessLine = ToolingLine
+
 export interface MessageProcess {
-  lines: ProcessLine[]
+  lines: ToolingLine[]
 }
 
 export function insertMessageProcess(
@@ -17,7 +22,7 @@ export function insertMessageProcess(
   input: {
     assistantMessageId: string
     conversationId: string
-    lines: ProcessLine[]
+    lines: ToolingLine[]
   },
 ): void {
   db.prepare(`
@@ -51,7 +56,7 @@ export function getProcessByAssistantMessageIds(
   const map = new Map<string, MessageProcess>()
   for (const row of rows) {
     map.set(row.assistant_message_id, {
-      lines: JSON.parse(row.lines_json) as ProcessLine[],
+      lines: JSON.parse(row.lines_json) as ToolingLine[],
     })
   }
 

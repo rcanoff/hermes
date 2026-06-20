@@ -1,9 +1,18 @@
 openapi: 3.1.0
 info:
   title: Hermes Messaging API
-  version: 2.6.0
+  version: 2.7.0
   description: |
     Private API bridging mobile clients to Hermes.
+
+    **v2.7.0 changes:** structured tooling lines for companion process UX.
+    `ToolingLine` replaces flat `kind: reasoning|tool` with Hermes-native
+    `phase` (`reasoning` | `activity` | `status`), optional `tool`, and
+    optional `args`. Session `tooling` events and persisted `message.process.lines`
+    use the new shape. Interim assistant narration (e.g. before `memory` /
+    `skill_manage`) appears as `phase: status` in the tooling lane. Icons are
+    not sent — iOS maps `tool` + `args` locally. Requires companion app update.
+    See `docs/superpowers/specs/2026-06-21-companion-tooling-lines-design.md`.
 
     **v2.6.0 changes:** per-device sync inbox. `PUT /devices/me` registers a stable
     install `device_id` per authenticated user. `GET /sync/inbox` returns a coalesced
@@ -399,16 +408,43 @@ components:
           maxLength: 120
           description: Non-empty after trim
 
-    ProcessLine:
+    ToolingLine:
       type: object
-      required: [kind, text]
+      required: [phase, text]
       properties:
-        kind:
+        phase:
           type: string
-          enum: [reasoning, tool]
+          enum: [reasoning, activity, status]
+          description: |
+            reasoning — model thinking (committed line).
+            activity — Hermes tool execution (`tool` + `args` when available).
+            status — interim assistant narration before/during housekeeping;
+            `tool` set when correlated with the next Hermes tool in the turn.
         text:
           type: string
-          description: Human-readable process line (reasoning summary or friendly tool label)
+          description: |
+            Display copy. Prefer Hermes tool-progress `label` when the backend
+            has it; not used as the type key for client grouping.
+        tool:
+          type: [string, 'null']
+          description: |
+            Hermes tool identifier when known (e.g. skill_view, memory,
+            web_search, terminal, mcp_*). Null for reasoning-only lines or
+            uncorrelated status lines.
+        args:
+          type: [object, 'null']
+          additionalProperties: true
+          description: |
+            Optional subset of Hermes tool arguments for client presentation
+            (e.g. memory action/target, skill_view name, web_search query).
+            Omitted or null when unavailable.
+
+    ProcessLine:
+      description: |
+        Alias for ToolingLine (persisted on assistant messages). v2.7.0+ uses
+        `phase` / `tool` / `args`. v2.6 used `kind: reasoning|tool` only.
+      allOf:
+        - $ref: '#/components/schemas/ToolingLine'
 
     MessageProcess:
       type: object
@@ -1039,14 +1075,11 @@ components:
           type: string
 
     SseProcessEvent:
-      type: object
-      required: [kind, text]
-      properties:
-        kind:
-          type: string
-          enum: [reasoning, tool]
-        text:
-          type: string
+      description: |
+        Committed tooling line on the deprecated per-conversation stream.
+        Same shape as ToolingLine (v2.7.0+).
+      allOf:
+        - $ref: '#/components/schemas/ToolingLine'
 
     SseProcessTokenEvent:
       type: object
@@ -1102,7 +1135,7 @@ components:
 
     SseToolingEventLine:
       type: object
-      required: [conversationId, runId, kind, text]
+      required: [conversationId, runId, phase, text]
       properties:
         conversationId:
           type: string
@@ -1110,16 +1143,26 @@ components:
         runId:
           type: string
           format: uuid
-        kind:
+        phase:
           type: string
-          enum: [reasoning, tool]
+          enum: [reasoning, activity, status]
+          description: Tooling line phase (see ToolingLine)
         text:
           type: string
-          description: Committed process line or tool start label
+          description: Display copy for the process block
+        tool:
+          type: [string, 'null']
+          description: Hermes tool identifier when known
+        args:
+          type: [object, 'null']
+          additionalProperties: true
+          description: Optional Hermes argument subset for client grouping
         draft:
           type: boolean
           const: true
-          description: Reasoning delta; append to in-flight reasoning draft (not a committed line)
+          description: |
+            Reasoning delta only (`phase` must be reasoning). Append to
+            in-flight reasoning draft — not a committed line.
 
     SseToolingEventPhaseComplete:
       type: object
@@ -1590,11 +1633,16 @@ paths:
         `title` (auto-generated conversation title). Structural events: `rewind`
         (message edit rerun), `error` (run failure).
 
+        **Tooling lines (v2.7.0):** each committed `tooling` payload carries
+        `phase` (`reasoning` | `activity` | `status`), `text`, optional Hermes
+        `tool`, and optional `args`. Interim narration uses `phase: status`.
+        Clients group presentation from `tool` + `args` — no icon field in API.
+
         **SSE events:**
 
         | event | data schema | when |
         |-------|-------------|------|
-        | `tooling` | `SseToolingEvent` | Process lines, reasoning drafts, or `phase: complete` |
+        | `tooling` | `SseToolingEvent` | ToolingLine commits, reasoning drafts, or `phase: complete` |
         | `reply` | `SseReplyEvent` | Reply text chunks or `phase: done` with `messageId` |
         | `title` | `SseSessionTitleEvent` | Auto-generated title saved (first message only) |
         | `rewind` | `SseSessionRewindEvent` | Messages removed before replacement run (message edit) |
@@ -2213,9 +2261,10 @@ paths:
         in-flight run; no replay. Stream ends on `done` or `error`.
 
         **Two-phase assistant stream:** `process_token` streams reasoning text
-        incrementally; `process` emits completed reasoning or tool-start lines;
-        `process_complete` ends the process block; `token`
-        events carry the final reply. Instant replies may omit the process phase.
+        incrementally; `process` emits committed `ToolingLine` rows (`phase`,
+        `text`, optional `tool` / `args`); `process_complete` ends the process
+        block; `token` events carry the final reply. Instant replies may omit
+        the process phase.
 
         **SSE events:**
 
@@ -2223,7 +2272,7 @@ paths:
         |-------|-------------|------|
         | `rewind` | `SseRewindEvent` | Messages removed before a replacement run (message edit) |
         | `process_token` | `SseProcessTokenEvent` | Reasoning delta while Hermes is thinking |
-        | `process` | `SseProcessEvent` | Completed reasoning line or tool start label |
+        | `process` | `SseProcessEvent` | Committed tooling line (v2.7.0 ToolingLine shape) |
         | `process_complete` | `SseProcessCompleteEvent` | Process phase ended; collapse process UI before reply |
         | `token` | `SseTokenEvent` | Assistant reply text chunk |
         | `title` | `SseTitleEvent` | Auto-generated title saved (first message only) |

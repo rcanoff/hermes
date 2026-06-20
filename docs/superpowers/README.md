@@ -15,7 +15,13 @@ Parked (deferred) work lives in [`docs/history/parked/`](../history/parked/READM
 
 ## Current active work
 
-- **Sync inbox (per user + device)** — OpenAPI v2.6.0 (planned)
+- **Structured tooling lines (v2.7.0)** — Hermes-native process line types
+  - Backend spec: `specs/2026-06-21-companion-tooling-lines-design.md`
+  - Backend plan: `plans/2026-06-21-companion-tooling-lines-backend.md`
+  - iOS reference: `specs/2026-06-21-companion-tooling-lines-ios-design.md` (iOS agent writes plan in `assistant-companion`)
+  - OpenAPI: `specs/messaging-api.openapi.yaml` v2.7.0
+
+- **Sync inbox (per user + device)** — OpenAPI v2.6.0
   - Backend spec: `specs/2026-06-20-companion-sync-inbox-design.md`
   - Backend plan: `plans/2026-06-20-companion-sync-inbox-backend.md`
   - iOS reference: `specs/2026-06-20-companion-sync-inbox-ios-design.md` (iOS agent writes plan in `assistant-companion`)
