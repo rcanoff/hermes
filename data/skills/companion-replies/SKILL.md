@@ -1,7 +1,7 @@
 ---
 name: companion-replies
 description: Reply composition model for Companion App and related channels. Loaded via companion-app on iOS; delegate to block skills for maps, markdown, and links.
-version: 1.0.0
+version: 1.1.0
 author: Hermes Agent
 metadata:
   hermes:
@@ -38,6 +38,16 @@ A single reply may mix, in any order:
 
 Blocks are **siblings** — never nest `map` inside `markdown`, and never put URLs inside `map`.
 
+## After a data skill
+
+When a data skill (`companion-user-location`, `companion-user-health`, …) returned a normalized record, **all user-facing output happens here**.
+
+1. You must be on this skill before writing the reply.
+2. Map the record to the right format (map block, markdown, or plain text).
+3. On **Companion App** (bootstrap present), never use data-skill formatting — use block skills.
+
+If you have a record but are still on a data skill, load this skill first.
+
 ## Which skill to use
 
 | User need | Follow |
@@ -59,10 +69,11 @@ Blocks are **siblings** — never nest `map` inside `markdown`, and never put UR
 
 ### Location answer
 
-1. Load `companion-user-location` — fetch vault data and normalize to a LocationRecord.
-2. Companion App + `available: true` → brief context if needed, then a `type: place` map block via `companion-map-preview` (accuracy/freshness in `subtitle`). Optional Apple Maps link via `companion-links`.
-3. Companion App + `available: false` → plain text only (suggest sharing location from the app).
-4. Other channels → plain-text four-line format (no map blocks):
+Data skill `companion-user-location` should already have run — you receive a **LocationRecord**, not raw MCP JSON.
+
+1. **Companion App** + `available: true` → brief context if needed, then a `type: place` map block via `companion-map-preview` (accuracy/freshness in `subtitle`). Optional Apple Maps link via `companion-links`. **Never** use the four-line format below.
+2. **Companion App** + `available: false` → plain text only (suggest sharing location from the app).
+3. **Other channels only** (Telegram, CLI, dashboard — no Companion App bootstrap) → plain-text four-line format (no map blocks):
 
    ```text
    Address: ...
@@ -86,6 +97,8 @@ Account invites and password resets use `companion-account-management` — not t
 
 ## Do not
 
+- Reply with location or health data before loading this skill after a data fetch
+- Use Address/Coordinates/Accuracy/Updated format on Companion App — use `companion-map-preview` instead
 - Duplicate block syntax from child skills — read the relevant one
 - Nest blocks inside other blocks
 - Strip or shorten URLs — `companion-links`

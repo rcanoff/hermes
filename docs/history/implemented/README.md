@@ -16,6 +16,20 @@ Archived design docs and implementation plans for shipped workspace features.
 
 The iOS companion app is implemented on a separate machine. Backend parity features (process stream, message edit, title generation) are live in `messaging-api`.
 
+## Companion channel (v1.9 – v2.4)
+
+| Feature | Spec | Plan |
+|---------|------|------|
+| App skills & iOS bootstrap (v1.9) | `specs/2026-06-17-companion-app-skills-design.md` | `plans/2026-06-17-companion-app-skills-backend.md`, `plans/2026-06-17-companion-app-skills-ios.md` |
+| Local-first chat sync (v2.1) | `specs/2026-06-17-companion-chat-local-sync-backend-design.md` | `plans/2026-06-17-companion-chat-local-sync-backend.md` |
+| Health vault (v2.0) | `specs/2026-06-17-companion-health-vault-design.md`, `specs/2026-06-17-companion-health-vault-backend-design.md`, `specs/2026-06-17-companion-health-vault-ios-design.md` | `plans/2026-06-17-companion-health-vault-backend.md`, `plans/2026-06-17-companion-health-vault-ios.md` |
+| Health vault v2 metrics (v2.4) | `specs/2026-06-18-companion-health-vault-v2-metrics-design.md` | `plans/2026-06-18-companion-health-vault-v2-metrics-backend.md`, `plans/2026-06-18-companion-health-vault-v2-metrics-ios.md` |
+| Session stream (v2.2) | `specs/2026-06-18-companion-session-stream-design.md` | `plans/2026-06-18-companion-session-stream-backend.md`, `plans/2026-06-18-companion-session-stream-ios.md` |
+| Cron / job conversations (v2.3) | `specs/2026-06-18-companion-cron-design.md`, `specs/2026-06-18-companion-cron-ios-design.md` | `plans/2026-06-18-companion-cron-backend.md`, `plans/2026-06-18-companion-cron-ios.md` |
+| Live streaming debug (iOS) | — | `plans/2026-06-17-companion-live-streaming-ios-debug.md` |
+
+Live OpenAPI: [`docs/superpowers/specs/messaging-api.openapi.yaml`](../../superpowers/specs/messaging-api.openapi.yaml) (v2.5.0).
+
 ## Integrations & ops
 
 | Spec | Plan |

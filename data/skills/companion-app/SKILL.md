@@ -43,7 +43,7 @@ Before writing any Companion App reply, load `companion-replies` and follow its 
 | Weight / body composition | `companion-user-health` → `companion-replies` | Fetch data first |
 | Nutrition / water / protein | `companion-user-health` → `companion-replies` | Fetch data first |
 | Mindfulness / meditation | `companion-user-health` → `companion-replies` | Fetch data first |
-| Remind me / run every day / cron / job | `companion-cron` | Creates job conversation + Hermes cron job |
+| Remind me / run every day / cron / job | `companion-cron` (load first, follow exactly) | MCP create/link + `cronjob` with `deliver: local` — never `origin` |
 
 ## Data → present pipeline (required)
 
@@ -66,6 +66,9 @@ For any vault data intent (location, health):
 
 ## Do not
 
+- Call `cronjob` for companion reminders without loading `companion-cron` and completing the MCP create/link flow
+- Use `deliver: origin` (or omit `deliver`) for companion cron jobs — that delivers to Telegram
+- Write cron prompts that say "send" / "notify" / "message the user" — use `companion-cron` literal-output reminder templates (`Reminder: …`, no tools)
 - Send a reply after a data skill without loading `companion-replies`
 - Format location or health answers inside data skills
 - Duplicate fence syntax from `companion-map-preview`, `companion-links`, or `companion-markdown-blocks`

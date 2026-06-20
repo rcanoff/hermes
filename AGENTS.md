@@ -46,6 +46,11 @@ Typical work includes:
 
 ## Working Rules
 
+### Agent replies
+
+- Keep answers **very short and precise** — no long specs, walls of text, or scroll-heavy dumps for simple questions.
+- Include only what's needed to answer or act; expand only when the user asks.
+
 ### Repository scope (hard rules)
 
 - **Backend only in this repo.** Implement `messaging-api`, companion MCP, `data/skills/`, Docker/Makefile, and operator docs here. Do **not** implement iOS/SwiftUI or other frontend client code in this workspace.

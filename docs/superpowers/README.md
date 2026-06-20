@@ -1,40 +1,27 @@
 # Superpowers Docs
 
-Active design notes and implementation plans for this workspace.
+Active contract and operator reference for this workspace.
 
 ## Layout
 
 | Path | Purpose |
 |------|---------|
-| `specs/` | Active design specs and the live OpenAPI contract |
-| `plans/` | Active implementation plans |
+| `specs/messaging-api.openapi.yaml` | Live OpenAPI contract (source of truth for REST) |
+| `specs/` | Active design specs for in-flight work |
 
-Older specs and plans (dated before today’s active work) are archived in [`docs/history/`](../history/README.md).
+Shipped design specs and implementation plans live in [`docs/history/implemented/`](../history/implemented/README.md).
+
+Parked (deferred) work lives in [`docs/history/parked/`](../history/parked/README.md).
 
 ## Current active work
 
-- **Companion health vault v2 metrics** (OpenAPI v2.4.0 — backend shipped; iOS planned)
-  - Design: `specs/2026-06-18-companion-health-vault-v2-metrics-design.md`
-  - Backend plan: `plans/2026-06-18-companion-health-vault-v2-metrics-backend.md`
-  - iOS reference stub: `plans/2026-06-18-companion-health-vault-v2-metrics-ios.md`
-- **Companion cron / job conversations** (OpenAPI v2.3.0 — planned)
-  - Design: `specs/2026-06-18-companion-cron-design.md`
-  - Backend plan: `plans/2026-06-18-companion-cron-backend.md`
-  - iOS reference: `specs/2026-06-18-companion-cron-ios-design.md`
-  - iOS plan stub: `plans/2026-06-18-companion-cron-ios.md` (iOS agent fills in)
-- **Companion health vault** (OpenAPI v2.0.0 — backend shipped; iOS planned)
-  - Overview: `specs/2026-06-17-companion-health-vault-design.md`
-  - Backend: `specs/2026-06-17-companion-health-vault-backend-design.md`
-  - Backend plan: `plans/2026-06-17-companion-health-vault-backend.md`
-  - iOS (reference): `specs/2026-06-17-companion-health-vault-ios-design.md`
-  - iOS plan: `plans/2026-06-17-companion-health-vault-ios.md`
-- **Companion app skills & iOS bootstrap** (OpenAPI v1.9.0)
-  - Design: `specs/2026-06-17-companion-app-skills-design.md`
-  - Backend plan: `plans/2026-06-17-companion-app-skills-backend.md`
-  - iOS plan (reference): `plans/2026-06-17-companion-app-skills-ios.md`
-  - OpenAPI: `specs/messaging-api.openapi.yaml`
+- **Sync inbox (per user + device)** — OpenAPI v2.6.0 (planned)
+  - Backend spec: `specs/2026-06-20-companion-sync-inbox-design.md`
+  - Backend plan: `plans/2026-06-20-companion-sync-inbox-backend.md`
+  - iOS reference: `specs/2026-06-20-companion-sync-inbox-ios-design.md` (iOS agent writes plan in `assistant-companion`)
 
 ## Rules
 
 - Every `messaging-api` contract change must update `specs/messaging-api.openapi.yaml` in the same change set.
-- When work ships, move its spec and plan to `docs/history/` and add new active docs here if needed.
+- When work ships, move its spec and plan to `docs/history/implemented/`.
+- Deferred ideas go to `docs/history/parked/`.

@@ -1,7 +1,7 @@
 ---
 name: companion-user-location
 description: Data skill — fetch and normalize a companion user's location from the vault via MCP. Use for "where am I?", coordinates, address, travel near me, or historical location questions. Never Home Assistant.
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -70,12 +70,25 @@ username: <string>
 
 Do not emit user-facing prose from raw MCP JSON. Always normalize first.
 
+## Output contract
+
+This skill ends at a normalized **LocationRecord**. **Do not write the user reply.**
+
+After normalize:
+
+1. **STOP** — fetching data is not the final step.
+2. Load **`companion-replies`** (required before any user-facing text).
+3. On Companion App, load **`companion-map-preview`** when showing current position ("where am I?").
+4. Only then compose the reply from the LocationRecord.
+
+If you have a LocationRecord but have not loaded `companion-replies`, you are mid-workflow — do not send a reply yet.
+
 ## Data workflow — current location
 
 1. Resolve `username` (see table above).
 2. Call `get_user_location` via companion MCP.
 3. Normalize the response into a LocationRecord.
-4. Hand off the LocationRecord to presentation skills (see Consumers). Keep it in working memory for downstream skills (e.g. `route-planner` using "here" as origin).
+4. Follow **Output contract** — hand off to presentation skills. Keep the record in working memory for downstream skills (e.g. `route-planner` using "here" as origin).
 
 ## Data workflow — history
 
@@ -84,7 +97,7 @@ For "where was I …?" or timeline questions:
 1. Resolve `username`.
 2. Call `get_location_history` with an appropriate `limit`.
 3. Normalize each event to the available LocationRecord shape (add `id` from the event when useful).
-4. Summarize matching events by timestamp, coordinates, and address when resolved.
+4. Follow **Output contract** — load `companion-replies` before summarizing for the user.
 5. To load older events, re-call with `before` from `_links.next.href`. Use `after` for newer pages via `_links.prev`.
 
 ## Consumers
@@ -101,6 +114,11 @@ For "where was I …?" or timeline questions:
 | CLI / dashboard | No | this skill → MCP |
 
 Telegram does not ingest location. It reads whatever the app last shared. Report last-known with staleness or unavailability.
+
+## Do not
+
+- Write user-facing replies, map blocks, or Address/Coordinates/Accuracy/Updated lines — that is **`companion-replies`** + block skills
+- Treat a successful MCP call as a finished turn
 
 ## Do not use
 
