@@ -16,6 +16,11 @@ export interface CompleteChatInput {
   messages: HermesPromptMessage[]
 }
 
+export interface EnsureSessionInput {
+  hermesSessionId: string
+  systemPrompt?: string | null
+}
+
 export interface HermesStreamEvent {
   type: 'reasoning' | 'tool' | 'tool_complete' | 'answer_token' | 'done'
   text?: string
@@ -27,6 +32,7 @@ export interface HermesStreamEvent {
 export interface HermesClient {
   streamChat(input: StreamChatInput): AsyncIterable<HermesStreamEvent>
   completeChat(input: CompleteChatInput): Promise<string>
+  ensureSession(input: EnsureSessionInput): Promise<void>
 }
 
 interface OpenAiChatCompletion {
@@ -149,6 +155,37 @@ export class OpenAiHermesClient implements HermesClient {
     private readonly baseUrl: string,
     private readonly apiKey = '',
   ) {}
+
+  async ensureSession(input: EnsureSessionInput): Promise<void> {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      'x-hermes-session-key': COMPANION_APP_SESSION_KEY,
+    }
+
+    if (this.apiKey) {
+      headers.authorization = `Bearer ${this.apiKey}`
+    }
+
+    const body: Record<string, string> = { id: input.hermesSessionId }
+    const systemPrompt = input.systemPrompt?.trim()
+    if (systemPrompt) {
+      body.system_prompt = systemPrompt
+    }
+
+    const response = await fetch(new URL('/api/sessions', this.baseUrl), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    })
+
+    if (response.status === 409) {
+      return
+    }
+
+    if (!response.ok) {
+      throw new Error(`Hermes session warmup failed with status ${response.status}`)
+    }
+  }
 
   async completeChat(input: CompleteChatInput): Promise<string> {
     const headers: Record<string, string> = {

@@ -1,5 +1,13 @@
 import { deriveCronJobsPath } from './lib/hermes-cron-jobs.js'
+import { DEFAULT_TITLE_GENERATION_MODEL } from './services/auxiliary-llm-client.js'
 import type { AppOptions } from './types.js'
+
+export interface TitleGenerationConfig {
+  apiKey: string
+  baseUrl: string
+  model: string
+  timeoutMs: number
+}
 
 export interface ApnsConfig {
   enabled: boolean
@@ -48,6 +56,15 @@ function requireEnv(env: NodeJS.ProcessEnv, key: 'JWT_SECRET' | 'MESSAGING_API_H
   return value
 }
 
+function readTitleGenerationConfig(env: NodeJS.ProcessEnv): TitleGenerationConfig {
+  return {
+    apiKey: env.TITLE_GENERATION_API_KEY?.trim() || env.OPENAI_API_KEY?.trim() || '',
+    baseUrl: env.TITLE_GENERATION_BASE_URL?.trim() || env.OPENAI_BASE_URL?.trim() || '',
+    model: env.TITLE_GENERATION_MODEL?.trim() || DEFAULT_TITLE_GENERATION_MODEL,
+    timeoutMs: readPositiveInt(env.TITLE_GENERATION_TIMEOUT_MS, 30_000),
+  }
+}
+
 function readPositiveInt(value: string | undefined, fallback: number): number {
   if (value === undefined || value.trim() === '') {
     return fallback
@@ -76,6 +93,7 @@ export function readConfig(env: NodeJS.ProcessEnv): AppOptions {
     cronJobsPath: env.CRON_JOBS_PATH?.trim() || deriveCronJobsPath(env.CRON_OUTPUT_DIR ?? '/opt/data/cron/output'),
     cronOutputPollMs: readPositiveInt(env.CRON_OUTPUT_POLL_MS, 5),
     addressEnrichmentSessionId: env.ADDRESS_ENRICHMENT_SESSION_ID ?? 'companion-address-enrichment',
+    titleGeneration: readTitleGenerationConfig(env),
     apns,
     syncInboxMaxGap: readPositiveInt(env.SYNC_INBOX_MAX_GAP, 500),
     attachmentsDir: env.ATTACHMENTS_DIR?.trim() || '/opt/data/attachments',

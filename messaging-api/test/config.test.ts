@@ -40,6 +40,12 @@ describe('readConfig', () => {
       cronJobsPath: '/opt/data/cron/jobs.json',
       cronOutputPollMs: 5,
       addressEnrichmentSessionId: 'companion-address-enrichment',
+      titleGeneration: {
+        apiKey: '',
+        baseUrl: '',
+        model: 'gpt-5.4-nano',
+        timeoutMs: 30_000,
+      },
       apns: {
         enabled: false,
         teamId: '',
@@ -67,6 +73,25 @@ describe('readConfig', () => {
         MESSAGING_API_HOST: '100.64.0.1:3000',
       }).syncInboxMaxGap,
     ).toBe(500)
+  })
+
+  it('reads title generation settings from TITLE_GENERATION_* and OPENAI_* env vars', () => {
+    expect(
+      readConfig({
+        JWT_SECRET: 'test-secret',
+        HERMES_BASE_URL: 'http://hermes:8642',
+        MESSAGING_API_HOST: '100.64.0.1:3000',
+        OPENAI_API_KEY: 'sk-test',
+        OPENAI_BASE_URL: 'https://proxy.example/v1',
+        TITLE_GENERATION_MODEL: 'gpt-5.4-nano',
+        TITLE_GENERATION_TIMEOUT_MS: '45000',
+      }).titleGeneration,
+    ).toEqual({
+      apiKey: 'sk-test',
+      baseUrl: 'https://proxy.example/v1',
+      model: 'gpt-5.4-nano',
+      timeoutMs: 45_000,
+    })
   })
 
   it('parses SYNC_INBOX_MAX_GAP override', () => {

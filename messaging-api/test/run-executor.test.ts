@@ -211,7 +211,7 @@ describe('executeAssistantRun process stream', () => {
     })
   })
 
-  it('generates title after the reply stream and before publishing done', async () => {
+  it('generates title in the background after publishing done', async () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedConversation(db)
@@ -243,8 +243,13 @@ describe('executeAssistantRun process stream', () => {
     await runPromise
 
     expect(hermes.requests).toHaveLength(1)
+    expect(legacyEvents.map((event) => event.event)).toEqual(['token', 'done'])
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
     expect(hermes.completeRequests).toHaveLength(1)
-    expect(legacyEvents.map((event) => event.event)).toEqual(['token', 'title', 'done'])
+    expect(legacyEvents.map((event) => event.event)).toEqual(['token', 'done', 'title'])
     expect(db.prepare('SELECT title FROM conversations WHERE id = ?').pluck().get('c1')).toBe('Porto weekend')
   })
 })

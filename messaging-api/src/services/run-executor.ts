@@ -22,7 +22,8 @@ import {
   buildStatusLine,
 } from './tooling-line.js'
 import { emitConversationMessageUpsert } from './chat-sync-emitter.js'
-import { generateAndSaveTitle } from './title-generator.js'
+import { scheduleTitleGeneration } from './title-generator.js'
+import type { AuxiliaryLlmConfig } from './auxiliary-llm-client.js'
 import { listHermesJobIdsFromFile } from '../lib/hermes-cron-jobs.js'
 import { autoLinkNewCompanionCronJobs } from './companion-cron-auto-link.js'
 
@@ -45,6 +46,7 @@ export interface ExecuteAssistantRunInput {
   visionHistoryMaxBytes?: number
   cronJobsPath?: string
   conversationTitle?: string | null
+  titleGenerationLlm?: AuxiliaryLlmConfig | null
   onAssistantMessageCommitted?: (ctx: {
     messageId: string
     content: string
@@ -219,22 +221,6 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
     flushPendingInstantReply()
 
-    if (input.shouldGenerateTitle && input.userMessageText) {
-      try {
-        await generateAndSaveTitle({
-          db: input.db,
-          hermesClient: input.hermesClient,
-          hub: input.hub,
-          conversationId: input.conversationId,
-          userId: input.userId,
-          userMessageText: input.userMessageText,
-          originSessionId: input.originSessionId,
-        })
-      } catch {
-        // Title generation is best-effort; do not fail the assistant run.
-      }
-    }
-
     const assistantMessageId = persistCompletedRun(
       input.db,
       input.userId,
@@ -270,6 +256,21 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     })
 
     publishReplyDone(streamCtx, assistantMessageId)
+
+    if (input.shouldGenerateTitle && input.userMessageText) {
+      scheduleTitleGeneration({
+        db: input.db,
+        hermesClient: input.hermesClient,
+        hub: input.hub,
+        conversationId: input.conversationId,
+        userId: input.userId,
+        userMessageText: input.userMessageText,
+        originSessionId: input.originSessionId,
+        auxiliaryLlm: input.titleGenerationLlm,
+        log: input.log,
+      })
+    }
+
     return assistantMessageId
   } catch (error) {
     flushPendingInstantReply({ persist: false })

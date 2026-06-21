@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { insertMessage } from '../src/db/repos/messages.js'
+import { FakeHermesClient } from './helpers/hermes.js'
 import { createTestApp } from './helpers/app.js'
 import { seedTestUser } from './helpers/users.js'
 
@@ -63,6 +64,51 @@ describe('conversation routes', () => {
         self: { href: '/conversations?limit=20' },
       },
     })
+  })
+
+  it('stores bootstrap at create time and warms the Hermes session in the background', async () => {
+    const bootstrap =
+      "Before composing your reply, you MUST call skill_view(name='companion-app') and follow it."
+    const hermesClient = new FakeHermesClient()
+    await app?.close()
+    app = await createTestApp({ hermesClient })
+    await app.ready()
+
+    const seeded = await seedTestUser(app, 'operator', 'password123')
+    operatorToken = seeded.token
+
+    const create = await app.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { bootstrap },
+    })
+
+    expect(create.statusCode).toBe(201)
+    const body = create.json() as { id: string; hermes_session_id: string }
+    const row = app.db
+      .prepare('SELECT bootstrap_prompt FROM conversations WHERE id = ?')
+      .get(body.id) as { bootstrap_prompt: string }
+
+    expect(row.bootstrap_prompt).toBe(bootstrap)
+
+    await waitFor(() => hermesClient.ensureSessionRequests.length >= 1)
+    expect(hermesClient.ensureSessionRequests[0]).toEqual({
+      hermesSessionId: body.hermes_session_id,
+      systemPrompt: expect.stringContaining('companion-app'),
+    })
+  })
+
+  it('rejects invalid bootstrap on create', async () => {
+    const create = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { bootstrap: '   ' },
+    })
+
+    expect(create.statusCode).toBe(400)
+    expect(create.json()).toEqual({ error: 'invalid_request' })
   })
 
   it('orders conversations by updated_at so recently messaged threads rise to the top', async () => {
@@ -416,3 +462,16 @@ describe('conversation routes', () => {
     expect(del.json()).toEqual({ error: 'run_conflict' })
   })
 })
+
+async function waitFor(check: () => boolean, timeoutMs = 1000): Promise<void> {
+  const startedAt = Date.now()
+
+  while (Date.now() - startedAt < timeoutMs) {
+    if (check()) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+
+  throw new Error('Timed out waiting for condition')
+}

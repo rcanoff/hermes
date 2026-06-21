@@ -47,7 +47,7 @@ describe('buildTitlePromptMessages', () => {
 })
 
 describe('generateConversationTitle', () => {
-  it('uses completeChat with the stable title-generation session key', async () => {
+  it('uses completeChat with the stable title-generation session key when auxiliary LLM is not configured', async () => {
     const hermesClient = new FakeHermesClient()
     hermesClient.queueCompleteChatResponse('Grocery list')
 

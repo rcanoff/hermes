@@ -443,11 +443,11 @@ describe('message routes', () => {
     hermesClient.pushAnswerToken(' an idea', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
-    await completeTitleAfterReply(hermesClient, 'Porto weekend')
 
-    const payload = await readUntilTitleOrDone(reader!)
-    expect(payload).toContain('event: title\ndata: {"title":"Porto weekend"}')
+    const payload = await readUntilDone(reader!)
     expect(payload).toContain('event: done\ndata: {"messageId":')
+
+    await completeTitleAfterReply(hermesClient, 'Porto weekend')
 
     await waitFor(() => {
       const row = app!.db
@@ -594,6 +594,32 @@ describe('message routes', () => {
 
     expect(response.statusCode).toBe(400)
     expect(response.json()).toEqual({ error: 'edit_not_allowed' })
+  })
+
+  it('uses bootstrap stored at conversation create on the first message', async () => {
+    const bootstrap = 'bootstrap from create time'
+    const create = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { bootstrap },
+    })
+    const createdConversationId = (create.json() as { id: string }).id
+
+    const postResponse = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${createdConversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Hello' },
+    })
+    expect(postResponse.statusCode).toBe(202)
+
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
+    await waitFor(() => hermesClient.requests.length >= 1)
+
+    expect(hermesClient.requests[0]?.messages[0]?.content).toContain(bootstrap)
+    expect(hermesClient.requests).toHaveLength(1)
   })
 
   it('stores bootstrap on the first message and forwards it to Hermes', async () => {

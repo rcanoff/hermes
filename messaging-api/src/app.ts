@@ -59,6 +59,7 @@ declare module 'fastify' {
     visionMaxEdgePx: number
     thumbMaxEdgePx: number
     visionHistoryMaxBytes: number
+    titleGeneration: import('./config.js').TitleGenerationConfig
   }
 }
 
@@ -114,6 +115,7 @@ export function buildApp(options: AppOptions) {
   app.decorate('visionMaxEdgePx', options.visionMaxEdgePx)
   app.decorate('thumbMaxEdgePx', options.thumbMaxEdgePx)
   app.decorate('visionHistoryMaxBytes', options.visionHistoryMaxBytes)
+  app.decorate('titleGeneration', options.titleGeneration)
   app.decorate(
     'addressEnrichmentQueue',
     options.addressEnrichmentQueue ??

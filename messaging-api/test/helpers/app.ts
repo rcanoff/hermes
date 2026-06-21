@@ -31,6 +31,12 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
     cronJobsPath: '/tmp/hermes-cron-jobs-test.json',
     cronOutputPollMs: 5,
     addressEnrichmentSessionId: 'companion-address-enrichment',
+    titleGeneration: {
+      apiKey: '',
+      baseUrl: '',
+      model: 'gpt-5.4-nano',
+      timeoutMs: 30_000,
+    },
     apns: defaultApns,
     syncInboxMaxGap: 500,
     attachmentsDir: defaultAttachmentsDir,

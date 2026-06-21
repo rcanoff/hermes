@@ -1,4 +1,4 @@
-import type { ApnsConfig } from './config.js'
+import type { ApnsConfig, TitleGenerationConfig } from './config.js'
 import type { AddressEnrichmentQueue } from './services/address-enrichment.js'
 import type { ApnsClient } from './services/apns-client.js'
 import type { CronOutputBridge } from './services/cron-output-bridge.js'
@@ -20,6 +20,7 @@ export interface AppOptions {
   cronJobsPath: string
   cronOutputPollMs: number
   addressEnrichmentSessionId: string
+  titleGeneration: TitleGenerationConfig
   apns: ApnsConfig
   syncInboxMaxGap: number
   attachmentsDir: string

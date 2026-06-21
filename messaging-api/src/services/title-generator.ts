@@ -1,6 +1,11 @@
 import type Database from 'better-sqlite3'
 import { updateConversationTitleIfNull } from '../db/repos/conversations.js'
 import {
+  completeAuxiliaryLlm,
+  type AuxiliaryLlmConfig,
+  isAuxiliaryLlmConfigured,
+} from './auxiliary-llm-client.js'
+import {
   COMPANION_TITLE_GENERATION_SESSION_KEY,
   type HermesClient,
 } from './hermes-client.js'
@@ -32,12 +37,17 @@ export function sanitizeGeneratedTitle(raw: string): string | null {
 export async function generateConversationTitle(
   hermesClient: HermesClient,
   userMessageText: string,
+  auxiliaryLlm?: AuxiliaryLlmConfig | null,
 ): Promise<string | null> {
+  const messages = buildTitlePromptMessages(userMessageText)
+
   try {
-    const raw = await hermesClient.completeChat({
-      hermesSessionId: COMPANION_TITLE_GENERATION_SESSION_KEY,
-      messages: buildTitlePromptMessages(userMessageText),
-    })
+    const raw = isAuxiliaryLlmConfigured(auxiliaryLlm)
+      ? await completeAuxiliaryLlm(auxiliaryLlm!, messages)
+      : await hermesClient.completeChat({
+          hermesSessionId: COMPANION_TITLE_GENERATION_SESSION_KEY,
+          messages,
+        })
     return sanitizeGeneratedTitle(raw)
   } catch {
     return null
@@ -52,8 +62,13 @@ export async function generateAndSaveTitle(input: {
   userId: string
   userMessageText: string
   originSessionId: string | null
+  auxiliaryLlm?: AuxiliaryLlmConfig | null
 }): Promise<void> {
-  const title = await generateConversationTitle(input.hermesClient, input.userMessageText)
+  const title = await generateConversationTitle(
+    input.hermesClient,
+    input.userMessageText,
+    input.auxiliaryLlm,
+  )
   if (!title) {
     return
   }
@@ -63,4 +78,23 @@ export async function generateAndSaveTitle(input: {
     emitAccountConversationUpsert(input.db, input.userId, input.conversationId)
     publishSessionTitle(input.hub, input.originSessionId, input.conversationId, title)
   }
+}
+
+export function scheduleTitleGeneration(input: {
+  db: Database.Database
+  hermesClient: HermesClient
+  hub: StreamHub
+  conversationId: string
+  userId: string
+  userMessageText: string
+  originSessionId: string | null
+  auxiliaryLlm?: AuxiliaryLlmConfig | null
+  log?: (message: string, meta?: Record<string, unknown>) => void
+}): void {
+  void generateAndSaveTitle(input).catch((error) => {
+    input.log?.('title generation failed', {
+      conversationId: input.conversationId,
+      err: error instanceof Error ? error.message : String(error),
+    })
+  })
 }

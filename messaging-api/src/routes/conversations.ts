@@ -17,6 +17,7 @@ import {
   emitAccountConversationUpsert,
   emitConversationDeleted,
 } from '../services/chat-sync-emitter.js'
+import { scheduleConversationSessionWarmup } from '../services/session-warmup.js'
 
 const conversationRoutes: FastifyPluginAsync = async (app) => {
   app.get('/conversations', { preHandler: app.authenticate }, async (request, reply) => {
@@ -67,6 +68,15 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
     const conversationId = createConversation(app.db, request.userId, randomUUID(), bootstrapPrompt)
     emitAccountConversationUpsert(app.db, request.userId, conversationId)
     const conversation = getConversationForUser(app.db, request.userId, conversationId)
+
+    scheduleConversationSessionWarmup({
+      hermesClient: app.hermesClient,
+      conversation: conversation!,
+      companionUsername: request.username,
+      log: (message, meta) => {
+        app.log.info(meta ?? {}, message)
+      },
+    })
 
     return reply.code(201).send(toConversationResponse(conversation!))
   })

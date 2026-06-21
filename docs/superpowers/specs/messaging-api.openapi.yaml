@@ -1938,10 +1938,14 @@ paths:
         auto-generation on the first message, or by PATCH.
 
         Optional `bootstrap` stores Hermes skill-routing instructions for the
-        conversation (write-only; not returned in GET). If omitted here, iOS
-        may send `bootstrap` on the first message instead. When both are
-        provided, the first message wins only if no bootstrap was stored at
-        create time.
+        conversation (write-only; not returned in GET). **Preferred at create
+        time** so the first `POST /messages` stays lean; iOS may still send
+        `bootstrap` on the first message as a fallback. When both are provided,
+        create-time bootstrap wins and first-message `bootstrap` is ignored.
+
+        After create, the backend pre-warms the Hermes session (`POST
+        /api/sessions` on the gateway) using the new `hermes_session_id` and
+        stored bootstrap. Best-effort background work; does not block the `201`.
       security:
         - bearerAuth: []
       requestBody:

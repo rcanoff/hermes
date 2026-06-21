@@ -193,6 +193,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         originSessionId: request.sessionId,
         shouldGenerateTitle: created.shouldGenerateTitle,
         userMessageText: content,
+        titleGenerationLlm: app.titleGeneration,
         attachmentsDir: app.attachmentsDir,
         visionHistoryMaxBytes: app.visionHistoryMaxBytes,
         cronJobsPath: app.cronJobsPath,

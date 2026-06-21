@@ -1,5 +1,6 @@
 import type {
   CompleteChatInput,
+  EnsureSessionInput,
   HermesClient,
   HermesStreamEvent,
   StreamChatInput,
@@ -13,6 +14,7 @@ type QueueEntry =
 export class FakeHermesClient implements HermesClient {
   readonly requests: StreamChatInput[] = []
   readonly completeRequests: CompleteChatInput[] = []
+  readonly ensureSessionRequests: EnsureSessionInput[] = []
 
   private readonly completeResponses: Array<string | Error> = []
   private readonly queues = new Map<number, QueueEntry[]>()
@@ -50,6 +52,10 @@ export class FakeHermesClient implements HermesClient {
 
   queueCompleteChatResponse(response: string | Error): void {
     this.completeResponses.push(response)
+  }
+
+  async ensureSession(input: EnsureSessionInput): Promise<void> {
+    this.ensureSessionRequests.push(input)
   }
 
   async completeChat(input: CompleteChatInput): Promise<string> {
