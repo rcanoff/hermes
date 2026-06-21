@@ -1,7 +1,7 @@
 # Companion Photo Sharing — Backend Design Spec
 
 **Date:** 2026-06-21  
-**Status:** Draft (brainstorm)  
+**Status:** Approved  
 **API version:** v2.8.0 (OpenAPI)  
 **OpenAPI:** `docs/superpowers/specs/messaging-api.openapi.yaml`  
 **Consumer:** `assistant-companion` (iOS)  

@@ -1,7 +1,7 @@
 # Companion Photo Sharing — iOS Client Design Spec (Reference)
 
 **Date:** 2026-06-21  
-**Status:** Draft (reference)  
+**Status:** Approved (reference)  
 **API version:** v2.8.0  
 **Repo:** `assistant-companion` (not this workspace)  
 **Backend spec:** `docs/superpowers/specs/2026-06-21-companion-photo-sharing-design.md`  

@@ -15,6 +15,12 @@ Parked (deferred) work lives in [`docs/history/parked/`](../history/parked/READM
 
 ## Current active work
 
+- **Photo sharing (v2.8.0)** — staged chat photo attachments with Hermes vision
+  - Backend spec: `specs/2026-06-21-companion-photo-sharing-design.md`
+  - Backend plan: `plans/2026-06-21-companion-photo-sharing-backend.md`
+  - iOS reference: `specs/2026-06-21-companion-photo-sharing-ios-design.md` (iOS agent writes plan in `assistant-companion`)
+  - OpenAPI: `specs/messaging-api.openapi.yaml` v2.8.0 (pending)
+
 - **Structured tooling lines (v2.7.0)** — Hermes-native process line types
   - Backend spec: `specs/2026-06-21-companion-tooling-lines-design.md`
   - Backend plan: `plans/2026-06-21-companion-tooling-lines-backend.md`
