@@ -1,4 +1,10 @@
-export const REMINDER_OUTPUT_PREFIX = 'Scheduled reminder only. Your entire response must be exactly one line:'
+export const REMINDER_OUTPUT_PREFIX =
+  'Scheduled reminder only. Your entire response must be exactly one line:'
+
+export const RICH_REMINDER_OUTPUT_PREFIX =
+  'Scheduled reminder only. Your entire response must match the following message exactly (including fences and links). Do not add, remove, or rephrase anything:'
+
+const REMINDER_FOOTER = 'No tools. No other text, steps, or narration.'
 
 export function buildReminderCronPrompt(reminderText: string): string {
   const line = reminderText.trim().replace(/\s+/g, ' ')
@@ -7,7 +13,27 @@ export function buildReminderCronPrompt(reminderText: string): string {
 
 ${body}
 
-No tools. No other text, steps, or narration.`
+${REMINDER_FOOTER}`
+}
+
+export function buildRichReminderCronPrompt(precomposedBody: string): string {
+  const body = precomposedBody.trim()
+  if (!body) {
+    throw new Error('Rich reminder body must not be empty')
+  }
+
+  return `${RICH_REMINDER_OUTPUT_PREFIX}
+
+${body}
+
+${REMINDER_FOOTER}`
+}
+
+export function isCompanionReminderTemplate(prompt: string): boolean {
+  const trimmed = prompt.trim()
+  return (
+    trimmed.includes(REMINDER_OUTPUT_PREFIX) || trimmed.includes(RICH_REMINDER_OUTPUT_PREFIX)
+  )
 }
 
 export function needsReminderPromptNormalization(prompt: string): boolean {
@@ -16,7 +42,11 @@ export function needsReminderPromptNormalization(prompt: string): boolean {
     return true
   }
 
-  if (trimmed.includes(REMINDER_OUTPUT_PREFIX)) {
+  if (isCompanionReminderTemplate(trimmed)) {
+    return false
+  }
+
+  if (trimmed.includes('```map')) {
     return false
   }
 
