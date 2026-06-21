@@ -22,6 +22,12 @@ export interface AppOptions {
   addressEnrichmentSessionId: string
   apns: ApnsConfig
   syncInboxMaxGap: number
+  attachmentsDir: string
+  attachmentMaxBytes: number
+  attachmentOrphanTtlHours: number
+  visionMaxEdgePx: number
+  thumbMaxEdgePx: number
+  visionHistoryMaxBytes: number
   apnsClient?: ApnsClient
   cronOutputBridge?: CronOutputBridge
   hermesClient?: HermesClient

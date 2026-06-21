@@ -54,6 +54,15 @@ describe('schema', () => {
     expect(row).toBeTruthy()
   })
 
+  it('includes message_attachments table', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const row = db
+      .prepare(`SELECT name FROM sqlite_master WHERE name = 'message_attachments'`)
+      .get()
+    expect(row).toBeTruthy()
+  })
+
   it('includes device_sync_state table', () => {
     const db = new Database(':memory:')
     initSchema(db)

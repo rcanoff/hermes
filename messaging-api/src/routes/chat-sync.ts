@@ -9,6 +9,8 @@ import {
 } from '../db/repos/chat-sync-events.js'
 import { getConversationForUser } from '../db/repos/conversations.js'
 import { getProcessByAssistantMessageIds } from '../db/repos/process.js'
+import { listAttachmentsForMessages } from '../db/repos/message-attachments.js'
+import { enrichMessagesWithAttachments } from '../lib/attachment-serializer.js'
 import { buildConversationMessageSyncSnapshot } from '../lib/conversation-sync-entry.js'
 import { SYNC_MARKER_ORIGIN } from '../lib/sync-marker.js'
 
@@ -64,7 +66,7 @@ const chatSyncRoutes: FastifyPluginAsync = async (app) => {
 
       return {
         conversation: buildConversationMessageSyncSnapshot(existing),
-        events: attachProcessToMessageUpserts(app.db, page.events),
+        events: enrichSyncEvents(app.db, page.events),
         next_sync_marker: page.next_sync_marker,
         has_more: page.has_more,
       }
@@ -162,10 +164,14 @@ function buildDeletedConversationSnapshot(
   }
 }
 
-function attachProcessToMessageUpserts(
+function enrichSyncEvents(
   db: Database.Database,
   events: ConversationSyncEvent[],
 ): ConversationSyncEvent[] {
+  const upsertMessageIds = events.flatMap((event) =>
+    event.type === 'message_upsert' ? [event.message.id] : [],
+  )
+  const attachmentMap = listAttachmentsForMessages(db, upsertMessageIds)
   const assistantIds = events.flatMap((event) => {
     if (event.type !== 'message_upsert' || event.message.role !== 'assistant') {
       return []
@@ -180,21 +186,19 @@ function attachProcessToMessageUpserts(
       return event
     }
 
-    if (event.message.role !== 'assistant') {
-      return event
-    }
+    const [enriched] = enrichMessagesWithAttachments([event.message], attachmentMap)
+    let message = enriched
 
-    const process = processMap.get(event.message.id)
-    if (!process) {
-      return event
+    if (event.message.role === 'assistant') {
+      const process = processMap.get(event.message.id)
+      if (process) {
+        message = { ...message, process }
+      }
     }
 
     return {
       ...event,
-      message: {
-        ...event.message,
-        process,
-      },
+      message,
     }
   })
 }

@@ -1,9 +1,17 @@
 openapi: 3.1.0
 info:
   title: Hermes Messaging API
-  version: 2.7.0
+  version: 2.8.0
   description: |
     Private API bridging mobile clients to Hermes.
+
+    **v2.8.0 changes:** photo attachments in chat. `POST /attachments` stages image
+    uploads (JPEG, PNG, HEIC/HEIF; max 20 MB). `POST /conversations/{id}/messages`
+    accepts optional `attachment_ids` (1–10) with optional caption. `Message.attachments[]`
+    on list, sync, and create responses. `GET /attachments/{id}?variant=original|thumb|vision`
+    serves JWT-scoped bytes. Caption-only `PATCH` on photo messages. Hermes receives
+    multimodal history with vision JPEG derivatives. Requires companion app update.
+    See `docs/superpowers/specs/2026-06-21-companion-photo-sharing-design.md`.
 
     **v2.7.0 changes:** structured tooling lines for companion process UX.
     `ToolingLine` replaces flat `kind: reasoning|tool` with Hermes-native
@@ -476,6 +484,53 @@ components:
         process:
           $ref: '#/components/schemas/MessageProcess'
           description: Present on assistant messages when the turn had process activity
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttachmentSummary'
+          description: Present on user messages with photos; omitted on text-only messages
+
+    AttachmentSummary:
+      type: object
+      required: [id, content_type, byte_size, position]
+      properties:
+        id:
+          type: string
+          format: uuid
+        content_type:
+          type: string
+          description: Original MIME type (e.g. image/heic)
+        byte_size:
+          type: integer
+          minimum: 1
+        width:
+          type: integer
+          nullable: true
+        height:
+          type: integer
+          nullable: true
+        position:
+          type: integer
+          minimum: 0
+        _links:
+          type: object
+          properties:
+            self:
+              $ref: '#/components/schemas/HalLink'
+            thumb:
+              $ref: '#/components/schemas/HalLink'
+
+    AttachmentUploadResponse:
+      type: object
+      required: [attachment]
+      properties:
+        attachment:
+          $ref: '#/components/schemas/AttachmentSummary'
+
+    AttachmentVariant:
+      type: string
+      enum: [original, thumb, vision]
+      default: original
 
     CreateConversationRequest:
       type: object
@@ -496,16 +551,23 @@ components:
     CreateMessageRequest:
       type: object
       description: |
-        Provide `text` (preferred) or `content` (legacy alias). Optional
+        Provide `text` (preferred) or `content` (legacy alias). At least one of
+        non-empty `text`/`content` or `attachment_ids` is required. Optional
         `bootstrap` is accepted only on the **first message** of a conversation
         when no bootstrap is stored yet.
       properties:
         text:
           type: string
-          minLength: 1
         content:
           type: string
-          minLength: 1
+        attachment_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          minItems: 1
+          maxItems: 10
+          description: Staged attachment ids from POST /attachments
         bootstrap:
           type: string
           minLength: 1
@@ -1278,6 +1340,105 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+
+  /attachments:
+    post:
+      tags: [messages]
+      operationId: uploadAttachment
+      summary: Stage a photo attachment
+      description: |
+        Upload one image file. Returns attachment metadata for use in
+        `POST /conversations/{id}/messages` via `attachment_ids`. Orphan staged
+        uploads expire after `ATTACHMENT_ORPHAN_TTL_HOURS` (default 24) if never attached.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Attachment staged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentUploadResponse'
+        '400':
+          description: invalid_request, unsupported_media_type, or payload_too_large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: processing_failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /attachments/{id}:
+    get:
+      tags: [messages]
+      operationId: getAttachment
+      summary: Download attachment bytes
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: variant
+          in: query
+          schema:
+            $ref: '#/components/schemas/AttachmentVariant'
+      responses:
+        '200':
+          description: Image bytes
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/heic:
+              schema:
+                type: string
+                format: binary
+            image/heif:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: not_found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /invite/{token}:
     get:

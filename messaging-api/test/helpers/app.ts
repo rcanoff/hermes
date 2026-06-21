@@ -1,5 +1,10 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { buildApp } from '../../src/app.js'
 import type { AppOptions } from '../../src/types.js'
+
+const defaultAttachmentsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-attachments-'))
 
 const defaultApns = {
   enabled: false,
@@ -28,6 +33,12 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
     addressEnrichmentSessionId: 'companion-address-enrichment',
     apns: defaultApns,
     syncInboxMaxGap: 500,
+    attachmentsDir: defaultAttachmentsDir,
+    attachmentMaxBytes: 20_971_520,
+    attachmentOrphanTtlHours: 24,
+    visionMaxEdgePx: 1536,
+    thumbMaxEdgePx: 200,
+    visionHistoryMaxBytes: 8_388_608,
     ...overrides,
   })
 }

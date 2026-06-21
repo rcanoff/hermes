@@ -7,7 +7,7 @@ import {
   appendConversationMessagesRewound,
 } from '../db/repos/chat-sync-events.js'
 import { getConversationForUser } from '../db/repos/conversations.js'
-import type { MessageRow } from '../db/repos/messages.js'
+import type { MessageWithAttachments } from '../lib/attachment-serializer.js'
 import type { MessageProcess } from '../db/repos/process.js'
 import { buildConversationSyncEntry } from '../lib/conversation-sync-entry.js'
 
@@ -33,7 +33,7 @@ export function emitConversationMessageUpsert(
   db: Database.Database,
   userId: string,
   conversationId: string,
-  message: MessageRow,
+  message: MessageWithAttachments,
   process?: MessageProcess,
 ): void {
   appendConversationMessageUpsert(db, userId, conversationId, {

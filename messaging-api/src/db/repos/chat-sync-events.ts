@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3'
 import { buildConversationSyncEntry } from '../../lib/conversation-sync-entry.js'
 import { isSyncMarkerOrigin, SYNC_MARKER_ORIGIN } from '../../lib/sync-marker.js'
 import { getConversationForUser, type ConversationRow } from './conversations.js'
+import type { MessageWithAttachments } from '../../lib/attachment-serializer.js'
 import type { MessageRow } from './messages.js'
 
 export interface ConversationSyncEntryPayload {
@@ -40,7 +41,7 @@ export type ConversationSyncEvent =
       event_id: string
       type: 'message_upsert'
       occurred_at: string
-      message: MessageRow & { process?: { lines: Array<{ kind: string; text: string }> } }
+      message: MessageWithAttachments
     }
   | {
       event_id: string
@@ -142,7 +143,7 @@ export function appendConversationMessageUpsert(
   db: Database.Database,
   userId: string,
   conversationId: string,
-  message: MessageRow & { process?: { lines: Array<{ kind: string; text: string }> } },
+  message: MessageWithAttachments,
 ): { event_id: string } {
   const event_id = insertEvent(db, {
     scope: 'conversation',
@@ -461,9 +462,7 @@ function mapConversationEvent(row: StoredEventRow): ConversationSyncEvent {
         event_id: row.id,
         type: 'message_upsert',
         occurred_at: row.occurred_at,
-        message: payload.message as MessageRow & {
-          process?: { lines: Array<{ kind: string; text: string }> }
-        },
+        message: payload.message as MessageWithAttachments,
       }
     case 'message_deleted':
       return {

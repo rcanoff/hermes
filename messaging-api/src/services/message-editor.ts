@@ -7,6 +7,7 @@ import {
   updateMessageContent,
 } from '../db/repos/messages.js'
 import { createRun, deleteRunsForUserMessage } from '../db/repos/runs.js'
+import { enrichMessageWithAttachments } from '../lib/attachment-serializer.js'
 import {
   emitConversationMessageUpsert,
   emitConversationMessagesRewound,
@@ -78,7 +79,7 @@ export function applyMessageEdit(
     const runId = createRun(db, conversationId, messageId, originSessionId)
 
     emitConversationMessagesRewound(db, userId, conversationId, [assistantMessage.id])
-    emitConversationMessageUpsert(db, userId, conversationId, message)
+    emitConversationMessageUpsert(db, userId, conversationId, enrichMessageWithAttachments(db, message))
 
     return {
       message,

@@ -33,8 +33,8 @@ describe('prompt builder', () => {
   const sampleBootstrap =
     "Before composing your reply, you MUST call skill_view(name='companion-app') and follow it."
 
-  it('prepends stored bootstrap before transcript history', () => {
-    const messages = buildHermesMessages(
+  it('prepends stored bootstrap before transcript history', async () => {
+    const messages = await buildHermesMessages(
       [{ role: 'user', content: 'Where am I?' }],
       { bootstrapPrompt: sampleBootstrap },
     )
@@ -45,8 +45,8 @@ describe('prompt builder', () => {
     ])
   })
 
-  it('omits system message when bootstrap and username are absent', () => {
-    const messages = buildHermesMessages([{ role: 'user', content: 'Hi' }])
+  it('omits system message when bootstrap and username are absent', async () => {
+    const messages = await buildHermesMessages([{ role: 'user', content: 'Hi' }])
 
     expect(messages).toEqual([{ role: 'user', content: 'Hi' }])
   })

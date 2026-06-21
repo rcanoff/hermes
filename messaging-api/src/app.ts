@@ -1,6 +1,7 @@
 import Fastify from 'fastify'
 import type Database from 'better-sqlite3'
 import jwt from '@fastify/jwt'
+import multipart from '@fastify/multipart'
 import type { AppOptions } from './types.js'
 import { getDb } from './db/index.js'
 import authPlugin from './plugins/auth.js'
@@ -12,6 +13,9 @@ import devicesRoutes from './routes/devices.js'
 import syncInboxRoutes from './routes/sync-inbox.js'
 import conversationRoutes from './routes/conversations.js'
 import messageRoutes from './routes/messages.js'
+import attachmentRoutes from './routes/attachments.js'
+import { deleteExpiredOrphanAttachments } from './db/repos/message-attachments.js'
+import { removeAttachmentTree } from './lib/attachment-storage.js'
 import eventsRoutes from './routes/events.js'
 import dataLocationRoutes from './routes/data-location.js'
 import dataHealthRoutes from './routes/data-health.js'
@@ -49,6 +53,12 @@ declare module 'fastify' {
     minPasswordLength: number
     streamWaitMs: number
     syncInboxMaxGap: number
+    attachmentsDir: string
+    attachmentMaxBytes: number
+    attachmentOrphanTtlHours: number
+    visionMaxEdgePx: number
+    thumbMaxEdgePx: number
+    visionHistoryMaxBytes: number
   }
 }
 
@@ -56,6 +66,7 @@ export function buildApp(options: AppOptions) {
   const app = Fastify({ logger: true })
 
   app.register(jwt, { secret: options.jwtSecret })
+  app.register(multipart, { limits: { fileSize: options.attachmentMaxBytes } })
   app.decorate('db', getDb(options.dbPath))
   app.decorate(
     'hermesClient',
@@ -97,6 +108,12 @@ export function buildApp(options: AppOptions) {
   app.decorate('inviteExpiryHours', options.inviteExpiryHours)
   app.decorate('minPasswordLength', options.minPasswordLength)
   app.decorate('syncInboxMaxGap', options.syncInboxMaxGap)
+  app.decorate('attachmentsDir', options.attachmentsDir)
+  app.decorate('attachmentMaxBytes', options.attachmentMaxBytes)
+  app.decorate('attachmentOrphanTtlHours', options.attachmentOrphanTtlHours)
+  app.decorate('visionMaxEdgePx', options.visionMaxEdgePx)
+  app.decorate('thumbMaxEdgePx', options.thumbMaxEdgePx)
+  app.decorate('visionHistoryMaxBytes', options.visionHistoryMaxBytes)
   app.decorate(
     'addressEnrichmentQueue',
     options.addressEnrichmentQueue ??
@@ -106,6 +123,11 @@ export function buildApp(options: AppOptions) {
         options.addressEnrichmentSessionId,
       ),
   )
+  const expiredOrphans = deleteExpiredOrphanAttachments(app.db)
+  for (const orphan of expiredOrphans) {
+    removeAttachmentTree(options.attachmentsDir, orphan.user_id, orphan.id)
+  }
+
   app.register(authPlugin)
   app.register(ssePlugin)
   app.register(inviteLandingRoutes)
@@ -116,6 +138,7 @@ export function buildApp(options: AppOptions) {
   app.register(conversationRoutes)
   app.register(jobRoutes)
   app.register(cronInternalRoutes)
+  app.register(attachmentRoutes)
   app.register(messageRoutes)
   app.register(eventsRoutes)
   app.register(dataLocationRoutes)

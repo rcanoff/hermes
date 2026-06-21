@@ -13,6 +13,7 @@ import {
   publishToolingLine,
   type RunEventContext,
 } from '../streams/run-event-publisher.js'
+import { listAttachmentsForMessages } from '../db/repos/message-attachments.js'
 import { buildHermesMessages } from './prompt-builder.js'
 import type { HermesClient } from './hermes-client.js'
 import {
@@ -40,6 +41,8 @@ export interface ExecuteAssistantRunInput {
   originSessionId: string | null
   shouldGenerateTitle?: boolean
   userMessageText?: string
+  attachmentsDir?: string
+  visionHistoryMaxBytes?: number
   cronJobsPath?: string
   conversationTitle?: string | null
   onAssistantMessageCommitted?: (ctx: {
@@ -54,10 +57,14 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     input.runId ??
     createRun(input.db, input.conversationId, input.userMessageId, input.originSessionId ?? 'legacy')
   const history = listMessages(input.db, input.conversationId)
-  const hermesMessages = buildHermesMessages(history, {
-    bootstrapPrompt: input.bootstrapPrompt,
-    companionUsername: input.companionUsername,
-  })
+  const attachmentMap = listAttachmentsForMessages(
+    input.db,
+    history.map((message) => message.id),
+  )
+  const historyWithAttachments = history.map((message) => ({
+    ...message,
+    attachments: attachmentMap.get(message.id),
+  }))
 
   const streamCtx: RunEventContext = {
     hub: input.hub,
@@ -135,6 +142,14 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
   }
 
   try {
+    const hermesMessages = await buildHermesMessages(historyWithAttachments, {
+      bootstrapPrompt: input.bootstrapPrompt,
+      companionUsername: input.companionUsername,
+      attachmentsDir: input.attachmentsDir,
+      userId: input.userId,
+      visionHistoryMaxBytes: input.visionHistoryMaxBytes,
+    })
+
     for await (const event of input.hermesClient.streamChat({
       hermesSessionId: input.hermesSessionId,
       messages: hermesMessages,

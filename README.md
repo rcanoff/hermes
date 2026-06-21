@@ -372,6 +372,8 @@ Expect `tooling` lines before `reply` tokens; stream stays open after `"phase":"
 
 **Tooling lines (v2.7.0):** committed `tooling` events and persisted `process.lines` use `phase` (`reasoning` | `activity` | `status`), `text`, optional Hermes `tool`, and optional `args`. Interim narration before tool calls uses `phase: status`. Deploy messaging-api and the iOS companion together — v2.6 clients expecting `kind` will break. Design: [`docs/superpowers/specs/2026-06-21-companion-tooling-lines-design.md`](docs/superpowers/specs/2026-06-21-companion-tooling-lines-design.md).
 
+**Photo attachments (v2.8.0):** staged upload then send. `POST /attachments` (multipart, one file) stores originals under `data/attachments/{user_id}/{attachment_id}/` and generates `thumb.jpg` + `vision.jpg`. `POST /conversations/:id/messages` accepts `{ text?, attachment_ids }` (1–10 photos, optional shared caption). `GET /attachments/:id?variant=original|thumb|vision` serves JWT-scoped bytes. Photo messages sync via existing `message_upsert` metadata; other devices download thumbs on demand. Hermes receives multimodal history (vision JPEG base64). Deploy messaging-api and iOS companion together. Design: [`docs/superpowers/specs/2026-06-21-companion-photo-sharing-design.md`](docs/superpowers/specs/2026-06-21-companion-photo-sharing-design.md).
+
 After the run completes, `GET /conversations/:id/messages` includes an optional `process` field on assistant messages:
 
 ```json

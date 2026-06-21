@@ -312,6 +312,30 @@ function ensureLegacyHealthDailySummaries(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS health_daily_summaries_user_date_desc_idx
       ON health_daily_summaries (user_id, date DESC, id DESC);
+
+    CREATE TABLE IF NOT EXISTS message_attachments (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      message_id TEXT,
+      position INTEGER NOT NULL DEFAULT 0,
+      content_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      width INTEGER,
+      height INTEGER,
+      original_path TEXT NOT NULL,
+      thumb_path TEXT NOT NULL,
+      vision_path TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT,
+      FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS message_attachments_user_unattached_idx
+      ON message_attachments (user_id, expires_at)
+      WHERE message_id IS NULL;
+
+    CREATE INDEX IF NOT EXISTS message_attachments_message_idx
+      ON message_attachments (message_id, position);
   `)
 }
 

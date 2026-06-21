@@ -50,6 +50,12 @@ describe('readConfig', () => {
         previewMaxChars: 120,
       },
       syncInboxMaxGap: 500,
+      attachmentsDir: '/opt/data/attachments',
+      attachmentMaxBytes: 20_971_520,
+      attachmentOrphanTtlHours: 24,
+      visionMaxEdgePx: 1536,
+      thumbMaxEdgePx: 200,
+      visionHistoryMaxBytes: 8_388_608,
     })
   })
 

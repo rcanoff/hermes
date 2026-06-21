@@ -6,6 +6,16 @@ import {
   listMessages,
   listMessagesPage,
 } from '../db/repos/messages.js'
+import {
+  linkAttachmentsToMessage,
+  listAttachmentsForMessages,
+  messageHasAttachments,
+  validateStagedAttachments,
+} from '../db/repos/message-attachments.js'
+import {
+  enrichMessageWithAttachments,
+  enrichMessagesWithAttachments,
+} from '../lib/attachment-serializer.js'
 import { validateBootstrap } from '../lib/bootstrap.js'
 import { buildHalLinks, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
 import { getProcessByAssistantMessageIds } from '../db/repos/process.js'
@@ -19,6 +29,7 @@ interface MessageBody {
   text?: string
   content?: string
   bootstrap?: string
+  attachment_ids?: string[]
 }
 
 class BootstrapValidationError extends Error {
@@ -55,7 +66,11 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       .map((message) => message.id)
     const processMap = getProcessByAssistantMessageIds(app.db, assistantIds)
 
-    const messages = page.messages.map((message) => {
+    const attachmentMap = listAttachmentsForMessages(
+      app.db,
+      page.messages.map((message) => message.id),
+    )
+    const messages = enrichMessagesWithAttachments(page.messages, attachmentMap).map((message) => {
       if (message.role !== 'assistant') {
         return message
       }
@@ -89,19 +104,25 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ error: 'not_found' })
     }
 
-    if (!isMessageBody(request.body)) {
+    if (!isCreateMessageBody(request.body)) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
     const body = request.body
     const content = extractMessageText(body)
-    if (!content) {
+    const attachmentIds = normalizeAttachmentIds(body.attachment_ids)
+    if (!content && attachmentIds.length === 0) {
+      return reply.code(400).send({ error: 'invalid_request' })
+    }
+    if (attachmentIds.length > 10) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    const duplicate = findRecentDuplicateUserMessage(app.db, conversation.id, content)
-    if (duplicate) {
-      return reply.code(202).send({ message: duplicate })
+    if (attachmentIds.length === 0) {
+      const duplicate = findRecentDuplicateUserMessage(app.db, conversation.id, content)
+      if (duplicate) {
+        return reply.code(202).send({ message: enrichMessageWithAttachments(app.db, duplicate) })
+      }
     }
 
     try {
@@ -125,6 +146,15 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
           role: 'user',
           content,
         })
+
+        if (attachmentIds.length > 0) {
+          const staged = validateStagedAttachments(app.db, request.userId, attachmentIds)
+          if (!staged) {
+            throw new Error('invalid_attachments')
+          }
+          linkAttachmentsToMessage(app.db, request.userId, messageId, attachmentIds)
+        }
+
         const originSessionId = request.sessionId ?? 'legacy'
         const runId = createRun(app.db, conversation.id, messageId, originSessionId)
         const messages = listMessages(app.db, conversation.id)
@@ -141,11 +171,12 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         }
       })()
 
+      const enrichedMessage = enrichMessageWithAttachments(app.db, created.message)
       emitConversationMessageUpsert(
         app.db,
         request.userId,
         conversation.id,
-        created.message,
+        enrichedMessage,
       )
 
       void executeAssistantRun({
@@ -162,6 +193,8 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         originSessionId: request.sessionId,
         shouldGenerateTitle: created.shouldGenerateTitle,
         userMessageText: content,
+        attachmentsDir: app.attachmentsDir,
+        visionHistoryMaxBytes: app.visionHistoryMaxBytes,
         cronJobsPath: app.cronJobsPath,
         conversationTitle: conversation.title,
         onAssistantMessageCommitted: async (ctx) => {
@@ -180,9 +213,13 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         app.log.error({ err: error, conversationId: conversation.id }, 'assistant run failed')
       })
 
-      return reply.code(202).send({ message: created.message })
+      return reply.code(202).send({ message: enrichedMessage })
     } catch (error) {
       if (error instanceof BootstrapValidationError) {
+        return reply.code(400).send({ error: 'invalid_request' })
+      }
+
+      if (error instanceof Error && error.message === 'invalid_attachments') {
         return reply.code(400).send({ error: 'invalid_request' })
       }
 
@@ -204,16 +241,20 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(409).send({ error: 'run_conflict' })
     }
 
-    if (!isMessageBody(request.body)) {
+    if (typeof request.body === 'object' && request.body !== null && 'attachment_ids' in request.body) {
+      return reply.code(400).send({ error: 'edit_not_allowed' })
+    }
+
+    if (!isEditMessageBody(request.body)) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
     const content = extractMessageText(request.body)
-    if (!content) {
+    const messageId = (request.params as { messageId: string }).messageId
+    const hasPhotos = messageHasAttachments(app.db, messageId)
+    if (!content && !hasPhotos) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
-
-    const messageId = (request.params as { messageId: string }).messageId
 
     try {
       const originSessionId = request.sessionId ?? 'legacy'
@@ -239,6 +280,8 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         runId: edited.runId,
         rewindMessageIds: [edited.removedAssistantMessageId],
         originSessionId: request.sessionId,
+        attachmentsDir: app.attachmentsDir,
+        visionHistoryMaxBytes: app.visionHistoryMaxBytes,
         cronJobsPath: app.cronJobsPath,
         conversationTitle: conversation.title,
         onAssistantMessageCommitted: async (ctx) => {
@@ -257,7 +300,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         app.log.error({ err: error, conversationId: conversation.id }, 'assistant rerun after edit failed')
       })
 
-      return reply.code(202).send({ message: edited.message })
+      return reply.code(202).send({ message: enrichMessageWithAttachments(app.db, edited.message) })
     } catch (error) {
       if (error instanceof MessageEditError) {
         if (error.code === 'not_found') {
@@ -338,13 +381,31 @@ function getOwnedConversation(
   return getConversationForUser(app.db, userId, conversationId)
 }
 
-function isMessageBody(value: unknown): value is MessageBody {
+function isCreateMessageBody(value: unknown): value is MessageBody {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const body = value as MessageBody
+  const hasText = typeof body.text === 'string' || typeof body.content === 'string'
+  const hasAttachments = Array.isArray(body.attachment_ids)
+  return hasText || hasAttachments
+}
+
+function isEditMessageBody(value: unknown): value is MessageBody {
   if (typeof value !== 'object' || value === null) {
     return false
   }
 
   const body = value as MessageBody
   return typeof body.text === 'string' || typeof body.content === 'string'
+}
+
+function normalizeAttachmentIds(value: string[] | undefined): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.filter((id) => typeof id === 'string' && id.length > 0)
 }
 
 function extractMessageText(body: MessageBody): string {

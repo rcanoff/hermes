@@ -78,5 +78,11 @@ export function readConfig(env: NodeJS.ProcessEnv): AppOptions {
     addressEnrichmentSessionId: env.ADDRESS_ENRICHMENT_SESSION_ID ?? 'companion-address-enrichment',
     apns,
     syncInboxMaxGap: readPositiveInt(env.SYNC_INBOX_MAX_GAP, 500),
+    attachmentsDir: env.ATTACHMENTS_DIR?.trim() || '/opt/data/attachments',
+    attachmentMaxBytes: readPositiveInt(env.ATTACHMENT_MAX_BYTES, 20_971_520),
+    attachmentOrphanTtlHours: readPositiveInt(env.ATTACHMENT_ORPHAN_TTL_HOURS, 24),
+    visionMaxEdgePx: readPositiveInt(env.VISION_MAX_EDGE_PX, 1536),
+    thumbMaxEdgePx: readPositiveInt(env.THUMB_MAX_EDGE_PX, 200),
+    visionHistoryMaxBytes: readPositiveInt(env.VISION_HISTORY_MAX_BYTES, 8_388_608),
   }
 }
