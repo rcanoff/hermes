@@ -7,8 +7,10 @@ import {
   appendAccountConversationUpsert,
   appendConversationMessageUpsert,
 } from '../src/db/repos/chat-sync-events.js'
+import { insertMessage } from '../src/db/repos/messages.js'
 import { buildInbox } from '../src/lib/sync-inbox.js'
 import { SYNC_MARKER_ORIGIN } from '../src/lib/sync-marker.js'
+import { removeConversationMessagesFrom } from '../src/services/conversation-message-rewind.js'
 
 function seedUser(db: Database.Database, userId: string) {
   db.prepare(`INSERT INTO users (id, username, password_hash) VALUES (?, 'u', 'h')`).run(userId)
@@ -97,6 +99,40 @@ describe('buildInbox', () => {
         created_at: `2026-01-01T00:00:0${i}.000Z`,
       })
     }
+
+    const result = buildInbox(db, userId, upsert.event_id, { maxGap: 500 })
+
+    expect(result.reset_required).toBe(false)
+    expect(result.changes).toEqual([{ conversation_id: conversationId, kind: 'updated' }])
+  })
+
+  it('returns updated after messages are rewound', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const userId = randomUUID()
+    const conversationId = randomUUID()
+    seedUser(db, userId)
+    seedConversation(db, userId, conversationId)
+
+    const upsert = appendAccountConversationUpsert(
+      db,
+      userId,
+      conversationId,
+      conversationPayload(conversationId),
+    )
+
+    insertMessage(db, {
+      conversationId,
+      role: 'user',
+      content: 'hello',
+    })
+    const assistantId = insertMessage(db, {
+      conversationId,
+      role: 'assistant',
+      content: 'reply',
+    })
+
+    removeConversationMessagesFrom(db, userId, conversationId, assistantId)
 
     const result = buildInbox(db, userId, upsert.event_id, { maxGap: 500 })
 

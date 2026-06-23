@@ -420,6 +420,7 @@ The companion app can open chat from a local store and reconcile server mutation
 
 - `GET /conversations/sync` — account-scoped conversation deltas (`conversation_upsert`, `conversation_deleted`)
 - `GET /conversations/{id}/sync` — per-conversation committed-history deltas (`message_upsert`, `messages_rewound`, `conversation_deleted`) plus an authoritative `conversation` metadata snapshot
+- `DELETE /conversations/{id}/messages/{messageId}` — tail rewind from anchor; rotates `hermes_session_id`; emits `messages_rewound` (v2.9.0)
 
 Both return ordered `events`, `has_more`, and **always** return `next_sync_marker` on `200` (including empty pages). Markers are opaque UUID `event_id` values from an append-only `chat_sync_events` log. Origin sentinel when no events exist yet: `00000000-0000-4000-8000-000000000000`. Unknown `since` → `400 { error: sync_marker_invalid }`.
 
