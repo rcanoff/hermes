@@ -84,4 +84,45 @@ describe('removeConversationMessagesFrom', () => {
 
     await app.close()
   })
+
+  it('supports sequential tail deletes on the same conversation', async () => {
+    const app = await createTestApp()
+    await app.ready()
+    const seeded = await seedTestUser(app, 'operator', 'password123')
+
+    app.db.prepare(`
+      INSERT INTO conversations (id, user_id, hermes_session_id, kind, updated_at)
+      VALUES ('regular-1', ?, 'sess-old', 'regular', datetime('now'))
+    `).run(seeded.id)
+
+    const userId = insertMessage(app.db, {
+      conversationId: 'regular-1',
+      role: 'user',
+      content: 'hello',
+    })
+    const assistantId = insertMessage(app.db, {
+      conversationId: 'regular-1',
+      role: 'assistant',
+      content: 'hi',
+    })
+
+    const first = removeConversationMessagesFrom(
+      app.db,
+      seeded.id,
+      'regular-1',
+      assistantId,
+    )
+    expect(first.removedMessageIds).toEqual([assistantId])
+
+    const second = removeConversationMessagesFrom(
+      app.db,
+      seeded.id,
+      'regular-1',
+      userId,
+    )
+    expect(second.removedMessageIds).toEqual([userId])
+    expect(listMessages(app.db, 'regular-1')).toHaveLength(0)
+
+    await app.close()
+  })
 })
