@@ -49,6 +49,8 @@ export class StreamHub {
   private readonly sessionListeners = new Map<string, SessionListener>()
   private readonly legacyListeners = new Map<string, Set<LegacyListener>>()
   private readonly pendingRewinds = new Map<string, string[]>()
+  private readonly userSessions = new Map<string, Set<string>>()
+  private readonly sessionUser = new Map<string, string>()
 
   subscribeSession(sessionId: string, listener: SessionListener): () => void {
     this.sessionListeners.set(sessionId, listener)
@@ -61,6 +63,41 @@ export class StreamHub {
 
   hasSessionListener(sessionId: string): boolean {
     return this.sessionListeners.has(sessionId)
+  }
+
+  registerUserSession(userId: string, sessionId: string): void {
+    const sessions = this.userSessions.get(userId) ?? new Set<string>()
+    sessions.add(sessionId)
+    this.userSessions.set(userId, sessions)
+    this.sessionUser.set(sessionId, userId)
+  }
+
+  unregisterUserSession(sessionId: string): void {
+    const userId = this.sessionUser.get(sessionId)
+    if (!userId) return
+    this.sessionUser.delete(sessionId)
+    const sessions = this.userSessions.get(userId)
+    sessions?.delete(sessionId)
+    if (sessions?.size === 0) {
+      this.userSessions.delete(userId)
+    }
+  }
+
+  hasUserSessionListener(userId: string): boolean {
+    const sessions = this.userSessions.get(userId)
+    if (!sessions) return false
+    for (const sessionId of sessions) {
+      if (this.sessionListeners.has(sessionId)) return true
+    }
+    return false
+  }
+
+  publishToUser(userId: string, event: SessionStreamEvent): void {
+    const sessions = this.userSessions.get(userId)
+    if (!sessions) return
+    for (const sessionId of sessions) {
+      this.publishSession(sessionId, event)
+    }
   }
 
   replaceSessionConnection(sessionId: string, listener: SessionListener): () => void {
