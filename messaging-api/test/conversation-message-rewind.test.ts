@@ -41,6 +41,10 @@ describe('removeConversationMessagesFrom', () => {
       content: 'Friedrichshain job created',
     })
 
+    app.db
+      .prepare(`UPDATE conversations SET updated_at = '2020-01-01 00:00:00' WHERE id = ?`)
+      .run('regular-1')
+
     const removed = removeConversationMessagesFrom(
       app.db,
       seeded.id,
@@ -57,6 +61,7 @@ describe('removeConversationMessagesFrom', () => {
     const conversation = getConversationForUser(app.db, seeded.id, 'regular-1')
     expect(conversation?.hermes_session_id).toBe(removed.hermesSessionId)
     expect(conversation?.hermes_session_id).not.toBe('sess-old')
+    expect(conversation?.updated_at).not.toBe('2020-01-01 00:00:00')
 
     await app.close()
   })

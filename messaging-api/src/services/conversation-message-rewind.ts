@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { rotateHermesSessionId } from '../db/repos/conversations.js'
+import { rotateHermesSessionId, touchConversationUpdatedAt } from '../db/repos/conversations.js'
 import { type MessageRow } from '../db/repos/messages.js'
 import { getActiveRun } from '../db/repos/runs.js'
 import { emitConversationMessagesRewound } from './chat-sync-emitter.js'
@@ -74,6 +74,7 @@ export function removeConversationMessagesFrom(
   return db.transaction(() => {
     deleteRunsReferencingMessages(db, conversationId, removedMessageIds)
     deleteMessagesByIds(db, conversationId, removedMessageIds)
+    touchConversationUpdatedAt(db, conversationId)
     const hermesSessionId = rotateHermesSessionId(db, conversationId)
     emitConversationMessagesRewound(db, userId, conversationId, removedMessageIds)
     return { removedMessageIds, hermesSessionId }
