@@ -76,7 +76,7 @@ export async function generateAndSaveTitle(input: {
   const updated = updateConversationTitleIfNull(input.db, input.conversationId, title)
   if (updated) {
     emitAccountConversationUpsert(input.db, input.userId, input.conversationId)
-    publishSessionTitle(input.hub, input.originSessionId, input.conversationId, title)
+    publishSessionTitle(input.hub, input.userId, input.conversationId, title)
   }
 }
 

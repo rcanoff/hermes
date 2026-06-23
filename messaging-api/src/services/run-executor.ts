@@ -56,10 +56,6 @@ export interface ExecuteAssistantRunInput {
 }
 
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
-  if (input.originSessionId) {
-    input.hub.registerUserSession(input.userId, input.originSessionId)
-  }
-
   const runId =
     input.runId ??
     createRun(input.db, input.conversationId, input.userMessageId, input.originSessionId ?? 'legacy')
@@ -75,6 +71,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
   const streamCtx: RunEventContext = {
     hub: input.hub,
+    userId: input.userId,
     conversationId: input.conversationId,
     runId,
     originSessionId: input.originSessionId,

@@ -32,6 +32,7 @@ describe('executeAssistantRun process stream', () => {
     const hub = new StreamHub()
     const events: SessionStreamEvent[] = []
     hub.subscribeSession('sess-1', (event) => events.push(event))
+    hub.registerUserSession('u1', 'sess-1')
 
     const runPromise = executeAssistantRun({
       db,
@@ -98,6 +99,7 @@ describe('executeAssistantRun process stream', () => {
     const hub = new StreamHub()
     const events: SessionStreamEvent[] = []
     hub.subscribeSession('sess-1', (event) => events.push(event))
+    hub.registerUserSession('u1', 'sess-1')
 
     const runPromise = executeAssistantRun({
       db,
@@ -150,6 +152,7 @@ describe('executeAssistantRun process stream', () => {
     const hub = new StreamHub()
     const events: SessionStreamEvent[] = []
     hub.subscribeSession('sess-1', (event) => events.push(event))
+    hub.registerUserSession('u1', 'sess-1')
 
     const runPromise = executeAssistantRun({
       db,

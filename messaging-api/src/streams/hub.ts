@@ -96,7 +96,7 @@ export class StreamHub {
     const sessions = this.userSessions.get(userId)
     if (!sessions) return
     for (const sessionId of sessions) {
-      this.deliverSessionEvent(sessionId, event)
+      this.publishSession(sessionId, event)
     }
   }
 
@@ -109,12 +109,6 @@ export class StreamHub {
   }
 
   publishSession(sessionId: string, event: SessionStreamEvent): void {
-    const userId = this.sessionUser.get(sessionId)
-    if (userId) {
-      this.publishToUser(userId, event)
-      return
-    }
-
     this.deliverSessionEvent(sessionId, event)
   }
 
