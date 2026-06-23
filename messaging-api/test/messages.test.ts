@@ -1,8 +1,12 @@
+import fs from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { AddressInfo } from 'node:net'
 import type { FastifyInstance } from 'fastify'
+import { linkAttachmentsToMessage } from '../src/db/repos/message-attachments.js'
 import { listMessages } from '../src/db/repos/messages.js'
+import { attachmentRoot } from '../src/lib/attachment-storage.js'
+import { buildMultipartImagePayload, createTinyJpegBuffer } from './helpers/attachments.js'
 import { getActiveRun } from '../src/db/repos/runs.js'
 import { FakeHermesClient } from './helpers/hermes.js'
 import { completeTitleAfterReply, prepareTitleResponse } from './helpers/title.js'
@@ -575,6 +579,47 @@ describe('message routes', () => {
         .get(conversationId) as { hermes_session_id: string }
     ).hermes_session_id
     expect(newSessionId).not.toBe(oldSessionId)
+  })
+
+  it('purges attachment files when a message with attachments is deleted', async () => {
+    const jpeg = await createTinyJpegBuffer()
+    const boundary = `b-${randomUUID()}`
+    const upload = await app!.inject({
+      method: 'POST',
+      url: '/attachments',
+      headers: {
+        authorization: `Bearer ${operatorToken}`,
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
+      payload: buildMultipartImagePayload(jpeg, boundary, 'photo.jpg', 'image/jpeg'),
+    })
+    expect(upload.statusCode).toBe(201)
+    const attachmentId = (upload.json() as { attachment: { id: string } }).attachment.id
+
+    const operatorId = (
+      app!.db.prepare('SELECT id FROM users WHERE username = ?').get('operator') as { id: string }
+    ).id
+
+    app!.db.exec(`
+      INSERT INTO messages (id, conversation_id, role, content) VALUES ('m-photo', '${conversationId}', 'user', 'photo');
+    `)
+    linkAttachmentsToMessage(app!.db, operatorId, 'm-photo', [attachmentId])
+
+    const attachmentDir = attachmentRoot(app!.attachmentsDir, operatorId, attachmentId)
+    expect(fs.existsSync(attachmentDir)).toBe(true)
+
+    const response = await app!.inject({
+      method: 'DELETE',
+      url: `/conversations/${conversationId}/messages/m-photo`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    expect(response.statusCode).toBe(200)
+
+    const attachmentRow = app!.db
+      .prepare('SELECT id FROM message_attachments WHERE id = ?')
+      .get(attachmentId)
+    expect(attachmentRow).toBeUndefined()
+    expect(fs.existsSync(attachmentDir)).toBe(false)
   })
 
   it('deletes the tail message and returns removed_message_ids with rotated hermes_session_id', async () => {

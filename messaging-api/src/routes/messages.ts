@@ -16,6 +16,7 @@ import {
   enrichMessageWithAttachments,
   enrichMessagesWithAttachments,
 } from '../lib/attachment-serializer.js'
+import { removeAttachmentTree } from '../lib/attachment-storage.js'
 import { validateBootstrap } from '../lib/bootstrap.js'
 import { resolveJobConversationBootstrap } from '../lib/job-conversation.js'
 import { buildHalLinks, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
@@ -23,6 +24,7 @@ import { getProcessByAssistantMessageIds } from '../db/repos/process.js'
 import { createRun, getActiveRun } from '../db/repos/runs.js'
 import { applyMessageEdit, MessageEditError } from '../services/message-editor.js'
 import {
+  listMessagesFromAnchor,
   MessageRewindError,
   removeConversationMessagesFrom,
 } from '../services/conversation-message-rewind.js'
@@ -346,6 +348,17 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       const messageId = (request.params as { messageId: string }).messageId
 
       try {
+        const toRemove = listMessagesFromAnchor(app.db, conversation.id, messageId)
+        const attachmentMap = listAttachmentsForMessages(
+          app.db,
+          toRemove.map((message) => message.id),
+        )
+        for (const rows of attachmentMap.values()) {
+          for (const row of rows) {
+            removeAttachmentTree(app.attachmentsDir, request.userId, row.id)
+          }
+        }
+
         const removed = removeConversationMessagesFrom(
           app.db,
           request.userId,
