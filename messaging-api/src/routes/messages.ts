@@ -22,7 +22,12 @@ import { buildHalLinks, parseListAnchors, parsePageLimit } from '../lib/paginati
 import { getProcessByAssistantMessageIds } from '../db/repos/process.js'
 import { createRun, getActiveRun } from '../db/repos/runs.js'
 import { applyMessageEdit, MessageEditError } from '../services/message-editor.js'
+import {
+  MessageRewindError,
+  removeConversationMessagesFrom,
+} from '../services/conversation-message-rewind.js'
 import { executeAssistantRun } from '../services/run-executor.js'
+import { scheduleConversationSessionWarmup } from '../services/session-warmup.js'
 import { emitConversationMessageUpsert } from '../services/chat-sync-emitter.js'
 import type { StreamEvent } from '../streams/hub.js'
 
@@ -320,6 +325,63 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       throw error
     }
   })
+
+  app.delete(
+    '/conversations/:id/messages/:messageId',
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const conversation = getOwnedConversation(
+        app,
+        request.userId,
+        (request.params as { id: string }).id,
+      )
+      if (!conversation) {
+        return reply.code(404).send({ error: 'not_found' })
+      }
+
+      if (getActiveRun(app.db, conversation.id)) {
+        return reply.code(409).send({ error: 'run_conflict' })
+      }
+
+      const messageId = (request.params as { messageId: string }).messageId
+
+      try {
+        const removed = removeConversationMessagesFrom(
+          app.db,
+          request.userId,
+          conversation.id,
+          messageId,
+        )
+
+        const refreshed = getConversationForUser(app.db, request.userId, conversation.id)
+        if (refreshed) {
+          scheduleConversationSessionWarmup({
+            hermesClient: app.hermesClient,
+            conversation: refreshed,
+            companionUsername: request.username,
+            log: (message, meta) => {
+              app.log.info(meta ?? {}, message)
+            },
+          })
+        }
+
+        return {
+          removed_message_ids: removed.removedMessageIds,
+          hermes_session_id: removed.hermesSessionId,
+        }
+      } catch (error) {
+        if (error instanceof MessageRewindError) {
+          if (error.code === 'not_found') {
+            return reply.code(404).send({ error: 'not_found' })
+          }
+
+          return reply.code(409).send({ error: 'run_conflict' })
+        }
+
+        throw error
+      }
+    },
+  )
 
   app.get('/conversations/:id/stream', { preHandler: app.authenticate }, async (request, reply) => {
     const conversation = getOwnedConversation(app, request.userId, (request.params as { id: string }).id)
