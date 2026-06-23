@@ -30,7 +30,7 @@ function seedUser(db: Database.Database): string {
 }
 
 describe('push dispatcher', () => {
-  it('skips any device whose session_id has active SSE', async () => {
+  it('skips all devices when any user SSE session is connected', async () => {
     const db = openTestDb()
     const userId = seedUser(db)
     const onlineToken = '11'.repeat(32)
@@ -51,6 +51,7 @@ describe('push dispatcher', () => {
     const sends: ApnsSendInput[] = []
     const hub = new StreamHub()
     hub.subscribeSession('sess-online', () => {})
+    hub.registerUserSession(userId, 'sess-online')
 
     await notifyCommittedAssistantMessage({
       db,
@@ -64,8 +65,7 @@ describe('push dispatcher', () => {
       conversationTitle: 'Chat',
     })
 
-    expect(sends).toHaveLength(1)
-    expect(sends[0]?.deviceToken).toBe(offlineToken)
+    expect(sends).toHaveLength(0)
   })
 
   it('cron payload uses destination jobs and Job title', async () => {

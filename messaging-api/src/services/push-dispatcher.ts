@@ -31,6 +31,10 @@ async function dispatchToDevices(input: DispatchInput): Promise<void> {
     return
   }
 
+  if (input.hub?.hasUserSessionListener(input.userId)) {
+    return
+  }
+
   const devices = listPushDevicesByUserId(input.db, input.userId)
   const alert = input.buildAlert()
   const payload = {
@@ -52,13 +56,6 @@ async function dispatchToDevices(input: DispatchInput): Promise<void> {
 
   await Promise.all(
     devices.map(async (device) => {
-      if (
-        device.session_id &&
-        input.hub?.hasSessionListener(device.session_id)
-      ) {
-        return
-      }
-
       const result = await input.apns.send({
         deviceToken: device.device_token,
         environment: device.environment,
