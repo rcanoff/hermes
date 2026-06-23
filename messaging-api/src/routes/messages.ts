@@ -31,7 +31,10 @@ import {
 import { executeAssistantRun } from '../services/run-executor.js'
 import { scheduleConversationSessionWarmup } from '../services/session-warmup.js'
 import { emitConversationMessageUpsert } from '../services/chat-sync-emitter.js'
-import { publishMessageUpsert } from '../streams/sse-mutation-publisher.js'
+import {
+  publishMessageUpsert,
+  publishMessagesRewound,
+} from '../streams/sse-mutation-publisher.js'
 import type { StreamEvent } from '../streams/hub.js'
 
 interface MessageBody {
@@ -371,6 +374,13 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
           request.userId,
           conversation.id,
           messageId,
+        )
+        publishMessagesRewound(
+          app.streamHub,
+          request.userId,
+          conversation.id,
+          removed.removedMessageIds,
+          removed.hermesSessionId,
         )
 
         const refreshed = getConversationForUser(app.db, request.userId, conversation.id)

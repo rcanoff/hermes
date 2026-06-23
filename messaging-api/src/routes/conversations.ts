@@ -17,6 +17,7 @@ import {
   emitAccountConversationUpsert,
   emitConversationDeleted,
 } from '../services/chat-sync-emitter.js'
+import { publishConversationDeleted } from '../streams/sse-mutation-publisher.js'
 import { removeHermesCronJob } from '../lib/hermes-cron-jobs.js'
 import { scheduleConversationSessionWarmup } from '../services/session-warmup.js'
 
@@ -161,6 +162,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
     }
 
     emitConversationDeleted(app.db, request.userId, conversationId)
+    publishConversationDeleted(app.streamHub, request.userId, conversationId)
     deleteConversationForUser(app.db, request.userId, conversationId)
     return reply.code(204).send()
   })
