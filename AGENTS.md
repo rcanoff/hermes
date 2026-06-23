@@ -10,9 +10,32 @@ When Grok runs here it must:
 - Keep the working directory at the Hermes repo root (`hermes/`).
 - Update `docs/superpowers/specs/messaging-api.openapi.yaml` in the same change set as any contract change.
 - Run verification per the rules below before reporting completion.
-- Return a concise summary: what changed, tests run, pass/fail, new OpenAPI version (if bumped), and any follow-ups for the orchestrator.
 
-The orchestrator plans in `docs/` at the workspace root and delegates implementation here. Do not implement iOS/SwiftUI — hand off to Codex via the orchestrator when client work is needed.
+The orchestrator invokes this repo via **`grok-hermes` MCP** (`grok-hermes__grok` / `grok-hermes__grok-reply`), not in-process subagents. Do not implement iOS/SwiftUI — hand off to Codex via the orchestrator when client work is needed.
+
+### Task execution (one task per invocation)
+
+The orchestrator sends **one numbered task** from a plan at a time (e.g. “Execute Task 2 only”). Unless the prompt explicitly says otherwise:
+
+- Implement **only that task** — do not start the next task.
+- Work on the named **feature branch**; commit before returning.
+- Run tests for that task (`cd messaging-api && node node_modules/vitest/vitest.mjs run` or scoped path from the plan).
+
+### Task status report (end of every MCP response)
+
+Return this block so the orchestrator can relay progress to the user:
+
+```markdown
+### backend Task N: <title>
+- **Status:** done | failed | blocked
+- **Branch:** `feature/…`
+- **Commits:** `<hash>` — message
+- **Tests:** <command> → pass/fail counts; name failing tests if any
+- **OpenAPI:** version unchanged | bumped to vX.Y.Z
+- **Files:** brief list of touched paths
+- **Blockers:** none | description
+- **Next:** what Task N+1 needs, if known
+```
 
 ## Purpose
 
