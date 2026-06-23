@@ -343,9 +343,11 @@ curl http://<tailscale-ip>:3000/health
 make messaging-api-logs
 ```
 
-### Assistant session stream (v2.2.0)
+### User-wide session stream (v2.10.0)
 
 The messaging API exposes a **persistent per-auth-session** SSE at `GET /events/stream`. Open it once at login (after storing the JWT); it stays open across runs until logout or disconnect. Requires a JWT with a `jti` session claim (re-login if you have an older token without `jti`).
+
+As of **v2.10.0**, live events fan out to **all connected auth sessions** for the user — iPhone, Mac, and additional simulators all receive the same `tooling`, `reply`, and committed-mutation events while streams are connected. Sync feeds remain the durability layer for reconnect and missed events. Design: [`docs/superpowers/specs/2026-06-23-companion-user-live-sync-design.md`](docs/superpowers/specs/2026-06-23-companion-user-live-sync-design.md).
 
 **Session SSE event lanes** (all include `conversationId`; run-scoped events include `runId`):
 
@@ -356,8 +358,11 @@ The messaging API exposes a **persistent per-auth-session** SSE at `GET /events/
 | `title` | Auto-generated conversation title saved on first message |
 | `rewind` | Messages removed before an edit rerun |
 | `error` | Run failed (`code`); stream **stays open** |
+| `message_upsert` | User or assistant message committed (full `Message` shape) |
+| `messages_rewound` | Tail messages deleted; includes `removed_message_ids` and rotated `hermes_session_id` |
+| `conversation_deleted` | Conversation removed server-side |
 
-After `reply` with `phase: "done"`, commit locally and reconcile via `GET /conversations/{id}/sync`. Other devices logged into the same account do **not** receive live SSE for runs they did not start — use sync feeds for cross-device state.
+After `reply` with `phase: "done"`, commit locally and reconcile via `GET /conversations/{id}/sync`. Background clients also apply `message_upsert`, `messages_rewound`, and `conversation_deleted` from SSE for immediate cross-device state.
 
 **Deprecated:** `GET /conversations/:id/stream` (legacy per-conversation stream). Retained until the iOS companion migrates.
 
