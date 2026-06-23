@@ -5,6 +5,8 @@ export type CompanionCronJobKind = 'reminder' | 'ha_digest' | 'monitoring'
 const ONE_SHOT_SCHEDULE_PATTERN = /^once\b/i
 const REMINDER_REQUEST_PATTERN =
   /\b(remind(?:er)? me|look into (?:this|that|it)(?: later)?|follow[- ]?up)\b/i
+const CRON_CREATION_REQUEST_PATTERN =
+  /\b(make|turn|convert).{0,40}\b(?:this|it)\b.{0,40}\b(?:into\s+)?(?:a\s+)?cron(?:job)?\b|\b(?:daily|every day).{0,30}\bcron\b/i
 const DIGEST_NAME_PATTERN =
   /\b(ha daily digest|home assistant daily(?:\s+report)?|daily digest|house overview)\b/i
 const DIGEST_PROMPT_PATTERN =
@@ -68,6 +70,13 @@ export function inferCompanionCronJobKindHeuristic(input: {
 
   const name = (input.name ?? '').trim()
   const trigger = (input.userTriggerMessage ?? '').trim()
+
+  if (
+    CRON_CREATION_REQUEST_PATTERN.test(trigger) &&
+    !isOneShotCompanionCronSchedule(input.schedule_display)
+  ) {
+    return 'monitoring'
+  }
 
   if (
     isOneShotCompanionCronSchedule(input.schedule_display) ||

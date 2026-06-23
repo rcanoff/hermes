@@ -1,5 +1,5 @@
-export const COMPANION_CRON_DEFAULT_PROVIDER = 'openai-api'
-export const COMPANION_CRON_DEFAULT_MODEL = 'gpt-5.4'
+export const COMPANION_CRON_DEFAULT_PROVIDER = 'xai-oauth'
+export const COMPANION_CRON_DEFAULT_MODEL = 'grok-composer-2.5-fast'
 
 export interface CompanionCronModelTarget {
   model: string
@@ -22,12 +22,28 @@ export function companionCronModelPatch(current: {
     return null
   }
 
-  // Unset inherits config default (gpt-5.4-mini). Upgrade explicit mini as well.
-  if (!model || model === 'gpt-5.4-mini') {
-    if (!provider || provider === COMPANION_CRON_DEFAULT_PROVIDER) {
-      return target
-    }
+  if (shouldUpgradeCompanionCronModel(model, provider)) {
+    return target
   }
 
   return null
+}
+
+function shouldUpgradeCompanionCronModel(
+  model: string | null,
+  provider: string | null,
+): boolean {
+  if (!model) {
+    return true
+  }
+
+  if (model === 'gpt-5.4-mini' && (!provider || provider === 'openai-api')) {
+    return true
+  }
+
+  if (model === 'gpt-5.4' && (!provider || provider === 'openai-api')) {
+    return true
+  }
+
+  return false
 }

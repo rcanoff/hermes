@@ -83,4 +83,25 @@ describe('validateHealthMetrics v2', () => {
     })
     expect(result?.steps?.value).toBe(1000)
   })
+
+  it('accepts omitted goal and remaining on metrics without targets', () => {
+    const result = validateHealthMetrics({
+      steps: { value: 1000, unit: 'count', goal: 10000, remaining: 9000 },
+      sleep_duration: { value: 420, unit: 'min' },
+      resting_heart_rate: { value: 58, unit: 'bpm' },
+    })
+    expect(result).toEqual({
+      steps: { value: 1000, unit: 'count', goal: 10000, remaining: 9000 },
+      sleep_duration: { value: 420, unit: 'min', goal: null, remaining: null },
+      resting_heart_rate: { value: 58, unit: 'bpm', goal: null, remaining: null },
+    })
+  })
+
+  it('rejects omitted goal with remaining set', () => {
+    expect(
+      validateHealthMetrics({
+        sleep_duration: { value: 420, unit: 'min', remaining: 0 },
+      }),
+    ).toBeNull()
+  })
 })

@@ -7,7 +7,11 @@ import {
   COMPANION_CRON_DEFAULT_MODEL,
   COMPANION_CRON_DEFAULT_PROVIDER,
 } from '../src/lib/companion-cron-model.js'
-import { findConversationByHermesJobId } from '../src/db/repos/conversations.js'
+import {
+  createJobConversation,
+  findConversationByHermesJobId,
+  linkJobConversation,
+} from '../src/db/repos/conversations.js'
 import { insertMessage } from '../src/db/repos/messages.js'
 import { autoLinkNewCompanionCronJobs } from '../src/services/companion-cron-auto-link.js'
 import type { HermesClient } from '../src/services/hermes-client.js'
@@ -286,6 +290,114 @@ Earlier we guessed a coastal overlook — steep cliffs, turquoise water — poss
     expect(patchedJob?.prompt).toContain('Reminder: Look into where this photo was taken')
     expect(patchedJob?.prompt).toContain('Madeira')
     expect(completeChat).toHaveBeenCalledOnce()
+
+    await app.close()
+  })
+
+  it('still synthesizes prompt when the agent pre-linked the job conversation', async () => {
+    const app = await createTestApp()
+    await app.ready()
+    const seeded = await seedTestUser(app, 'operator', 'password123')
+
+    app.db.prepare(`
+      INSERT INTO conversations (id, user_id, hermes_session_id, kind, updated_at)
+      VALUES ('regular-1', ?, 'sess-1', 'regular', datetime('now'))
+    `).run(seeded.id)
+
+    insertMessage(app.db, {
+      conversationId: 'regular-1',
+      role: 'assistant',
+      content:
+        'Mitte rentals with Kalt/Warm lines sorted by Warmmiete: https://www.immobilienscout24.de/expose/168712613',
+    })
+    insertMessage(app.db, {
+      conversationId: 'regular-1',
+      role: 'user',
+      content: 'can you make this into a cron that runs every day at 9am berlin time?',
+    })
+
+    const jobConversationId = createJobConversation(app.db, seeded.id, 'operator', {
+      name: 'friedrichshain-immoscout-daily',
+      scheduleDisplay: '0 7 * * *',
+    })
+    linkJobConversation(app.db, seeded.id, {
+      conversationId: jobConversationId,
+      hermesJobId: 'prelinked-job',
+      username: 'operator',
+      scheduleDisplay: '0 7 * * *',
+      jobEnabled: true,
+    })
+
+    const friedrichshainDraft =
+      'Daily ImmoScout24 rental search in Friedrichshain, Berlin. Canonical URL: https://www.immobilienscout24.de/Suche/de/berlin/berlin/friedrichshain-kreuzberg/friedrichshain/wohnung-mit-balkon-mieten?numberofrooms=3.0-&price=-1800.0&pricetype=rentpermonth&withphotos=true'
+
+    await fs.writeFile(
+      jobsPath,
+      JSON.stringify({
+        jobs: [
+          ...INITIAL_JOBS.jobs,
+          {
+            id: 'prelinked-job',
+            name: 'friedrichshain-immoscout-daily',
+            prompt: friedrichshainDraft,
+            deliver: 'local',
+            schedule_display: '0 7 * * *',
+            created_at: '2026-06-23T03:26:49+00:00',
+          },
+        ],
+      }),
+    )
+
+    const completeChat = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        kind: 'monitoring',
+        prompt: `Daily ImmoScout24 rental search (Companion App output only).
+
+Search apartments for rent in Mitte, Berlin with:
+- Minimum 3 rooms and up (numberofrooms=3.0-)
+- Balcony required
+- Max cold rent 1800 EUR/month (Kaltmiete)
+
+Canonical URL:
+https://www.immobilienscout24.de/Suche/de/berlin/berlin/mitte/wohnung-mit-balkon-mieten?numberofrooms=3.0-&price=-1800.0&pricetype=rentpermonth&withphotos=true
+
+Output: link line then Kalt X · Warm Y · m² · Zi. · title, sorted cheapest warm first.`,
+      }),
+    )
+    const hermesClient: HermesClient = {
+      completeChat,
+      async *streamChat() {},
+      ensureSession: async () => {},
+    }
+
+    const linked = await autoLinkNewCompanionCronJobs({
+      db: app.db,
+      userId: seeded.id,
+      username: 'operator',
+      sourceConversationId: 'regular-1',
+      cronJobsPath: jobsPath,
+      knownJobIdsBefore: new Set(['existing-job']),
+      sawCronjobTool: true,
+      hermesClient,
+      cronPromptSynthesisLlm: { apiKey: '', baseUrl: '', model: 'gpt-5.4', timeoutMs: 60_000 },
+    })
+
+    expect(linked).toEqual([
+      { hermesJobId: 'prelinked-job', conversationId: jobConversationId },
+    ])
+
+    const jobsOnDisk = JSON.parse(await readFile(jobsPath, 'utf8')) as {
+      jobs: Array<{ id: string; prompt: string }>
+    }
+    const patchedJob = jobsOnDisk.jobs.find((job) => job.id === 'prelinked-job')
+    expect(patchedJob?.prompt).toContain('Mitte')
+    expect(patchedJob?.prompt).not.toContain('friedrichshain-kreuzberg')
+    expect(completeChat).toHaveBeenCalledOnce()
+
+    const jobConversations = app.db
+      .prepare(`SELECT COUNT(*) AS count FROM conversations WHERE kind = 'job'`)
+      .get() as { count: number }
+    expect(jobConversations.count).toBe(1)
 
     await app.close()
   })

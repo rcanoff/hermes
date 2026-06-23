@@ -7,7 +7,11 @@ import {
   upsertHealthDailySummary,
   type HealthDailySummaryRow,
 } from '../db/repos/health-daily-summaries.js'
-import { parseHealthDate, validateHealthMetrics } from '../lib/health-metrics.js'
+import {
+  describeHealthMetricsValidationFailure,
+  parseHealthDate,
+  validateHealthMetrics,
+} from '../lib/health-metrics.js'
 import { buildHalLinks, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
 
 const VALID_SOURCES = new Set(['healthkit'])
@@ -24,6 +28,30 @@ const dataHealthRoutes: FastifyPluginAsync = async (app) => {
   app.post('/data/health/daily-summaries', { preHandler: app.authenticate }, async (request, reply) => {
     const body = parseUpsertBody(request.body)
     if (!body) {
+      const reasons = describeUpsertBodyFailure(request.body)
+      app.log.warn(
+        {
+          userId: request.userId,
+          reasons,
+          metricKeys:
+            typeof request.body === 'object' && request.body !== null && 'metrics' in request.body
+              ? Object.keys((request.body as { metrics?: Record<string, unknown> }).metrics ?? {})
+              : [],
+          date:
+            typeof request.body === 'object' && request.body !== null && 'date' in request.body
+              ? (request.body as { date?: unknown }).date
+              : undefined,
+          partialType:
+            typeof request.body === 'object' && request.body !== null && 'partial' in request.body
+              ? typeof (request.body as { partial?: unknown }).partial
+              : undefined,
+          source:
+            typeof request.body === 'object' && request.body !== null && 'source' in request.body
+              ? (request.body as { source?: unknown }).source
+              : undefined,
+        },
+        'health daily summary upsert rejected',
+      )
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
@@ -105,6 +133,31 @@ function serializeHealthDailySummary(row: HealthDailySummaryRow) {
     source: row.source,
     metrics: parseStoredHealthMetrics(row.metrics_json),
   }
+}
+
+function describeUpsertBodyFailure(value: unknown): string[] {
+  if (typeof value !== 'object' || value === null) {
+    return ['body: expected object']
+  }
+
+  const candidate = value as Partial<UpsertHealthDailySummaryBody>
+  const reasons: string[] = []
+
+  if (!parseHealthDate(candidate.date)) {
+    reasons.push(`date: invalid '${String(candidate.date)}'`)
+  }
+  if (typeof candidate.timezone !== 'string' || candidate.timezone.trim().length === 0) {
+    reasons.push('timezone: missing or empty')
+  }
+  if (typeof candidate.partial !== 'boolean') {
+    reasons.push(`partial: expected boolean, got ${typeof candidate.partial}`)
+  }
+  if (typeof candidate.source !== 'string' || !VALID_SOURCES.has(candidate.source)) {
+    reasons.push(`source: invalid '${String(candidate.source)}'`)
+  }
+
+  reasons.push(...describeHealthMetricsValidationFailure(candidate.metrics))
+  return reasons
 }
 
 function parseUpsertBody(value: unknown): UpsertHealthDailySummaryBody | null {

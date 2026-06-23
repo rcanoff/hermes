@@ -68,15 +68,24 @@ export async function autoLinkNewCompanionCronJobs(
 
   const jobs = await readHermesCronJobs(input.cronJobsPath)
   const newLocalJobs = jobs.filter(
-    (job) =>
-      !input.knownJobIdsBefore.has(job.id) &&
-      isCompanionLocalDeliver(job.deliver) &&
-      !findConversationByHermesJobId(input.db, job.id),
+    (job) => !input.knownJobIdsBefore.has(job.id) && isCompanionLocalDeliver(job.deliver),
   )
 
   const linked: AutoLinkedCompanionCronJob[] = []
   for (const job of newLocalJobs) {
     await normalizeCompanionJobRecord(input, job)
+
+    const existingConversation = findConversationByHermesJobId(input.db, job.id)
+    if (existingConversation) {
+      linked.push({ hermesJobId: job.id, conversationId: existingConversation.id })
+      input.log?.('companion cron job already linked; normalized prompt only', {
+        hermesJobId: job.id,
+        conversationId: existingConversation.id,
+        sourceConversationId: input.sourceConversationId,
+      })
+      continue
+    }
+
     const conversationId = linkCompanionCronJob(input, job)
     if (!conversationId) {
       continue
@@ -174,7 +183,12 @@ async function normalizeCompanionJobRecord(
 
     if (classified) {
       const nextPrompt = resolvePromptForClassifiedJob(classified, canonicalDigestPrompt)
-      if (nextPrompt && nextPrompt !== existingPrompt) {
+      const shouldForcePromptPatch =
+        nextPrompt !== null &&
+        nextPrompt !== existingPrompt &&
+        (nextPrompt.length > 0 || existingPrompt.length > 0)
+
+      if (shouldForcePromptPatch) {
         const patched = await patchHermesCronJobPrompt(input.cronJobsPath, job.id, nextPrompt)
         if (patched) {
           job.prompt = nextPrompt
@@ -186,6 +200,12 @@ async function normalizeCompanionJobRecord(
         }
       } else if (classified.kind !== 'ha_digest' && !nextPrompt) {
         input.log?.('companion cron prompt classification produced no prompt', {
+          hermesJobId: job.id,
+          kind: classified.kind,
+          sourceConversationId: input.sourceConversationId,
+        })
+      } else if (nextPrompt && nextPrompt === existingPrompt) {
+        input.log?.('companion cron prompt unchanged after classification', {
           hermesJobId: job.id,
           kind: classified.kind,
           sourceConversationId: input.sourceConversationId,
