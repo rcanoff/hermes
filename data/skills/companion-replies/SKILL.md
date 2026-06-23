@@ -53,7 +53,8 @@ If you have a record but are still on a data skill, load this skill first.
 | User need | Follow |
 |-----------|--------|
 | Short answer, no special rendering | Plain text only — no block skill |
-| List, table, headings, rich layout | `companion-markdown-blocks` |
+| **Search/listing links** (ImmoScout, Amazon, etc.) | Plain text + `companion-links` — **not** a markdown table |
+| List, table, headings, rich layout | `companion-markdown-blocks` (tables only when user wants a table) |
 | Show a place or route on a native map preview | `companion-map-preview` |
 | Share a URL to open (maps, article, menu, etc.) | `companion-links` |
 | Route with preview **and** open-in-Maps link | `companion-map-preview` + `companion-links` |
@@ -95,8 +96,20 @@ Account invites and password resets use `companion-account-management` — not t
 3. Compose the reply with sibling parts — plain text, then blocks, then more plain text as needed.
 4. Verify each block uses the correct fence (`markdown` or `map`) and that links stay outside `map` blocks.
 
+### Listing / search results (links)
+
+When returning multiple URLs from a site search (rentals, products):
+
+1. Optional one-line context (filters, match count).
+2. For each item: **URL alone on one line**, then **one line** with price(s), size, and title separated by ` · `.
+   - ImmoScout rentals: include **Kalt** and **Warm** when available, e.g. `Kalt 1.400 € · Warm 1.675 € · 92 m² · 3 Zi. · Title`.
+3. Do **not** wrap these in a `markdown` table — the user prefers tappable links and a single scannable detail line per listing.
+
+See `web-search-result-extraction` for filter-and-extract workflow.
+
 ## Do not
 
+- Use markdown tables for listing-link dumps unless the user explicitly asks for a table
 - Reply with location or health data before loading this skill after a data fetch
 - Use Address/Coordinates/Accuracy/Updated format on Companion App — use `companion-map-preview` instead
 - Duplicate block syntax from child skills — read the relevant one

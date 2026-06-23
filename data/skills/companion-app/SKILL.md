@@ -1,12 +1,12 @@
 ---
 name: companion-app
 description: REQUIRED entry point for Companion App replies. iOS bootstrap tells Hermes to load this skill first. Routes intents to reply, block, and data skills. Does not own fence syntax.
-version: 1.2.0
+version: 1.2.1
 author: Hermes Agent
 metadata:
   hermes:
     tags: [companion, index, routing, mobile]
-    related_skills: [companion-replies, companion-cron, companion-user-location, companion-user-health, companion-map-preview, companion-links, companion-markdown-blocks]
+    related_skills: [companion-replies, companion-cron, companion-user-location, companion-user-health, companion-map-preview, companion-links, companion-markdown-blocks, web-search-result-extraction]
 ---
 
 # Companion App
@@ -44,6 +44,7 @@ Before writing any Companion App reply, load `companion-replies` and follow its 
 | Nutrition / water / protein | `companion-user-health` → `companion-replies` | Fetch data first |
 | Mindfulness / meditation | `companion-user-health` → `companion-replies` | Fetch data first |
 | Remind me / run every day / cron / job | `companion-cron` (load first, follow exactly) | MCP create/link + `cronjob` with `deliver: local` — never `origin` |
+| Site search / listing links (ImmoScout, etc.) | `web-search-result-extraction` → `companion-replies` → `companion-links` | Apply filters on site; reply = URL line + detail line per listing, **no table** |
 
 ## Data → present pipeline (required)
 
@@ -66,6 +67,7 @@ For any vault data intent (location, health):
 
 ## Do not
 
+- Call `session_search` — disabled on the Companion App channel; use messages in **this** conversation only
 - Call `cronjob` for companion reminders without loading `companion-cron` and completing the MCP create/link flow
 - Use `deliver: origin` (or omit `deliver`) for companion cron jobs — that delivers to Telegram
 - Write cron prompts that say "send" / "notify" / "message the user" — follow `companion-cron`: self-contained output prompt, context resolved from chat
