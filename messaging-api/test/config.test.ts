@@ -44,7 +44,7 @@ describe('readConfig', () => {
       titleGeneration: {
         apiKey: '',
         baseUrl: '',
-        model: 'gpt-5.4-nano',
+        model: 'grok-composer-2.5-fast',
         timeoutMs: 30_000,
       },
       cronPromptSynthesis: {

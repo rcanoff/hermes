@@ -24,8 +24,8 @@ describe('resolveChatCompletionsUrl', () => {
 })
 
 describe('DEFAULT_TITLE_GENERATION_MODEL', () => {
-  it('uses the fast nano model configured for Hermes auxiliary title generation', () => {
-    expect(DEFAULT_TITLE_GENERATION_MODEL).toBe('gpt-5.4-nano')
+  it('uses Composer 2.5 Fast configured for Hermes auxiliary title generation', () => {
+    expect(DEFAULT_TITLE_GENERATION_MODEL).toBe('grok-composer-2.5-fast')
   })
 })
 
