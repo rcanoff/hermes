@@ -60,6 +60,7 @@ describe('executeAssistantRun process stream', () => {
       'tooling',
       'tooling',
       'reply',
+      'message_upsert',
       'reply',
     ])
 
@@ -183,6 +184,7 @@ describe('executeAssistantRun process stream', () => {
       'tooling',
       'tooling',
       'reply',
+      'message_upsert',
       'reply',
     ])
     expect(events[0]).toEqual({

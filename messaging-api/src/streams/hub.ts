@@ -41,6 +41,23 @@ export type SessionStreamEvent =
       data: { conversationId: string; runId: string; removedMessageIds: string[] }
     }
   | { event: 'error'; data: { conversationId: string; runId: string; code: string } }
+  | {
+      event: 'message_upsert'
+      data: {
+        conversationId: string
+        message: Record<string, unknown>
+        hermes_session_id?: string
+      }
+    }
+  | {
+      event: 'messages_rewound'
+      data: {
+        conversationId: string
+        removed_message_ids: string[]
+        hermes_session_id: string
+      }
+    }
+  | { event: 'conversation_deleted'; data: { conversationId: string } }
 
 type SessionListener = (event: SessionStreamEvent) => void
 type LegacyListener = (event: LegacyStreamEvent) => void

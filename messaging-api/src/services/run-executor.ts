@@ -22,6 +22,7 @@ import {
   buildStatusLine,
 } from './tooling-line.js'
 import { emitConversationMessageUpsert } from './chat-sync-emitter.js'
+import { publishMessageUpsert } from '../streams/sse-mutation-publisher.js'
 import { scheduleTitleGeneration } from './title-generator.js'
 import type { AuxiliaryLlmConfig } from './auxiliary-llm-client.js'
 import { listHermesJobIdsFromFile } from '../lib/hermes-cron-jobs.js'
@@ -225,9 +226,11 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
     const assistantMessageId = persistCompletedRun(
       input.db,
+      input.hub,
       input.userId,
       runId,
       input.conversationId,
+      input.hermesSessionId,
       assistantText,
       processLines,
     )
@@ -287,9 +290,11 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
 function persistCompletedRun(
   db: Database.Database,
+  hub: StreamHub,
   userId: string,
   runId: string,
   conversationId: string,
+  hermesSessionId: string,
   assistantText: string,
   processLines: ToolingLine[],
 ): string {
@@ -328,7 +333,13 @@ function persistCompletedRun(
       created_at: string
     }
 
-    emitConversationMessageUpsert(db, userId, conversationId, message, process)
+    const enrichedMessage = {
+      ...message,
+      ...(process ? { process } : {}),
+    }
+
+    emitConversationMessageUpsert(db, userId, conversationId, enrichedMessage, process)
+    publishMessageUpsert(hub, userId, conversationId, enrichedMessage, hermesSessionId)
 
     return assistantMessageId
   })()
