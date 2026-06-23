@@ -6,3 +6,8 @@ apple-caldav-mcp/.env
 messaging-api/node_modules/
 messaging-api/dist/
 messaging-api/.env
+browser-daemon/node_modules/
+browser-daemon/dist/
+.DS_Store
+.claude/
+.grok/

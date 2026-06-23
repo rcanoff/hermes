@@ -1,5 +1,19 @@
 # Hermes Workspace
 
+## Grok agent (this project)
+
+This workspace is implemented by **Grok** (headless), invoked by the orchestrator through the **`grok-hermes` MCP server** (`grok-hermes__grok` / `grok-hermes__grok-reply`).
+
+When Grok runs here it must:
+
+- Treat this file as the source of truth for backend conventions, OpenAPI rules, and operator workflows.
+- Keep the working directory at the Hermes repo root (`hermes/`).
+- Update `docs/superpowers/specs/messaging-api.openapi.yaml` in the same change set as any contract change.
+- Run verification per the rules below before reporting completion.
+- Return a concise summary: what changed, tests run, pass/fail, new OpenAPI version (if bumped), and any follow-ups for the orchestrator.
+
+The orchestrator plans in `docs/` at the workspace root and delegates implementation here. Do not implement iOS/SwiftUI — hand off to Codex via the orchestrator when client work is needed.
+
 ## Purpose
 
 This directory is an operations workspace for a local Hermes Agent deployment.

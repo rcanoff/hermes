@@ -11,7 +11,7 @@ POWERSHELL_HERMES := powershell.exe -NoProfile -ExecutionPolicy Bypass -Command 
 ANSIBLE_DIR := ansible
 ANSIBLE := cd $(ANSIBLE_DIR) && ansible-playbook
 
-.PHONY: help env config up down ps logs restart sync-apple-calendar-mcp-token deploy hermes-config hermes-config-edit hermes-setup hermes-model hermes-mcp-list hermes-gateway hermes-gateway-nosupervise hermes-shell messaging-api-logs messaging-api-shell
+.PHONY: help env config up down ps logs restart sync-apple-calendar-mcp-token deploy hermes-config hermes-config-edit hermes-setup hermes-model hermes-mcp-list hermes-gateway hermes-gateway-nosupervise hermes-shell messaging-api-logs messaging-api-shell browser-daemon-install browser-daemon-dev browser-daemon-start browser-daemon-stop browser-daemon-login-install browser-daemon-login-uninstall browser-daemon-login-status brave-google-start brave-google-sync brave-google-url brave-google-stop
 
 help:
 	@printf '%s\n' \
@@ -32,6 +32,17 @@ help:
 		'make messaging-api-shell  Open a shell inside the messaging-api container' \
 		'make deploy         Deploy this workspace to the Raspberry Pi via Ansible' \
 		'make sync-apple-calendar-mcp-token  Sync Apple Calendar MCP token into data/config.yaml' \
+		'make browser-daemon-install  Install browser-daemon dependencies' \
+		'make browser-daemon-dev     Run browser-daemon on the Mac host (watch mode)' \
+		'make browser-daemon-start  Start browser-daemon on the Mac host' \
+		'make browser-daemon-stop   Stop browser-daemon on the Mac host' \
+		'make browser-daemon-login-install   Install LaunchAgent (start at login)' \
+		'make browser-daemon-login-uninstall Remove LaunchAgent' \
+		'make browser-daemon-login-status    Show LaunchAgent status' \
+		'make brave-google-start Launch Brave debug profile (optional manual CDP attach)' \
+		'make brave-google-sync  Sync Brave CDP URL into Hermes config and restart' \
+		'make brave-google-url   Print /browser connect command for the debug Brave session' \
+		'make brave-google-stop  Stop the debug Brave session' \
 		'make env            Show the env file and UID/GID in use'
 
 env:
@@ -116,3 +127,36 @@ messaging-api-shell:
 
 deploy:
 	@$(ANSIBLE) deploy.yml
+
+browser-daemon-install:
+	@cd browser-daemon && npm install
+
+browser-daemon-dev:
+	@cd browser-daemon && npm run dev
+
+browser-daemon-start:
+	@./scripts/browser-daemon.sh start
+
+browser-daemon-stop:
+	@./scripts/browser-daemon.sh stop
+
+browser-daemon-login-install:
+	@./scripts/browser-daemon-launchagent.sh install
+
+browser-daemon-login-uninstall:
+	@./scripts/browser-daemon-launchagent.sh uninstall
+
+browser-daemon-login-status:
+	@./scripts/browser-daemon-launchagent.sh status
+
+brave-google-start:
+	@./scripts/launch-brave-google.sh start
+
+brave-google-sync:
+	@./scripts/launch-brave-google.sh sync-config
+
+brave-google-url:
+	@./scripts/launch-brave-google.sh url
+
+brave-google-stop:
+	@./scripts/launch-brave-google.sh stop

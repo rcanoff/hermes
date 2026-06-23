@@ -100,40 +100,43 @@ Deployment behavior:
 - `.env` is deployed from the local workspace
 - the playbook runs `docker compose --env-file .env up -d` on the Pi
 
-## Firecrawl setup
+## Brave browser setup (Mac host + Docker Hermes)
 
-Hermes uses Firecrawl by default for web search and web extraction when `FIRECRAWL_API_KEY` is set.
+Hermes runs in Docker, but Brave runs on the Mac host. The `browser-daemon` service launches Brave and exposes a CDP gateway Hermes can reach at `http://host.docker.internal:9221`.
 
-1. Get an API key from `https://firecrawl.dev`.
-2. Add it to `.env`:
-
-```bash
-FIRECRAWL_API_KEY=fc-your-key-here
-```
-
-3. Recreate Hermes so the container gets the new env var:
+1. Install the daemon and register it to start at login:
 
 ```bash
-make down
-make up
+make browser-daemon-install
+make browser-daemon-login-install
 ```
 
-4. Verify with:
+For a one-off manual start without Login Item registration, use `make browser-daemon-start` instead.
+
+2. Point Hermes at the daemon (once per machine):
 
 ```bash
-make logs
+docker exec hermes hermes config set browser.cloud_provider local
+docker exec hermes hermes config set browser.cdp_url http://host.docker.internal:9221
+docker restart hermes
 ```
 
-Optional:
+3. Log into Google in the Brave window when it first opens. The profile persists under `data/browser-profiles/hermes/`.
 
-- `FIRECRAWL_API_URL=https://api.firecrawl.dev` is the default hosted Firecrawl API
-- `FIRECRAWL_API_URL=http://localhost:3002` for a self-hosted Firecrawl instance
-- `FIRECRAWL_BROWSER_TTL=600` to keep Firecrawl browser sessions alive longer
+4. Ask Hermes to browse or search in the dashboard (`http://localhost:9119`) or Telegram. The first browser tool call asks the daemon to launch Brave if needed.
 
-Notes:
+Useful endpoints on the Mac host:
 
-- For web search/extract, Firecrawl is Hermes' default backend when configured.
-- For browser automation, use Hermes' tool setup to select Firecrawl as the browser provider if you want cloud browser sessions through Firecrawl.
+- `GET http://127.0.0.1:9221/health`
+- `POST http://127.0.0.1:9221/start`
+- `GET http://127.0.0.1:9221/cdp-url`
+
+Stop or remove the Login Item:
+
+```bash
+make browser-daemon-stop
+make browser-daemon-login-uninstall
+```
 
 ## OpenAI setup
 
@@ -314,6 +317,8 @@ COMPANION_MCP_BEARER_TOKEN=replace-with-long-random-token
 ```
 
 `HERMES_API_SERVER_KEY` enables Hermes's OpenAI-compatible listener on port `8642` inside the Docker network and authenticates `messaging-api` when it calls Hermes. In this deployment that path is the **Companion App** channel: `messaging-api` sends `X-Hermes-Session-Key: companion-app` on every Hermes call. Skill routing is **not** hardcoded in the API — the iOS app sends a `bootstrap` prompt on the first message of each conversation; the API stores and forwards it. See `companion-app` skill and OpenAPI v1.9.0.
+
+Companion cron creation must use the originating conversation transcript only — `session_search` is **disabled** for the `api_server` platform in `data/config.yaml` (`platform_toolsets.api_server` omits it).
 
 `MESSAGING_API_HOST` must be the Tailscale-reachable IP and port of the messaging API. Set it to your Pi's Tailscale address, e.g. `100.x.x.x:3000`.
 
