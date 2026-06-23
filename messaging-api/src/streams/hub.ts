@@ -1,3 +1,4 @@
+import type { MessageWithAttachments } from '../lib/attachment-serializer.js'
 import type { ToolingLine, ToolingPhase } from '../db/repos/process.js'
 
 export type { ToolingLine, ToolingPhase } from '../db/repos/process.js'
@@ -45,7 +46,7 @@ export type SessionStreamEvent =
       event: 'message_upsert'
       data: {
         conversationId: string
-        message: Record<string, unknown>
+        message: MessageWithAttachments
         hermes_session_id?: string
       }
     }

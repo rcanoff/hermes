@@ -6,8 +6,9 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(401).send({ error: 'session_required' })
     }
 
+    const sessionId = request.sessionId
     const userId = request.userId
-    app.streamHub.registerUserSession(userId, request.sessionId)
+    app.streamHub.registerUserSession(userId, sessionId)
 
     reply.sseInit()
 
@@ -18,7 +19,7 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
       }
     }, 30_000)
 
-    const unsubscribe = app.streamHub.replaceSessionConnection(request.sessionId, (event) => {
+    const unsubscribe = app.streamHub.replaceSessionConnection(sessionId, (event) => {
       if (!closed) {
         reply.sseSend(event.event, event.data)
       }
@@ -30,7 +31,7 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
       }
       closed = true
       clearInterval(pingInterval)
-      app.streamHub.unregisterUserSession(request.sessionId)
+      app.streamHub.unregisterUserSession(sessionId)
       unsubscribe()
       reply.sseEnd()
     }
