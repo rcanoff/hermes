@@ -25,7 +25,7 @@ Scheduled reminder only. Your entire response must match the following message e
 
 <full precomposed reply>
 
-No tools. No other text, steps, or narration.
+No other text, steps, or narration.
 ```
 
 At creation time the agent builds `<full precomposed reply>` from conversation context (via `companion-map-preview` + `companion-links`). The cron agent echoes it verbatim at fire time.

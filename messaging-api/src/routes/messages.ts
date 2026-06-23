@@ -17,6 +17,7 @@ import {
   enrichMessagesWithAttachments,
 } from '../lib/attachment-serializer.js'
 import { validateBootstrap } from '../lib/bootstrap.js'
+import { resolveJobConversationBootstrap } from '../lib/job-conversation.js'
 import { buildHalLinks, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
 import { getProcessByAssistantMessageIds } from '../db/repos/process.js'
 import { createRun, getActiveRun } from '../db/repos/runs.js'
@@ -126,7 +127,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     }
 
     try {
-      let bootstrapPrompt = conversation.bootstrap_prompt
+      let bootstrapPrompt = resolveJobConversationBootstrap(conversation, request.username)
 
       const created = app.db.transaction(() => {
         const existingMessages = listMessages(app.db, conversation.id)
@@ -194,6 +195,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         shouldGenerateTitle: created.shouldGenerateTitle,
         userMessageText: content,
         titleGenerationLlm: app.titleGeneration,
+        cronPromptSynthesisLlm: app.cronPromptSynthesis,
         attachmentsDir: app.attachmentsDir,
         visionHistoryMaxBytes: app.visionHistoryMaxBytes,
         cronJobsPath: app.cronJobsPath,
@@ -277,7 +279,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         userMessageId: edited.message.id,
         userId: request.userId,
         companionUsername: request.username,
-        bootstrapPrompt: conversation.bootstrap_prompt,
+        bootstrapPrompt: resolveJobConversationBootstrap(conversation, request.username),
         runId: edited.runId,
         rewindMessageIds: [edited.removedAssistantMessageId],
         originSessionId: request.sessionId,

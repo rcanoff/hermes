@@ -29,6 +29,7 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
     cronWebhookBearer: 'test-cron-webhook-bearer',
     cronOutputDir: '/tmp/hermes-cron-output-test',
     cronJobsPath: '/tmp/hermes-cron-jobs-test.json',
+    hermesStateDbPath: '/tmp/hermes-state-test.db',
     cronOutputPollMs: 5,
     addressEnrichmentSessionId: 'companion-address-enrichment',
     titleGeneration: {
@@ -36,6 +37,12 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
       baseUrl: '',
       model: 'gpt-5.4-nano',
       timeoutMs: 30_000,
+    },
+    cronPromptSynthesis: {
+      apiKey: '',
+      baseUrl: '',
+      model: 'gpt-5.4',
+      timeoutMs: 60_000,
     },
     apns: defaultApns,
     syncInboxMaxGap: 500,

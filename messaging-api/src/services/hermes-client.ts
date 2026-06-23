@@ -6,6 +6,9 @@ export const COMPANION_APP_SESSION_KEY = 'companion-app'
 /** Stable Hermes session for one-shot title generation (non-agent completeChat). */
 export const COMPANION_TITLE_GENERATION_SESSION_KEY = 'companion-title-generation'
 
+/** Stable Hermes session for companion cron prompt synthesis (non-agent completeChat). */
+export const COMPANION_CRON_PROMPT_SYNTHESIS_SESSION_KEY = 'companion-cron-prompt-synthesis'
+
 export interface StreamChatInput {
   hermesSessionId: string
   messages: HermesPromptMessage[]

@@ -3,12 +3,14 @@ import { isCronSilentContent } from '../../lib/job-conversation.js'
 import { emitConversationMessageUpsert } from '../../services/chat-sync-emitter.js'
 import { findConversationByHermesJobId, touchConversationUpdatedAt } from './conversations.js'
 import { insertMessage } from './messages.js'
+import { insertMessageProcess, type ToolingLine } from './process.js'
 
 export interface DeliverCronRunInput {
   hermesJobId: string
   content: string
   status?: 'ok' | 'error'
   runAt?: string
+  processLines?: ToolingLine[]
 }
 
 export type DeliverCronRunResult =
@@ -59,6 +61,16 @@ export function deliverCronRun(
     content: trimmed,
   })
 
+  const processLines = input.processLines?.filter((line) => line.text.trim()) ?? []
+  const process = processLines.length > 0 ? { lines: processLines } : undefined
+  if (process) {
+    insertMessageProcess(db, {
+      assistantMessageId: messageId,
+      conversationId: conversation.id,
+      lines: processLines,
+    })
+  }
+
   const message = db
     .prepare(`
       SELECT id, conversation_id, role, content, created_at
@@ -73,7 +85,7 @@ export function deliverCronRun(
     created_at: string
   }
 
-  emitConversationMessageUpsert(db, conversation.user_id, conversation.id, message)
+  emitConversationMessageUpsert(db, conversation.user_id, conversation.id, message, process)
 
   return {
     kind: 'delivered',

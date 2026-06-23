@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   extractResponseSection,
   extractRunTime,
+  parseCronOutputFilenameTimestamp,
   parseCronOutputMarkdown,
   parseCronOutputPath,
+  parseCronRunTimeString,
 } from '../src/lib/cron-output.js'
 
 const SAMPLE = `# Cron Job: Drink water reminder
@@ -42,7 +44,17 @@ describe('parseCronOutputMarkdown', () => {
     ).toEqual({
       hermesJobId: '4093912bd33a',
       relativePath: '4093912bd33a/2026-06-18_23-21-36.md',
+      filename: '2026-06-18_23-21-36.md',
     })
+  })
+
+  it('parses cron output filename and run-time timestamps as UTC', () => {
+    expect(parseCronOutputFilenameTimestamp('2026-06-18_23-21-36.md')).toEqual(
+      new Date('2026-06-18T23:21:36Z'),
+    )
+    expect(parseCronRunTimeString('2026-06-18 23:21:36')).toEqual(
+      new Date('2026-06-18T23:21:36Z'),
+    )
   })
 
   it('rejects paths outside the output directory', () => {
@@ -53,5 +65,24 @@ describe('parseCronOutputMarkdown', () => {
 
   it('extracts run time from markdown metadata', () => {
     expect(extractRunTime(SAMPLE)).toBe('2026-06-18 23:21:36')
+  })
+
+  it('uses the last real ## Response heading, not inline mentions in skill bodies', () => {
+    const noisyPrompt = `## Prompt
+
+Companion delivery writes \`## Response\` to disk, and messaging-api posts that text.
+
+More skill prose here.
+
+## Response
+
+[SILENT]
+`
+
+    expect(extractResponseSection(noisyPrompt)).toBe('[SILENT]')
+    expect(parseCronOutputMarkdown(noisyPrompt)).toEqual({
+      response: '[SILENT]',
+      runAt: null,
+    })
   })
 })

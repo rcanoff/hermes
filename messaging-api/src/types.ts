@@ -1,4 +1,5 @@
 import type { ApnsConfig, TitleGenerationConfig } from './config.js'
+import type { AuxiliaryLlmConfig } from './services/auxiliary-llm-client.js'
 import type { AddressEnrichmentQueue } from './services/address-enrichment.js'
 import type { ApnsClient } from './services/apns-client.js'
 import type { CronOutputBridge } from './services/cron-output-bridge.js'
@@ -18,9 +19,11 @@ export interface AppOptions {
   cronWebhookBearer: string
   cronOutputDir: string
   cronJobsPath: string
+  hermesStateDbPath: string
   cronOutputPollMs: number
   addressEnrichmentSessionId: string
   titleGeneration: TitleGenerationConfig
+  cronPromptSynthesis: AuxiliaryLlmConfig
   apns: ApnsConfig
   syncInboxMaxGap: number
   attachmentsDir: string

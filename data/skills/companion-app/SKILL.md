@@ -68,7 +68,7 @@ For any vault data intent (location, health):
 
 - Call `cronjob` for companion reminders without loading `companion-cron` and completing the MCP create/link flow
 - Use `deliver: origin` (or omit `deliver`) for companion cron jobs — that delivers to Telegram
-- Write cron prompts that say "send" / "notify" / "message the user" — use `companion-cron` literal-output reminder templates (`Reminder: …`, no tools)
+- Write cron prompts that say "send" / "notify" / "message the user" — follow `companion-cron`: self-contained output prompt, context resolved from chat
 - Send a reply after a data skill without loading `companion-replies`
 - Format location or health answers inside data skills
 - Duplicate fence syntax from `companion-map-preview`, `companion-links`, or `companion-markdown-blocks`

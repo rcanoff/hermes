@@ -74,6 +74,8 @@ describe('job conversation MCP tools', () => {
     expect(row.kind).toBe('job')
     expect(row.hermes_job_id).toBe('abc123job')
     expect(row.bootstrap_prompt).toContain('companion-cron')
+    expect(row.bootstrap_prompt).toContain('abc123job')
+    expect(row.bootstrap_prompt).toContain("action='run'")
 
     await transport.close()
     await client.close()

@@ -17,6 +17,7 @@ import {
   emitAccountConversationUpsert,
   emitConversationDeleted,
 } from '../services/chat-sync-emitter.js'
+import { removeHermesCronJob } from '../lib/hermes-cron-jobs.js'
 import { scheduleConversationSessionWarmup } from '../services/session-warmup.js'
 
 const conversationRoutes: FastifyPluginAsync = async (app) => {
@@ -127,6 +128,36 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
 
     if (getActiveRun(app.db, conversationId)) {
       return reply.code(409).send({ error: 'run_conflict' })
+    }
+
+    if (existing.kind === 'job' && existing.hermes_job_id?.trim()) {
+      const hermesJobId = existing.hermes_job_id.trim()
+      try {
+        const result = await removeHermesCronJob(app.cronJobsPath, hermesJobId)
+        if (result === 'removed') {
+          app.log.info({ hermesJobId, conversationId }, 'removed Hermes cron job for deleted job conversation')
+        } else if (result === 'not_found') {
+          app.log.warn(
+            { hermesJobId, conversationId },
+            'Hermes cron job not found while deleting job conversation',
+          )
+        } else {
+          app.log.warn(
+            { hermesJobId, conversationId },
+            'Hermes cron jobs file missing while deleting job conversation',
+          )
+        }
+      } catch (error) {
+        app.log.error(
+          {
+            err: error instanceof Error ? error.message : String(error),
+            hermesJobId,
+            conversationId,
+          },
+          'failed to remove Hermes cron job for deleted job conversation',
+        )
+        return reply.code(500).send({ error: 'processing_failed' })
+      }
     }
 
     emitConversationDeleted(app.db, request.userId, conversationId)

@@ -357,6 +357,7 @@ export function buildMcpToolHandlers(
       const linked = linkJobConversation(db, user.id, {
         conversationId: input.conversation_id.trim(),
         hermesJobId,
+        username: input.username,
         scheduleDisplay: input.schedule_display,
         jobEnabled: input.job_enabled,
       })

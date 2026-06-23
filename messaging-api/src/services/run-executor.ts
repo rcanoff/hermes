@@ -47,6 +47,7 @@ export interface ExecuteAssistantRunInput {
   cronJobsPath?: string
   conversationTitle?: string | null
   titleGenerationLlm?: AuxiliaryLlmConfig | null
+  cronPromptSynthesisLlm?: AuxiliaryLlmConfig | null
   onAssistantMessageCommitted?: (ctx: {
     messageId: string
     content: string
@@ -240,6 +241,8 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
           cronJobsPath: input.cronJobsPath,
           knownJobIdsBefore,
           sawCronjobTool,
+          hermesClient: input.hermesClient,
+          cronPromptSynthesisLlm: input.cronPromptSynthesisLlm,
           log: input.log,
         })
       } catch (error) {

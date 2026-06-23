@@ -37,6 +37,7 @@ describe('GET /jobs', () => {
     linkJobConversation(app!.db, userId, {
       conversationId: jobConversationId,
       hermesJobId: 'job-abc123',
+      username: 'operator',
     })
 
     const response = await app!.inject({

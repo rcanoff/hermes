@@ -25,6 +25,7 @@ describe('POST /internal/cron/deliver', () => {
     linkJobConversation(app.db, userId, {
       conversationId: jobConversationId,
       hermesJobId: 'cron-job-1',
+      username: 'operator',
     })
   })
 

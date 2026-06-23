@@ -480,7 +480,7 @@ CRON_OUTPUT_DIR=/opt/data/cron/output
 CRON_OUTPUT_POLL_MS=5
 ```
 
-**Delivery (v1):** Hermes agent creates jobs with `deliver: local`. `messaging-api` polls `CRON_OUTPUT_DIR` for new run markdown files and commits assistant messages into the linked job conversation when `hermes_job_id` is set.
+**Delivery (v1):** Hermes agent creates jobs with `deliver: local`. `messaging-api` polls `CRON_OUTPUT_DIR` for new run markdown files and commits assistant messages into the linked job conversation when `hermes_job_id` is set. Tooling for each run is reconstructed from Hermes session history in `HERMES_STATE_DB_PATH` (default `/opt/data/state.db`) and persisted on the assistant message as `process.lines` — same shape as live chat turns.
 
 **Webhook (optional):** `POST /internal/cron/deliver` with `Authorization: Bearer <CRON_WEBHOOK_BEARER>` — for future Hermes outbound webhook deliver:
 

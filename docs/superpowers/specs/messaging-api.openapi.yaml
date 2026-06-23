@@ -2111,6 +2111,11 @@ paths:
       description: |
         Permanently deletes the conversation and all related messages, run records,
         and location data. Returns `409 run_conflict` if an assistant run is active.
+
+        When `kind` is `job` and `hermes_job_id` is set, the linked Hermes cron job
+        is removed from `data/cron/jobs.json` before the conversation row is deleted.
+        If the jobs file cannot be written, returns `500 processing_failed` and leaves
+        the conversation intact.
       security:
         - bearerAuth: []
       responses:
@@ -2124,6 +2129,12 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: Active assistant run in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to remove linked Hermes cron job (job conversations only)
           content:
             application/json:
               schema:

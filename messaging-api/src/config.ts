@@ -1,5 +1,9 @@
 import { deriveCronJobsPath } from './lib/hermes-cron-jobs.js'
-import { DEFAULT_TITLE_GENERATION_MODEL } from './services/auxiliary-llm-client.js'
+import {
+  DEFAULT_TITLE_GENERATION_MODEL,
+  type AuxiliaryLlmConfig,
+} from './services/auxiliary-llm-client.js'
+import { DEFAULT_CRON_PROMPT_SYNTHESIS_MODEL } from './services/cron-prompt-synthesizer.js'
 import type { AppOptions } from './types.js'
 
 export interface TitleGenerationConfig {
@@ -65,6 +69,23 @@ function readTitleGenerationConfig(env: NodeJS.ProcessEnv): TitleGenerationConfi
   }
 }
 
+function readCronPromptSynthesisConfig(env: NodeJS.ProcessEnv): AuxiliaryLlmConfig {
+  return {
+    apiKey:
+      env.CRON_PROMPT_SYNTHESIS_API_KEY?.trim() ||
+      env.TITLE_GENERATION_API_KEY?.trim() ||
+      env.OPENAI_API_KEY?.trim() ||
+      '',
+    baseUrl:
+      env.CRON_PROMPT_SYNTHESIS_BASE_URL?.trim() ||
+      env.TITLE_GENERATION_BASE_URL?.trim() ||
+      env.OPENAI_BASE_URL?.trim() ||
+      '',
+    model: env.CRON_PROMPT_SYNTHESIS_MODEL?.trim() || DEFAULT_CRON_PROMPT_SYNTHESIS_MODEL,
+    timeoutMs: readPositiveInt(env.CRON_PROMPT_SYNTHESIS_TIMEOUT_MS, 60_000),
+  }
+}
+
 function readPositiveInt(value: string | undefined, fallback: number): number {
   if (value === undefined || value.trim() === '') {
     return fallback
@@ -91,9 +112,11 @@ export function readConfig(env: NodeJS.ProcessEnv): AppOptions {
     cronWebhookBearer: env.CRON_WEBHOOK_BEARER ?? '',
     cronOutputDir: env.CRON_OUTPUT_DIR ?? '/opt/data/cron/output',
     cronJobsPath: env.CRON_JOBS_PATH?.trim() || deriveCronJobsPath(env.CRON_OUTPUT_DIR ?? '/opt/data/cron/output'),
+    hermesStateDbPath: env.HERMES_STATE_DB_PATH?.trim() || '/opt/data/state.db',
     cronOutputPollMs: readPositiveInt(env.CRON_OUTPUT_POLL_MS, 5),
     addressEnrichmentSessionId: env.ADDRESS_ENRICHMENT_SESSION_ID ?? 'companion-address-enrichment',
     titleGeneration: readTitleGenerationConfig(env),
+    cronPromptSynthesis: readCronPromptSynthesisConfig(env),
     apns,
     syncInboxMaxGap: readPositiveInt(env.SYNC_INBOX_MAX_GAP, 500),
     attachmentsDir: env.ATTACHMENTS_DIR?.trim() || '/opt/data/attachments',

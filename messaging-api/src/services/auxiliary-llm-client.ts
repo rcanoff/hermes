@@ -35,12 +35,18 @@ interface OpenAiChatCompletion {
   }>
 }
 
+export interface CompleteAuxiliaryLlmOptions {
+  maxCompletionTokens?: number
+}
+
 export async function completeAuxiliaryLlm(
   config: AuxiliaryLlmConfig,
   messages: HermesPromptMessage[],
+  options: CompleteAuxiliaryLlmOptions = {},
 ): Promise<string> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), config.timeoutMs)
+  const maxCompletionTokens = options.maxCompletionTokens ?? 64
 
   try {
     const response = await fetch(resolveChatCompletionsUrl(config.baseUrl), {
@@ -54,13 +60,16 @@ export async function completeAuxiliaryLlm(
         messages,
         stream: false,
         temperature: 0.3,
-        max_tokens: 64,
+        max_completion_tokens: maxCompletionTokens,
       }),
       signal: controller.signal,
     })
 
     if (!response.ok) {
-      throw new Error(`Auxiliary LLM request failed with status ${response.status}`)
+      const detail = await response.text().catch(() => '')
+      throw new Error(
+        `Auxiliary LLM request failed with status ${response.status}${detail ? `: ${detail}` : ''}`,
+      )
     }
 
     const payload = (await response.json()) as OpenAiChatCompletion

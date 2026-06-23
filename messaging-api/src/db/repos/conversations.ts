@@ -114,6 +114,7 @@ export function linkJobConversation(
   input: {
     conversationId: string
     hermesJobId: string
+    username: string
     scheduleDisplay?: string | null
     jobEnabled?: boolean
   },
@@ -140,14 +141,22 @@ export function linkJobConversation(
       ? input.scheduleDisplay?.trim() || null
       : conversation.schedule_display
 
+  const hermesJobId = input.hermesJobId.trim()
+  const linkedBootstrap = buildJobConversationBootstrap(input.username, {
+    hermesJobId,
+    name: conversation.title,
+    scheduleDisplay,
+  })
+
   db.prepare(`
     UPDATE conversations
     SET hermes_job_id = ?,
         schedule_display = ?,
         job_enabled = ?,
+        bootstrap_prompt = ?,
         updated_at = datetime('now')
     WHERE id = ?
-  `).run(input.hermesJobId.trim(), scheduleDisplay, jobEnabled, conversation.id)
+  `).run(hermesJobId, scheduleDisplay, jobEnabled, linkedBootstrap, conversation.id)
 
   return getConversationForUser(db, userId, conversation.id)!
 }

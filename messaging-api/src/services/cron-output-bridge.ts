@@ -7,12 +7,19 @@ import {
 } from '../db/repos/cron-output-bridge.js'
 import { deliverCronRun } from '../db/repos/cron-deliver.js'
 import { findConversationByHermesJobId } from '../db/repos/conversations.js'
-import { parseCronOutputMarkdown, parseCronOutputPath } from '../lib/cron-output.js'
+import {
+  parseCronOutputFilenameTimestamp,
+  parseCronOutputMarkdown,
+  parseCronOutputPath,
+  parseCronRunTimeString,
+} from '../lib/cron-output.js'
+import { loadCronRunProcessLines } from './cron-session-process.js'
 import type { PushNotificationService } from './push-notifications.js'
 
 export interface CronOutputBridgeOptions {
   db: Database.Database
   outputDir: string
+  hermesStateDbPath?: string
   pollMs?: number
   pushNotifications?: PushNotificationService
   log?: (message: string, meta?: Record<string, unknown>) => void
@@ -118,11 +125,21 @@ export class CronOutputBridge {
       return
     }
 
+    const completedAt = resolveCronCompletedAt(parsed.runAt, parsedPath.filename)
+    const processLines = completedAt
+      ? loadCronRunProcessLines({
+          hermesStateDbPath: this.options.hermesStateDbPath,
+          hermesJobId: parsedPath.hermesJobId,
+          completedAt,
+        })
+      : []
+
     const result = deliverCronRun(this.options.db, {
       hermesJobId: parsedPath.hermesJobId,
       content: parsed.response,
       status: 'ok',
       runAt: parsed.runAt ?? undefined,
+      processLines,
     })
 
     if (!result) {
@@ -163,6 +180,17 @@ export class CronOutputBridge {
   private log(message: string, meta?: Record<string, unknown>): void {
     this.options.log?.(message, meta)
   }
+}
+
+function resolveCronCompletedAt(runAt: string | null, filename: string): Date | null {
+  if (runAt) {
+    const fromMarkdown = parseCronRunTimeString(runAt)
+    if (fromMarkdown) {
+      return fromMarkdown
+    }
+  }
+
+  return parseCronOutputFilenameTimestamp(filename)
 }
 
 function isMissingDirectoryError(error: unknown): boolean {

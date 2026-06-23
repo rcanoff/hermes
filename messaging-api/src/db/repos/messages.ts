@@ -69,6 +69,28 @@ export function listMessages(db: Database.Database, conversationId: string): Mes
     .all(conversationId) as MessageRow[]
 }
 
+export function listRecentMessages(
+  db: Database.Database,
+  conversationId: string,
+  limit: number,
+): MessageRow[] {
+  if (limit < 1) {
+    return []
+  }
+
+  const rows = db
+    .prepare(`
+      SELECT id, conversation_id, role, content, created_at
+      FROM messages
+      WHERE conversation_id = ?
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT ?
+    `)
+    .all(conversationId, limit) as MessageRow[]
+
+  return rows.reverse()
+}
+
 export function listMessagesPage(
   db: Database.Database,
   conversationId: string,

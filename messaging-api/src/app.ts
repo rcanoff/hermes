@@ -60,6 +60,7 @@ declare module 'fastify' {
     thumbMaxEdgePx: number
     visionHistoryMaxBytes: number
     titleGeneration: import('./config.js').TitleGenerationConfig
+    cronPromptSynthesis: import('./services/auxiliary-llm-client.js').AuxiliaryLlmConfig
   }
 }
 
@@ -98,6 +99,7 @@ export function buildApp(options: AppOptions) {
     new CronOutputBridge({
       db: app.db,
       outputDir: options.cronOutputDir,
+      hermesStateDbPath: options.hermesStateDbPath,
       pollMs: options.cronOutputPollMs * 1000,
       pushNotifications,
       log: (message, meta) => {
@@ -116,6 +118,7 @@ export function buildApp(options: AppOptions) {
   app.decorate('thumbMaxEdgePx', options.thumbMaxEdgePx)
   app.decorate('visionHistoryMaxBytes', options.visionHistoryMaxBytes)
   app.decorate('titleGeneration', options.titleGeneration)
+  app.decorate('cronPromptSynthesis', options.cronPromptSynthesis)
   app.decorate(
     'addressEnrichmentQueue',
     options.addressEnrichmentQueue ??

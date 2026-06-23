@@ -38,6 +38,7 @@ describe('readConfig', () => {
       cronWebhookBearer: '',
       cronOutputDir: '/opt/data/cron/output',
       cronJobsPath: '/opt/data/cron/jobs.json',
+      hermesStateDbPath: '/opt/data/state.db',
       cronOutputPollMs: 5,
       addressEnrichmentSessionId: 'companion-address-enrichment',
       titleGeneration: {
@@ -45,6 +46,12 @@ describe('readConfig', () => {
         baseUrl: '',
         model: 'gpt-5.4-nano',
         timeoutMs: 30_000,
+      },
+      cronPromptSynthesis: {
+        apiKey: '',
+        baseUrl: '',
+        model: 'gpt-5.4',
+        timeoutMs: 60_000,
       },
       apns: {
         enabled: false,
