@@ -82,7 +82,7 @@ describe('session stream', () => {
     expect(stillOpen).toBe(true)
   }, 15_000)
 
-  it('does not deliver session A run events to session B', async () => {
+  it('delivers session A run events to session B for the same user', async () => {
     const userId = app!.db.prepare(`SELECT id FROM users WHERE username = 'operator'`).pluck().get() as string
     const sessionB = randomUUID()
     const tokenB = await app!.jwt.sign({ sub: userId, username: 'operator', jti: sessionB })
@@ -102,7 +102,40 @@ describe('session stream', () => {
       method: 'POST',
       url: `/conversations/${conversationId}/messages`,
       headers: { authorization: `Bearer ${operatorToken}` },
-      payload: { text: 'Only for session A' },
+      payload: { text: 'Fan-out to session B' },
+    })
+
+    await waitFor(() => hermesClient.requests.length >= 1)
+    prepareTitleResponse(hermesClient)
+    hermesClient.pushAnswerToken('Hello', 0)
+    hermesClient.pushDone(0)
+    hermesClient.closeWithoutDone(0)
+    await completeTitleAfterReply(hermesClient)
+
+    const payload = await readUntilReplyDone(readerB)
+    expect(payload).toContain('event: reply')
+    expect(payload).toContain('"phase":"done"')
+  }, 15_000)
+
+  it('does not deliver run events to a different user session', async () => {
+    const otherUser = await seedTestUser(app!, 'other-user', 'password123')
+
+    await app!.listen({ host: '127.0.0.1', port: 0 })
+    const address = app!.server.address() as AddressInfo
+
+    const streamOther = await fetch(`http://127.0.0.1:${address.port}/events/stream`, {
+      headers: { authorization: `Bearer ${otherUser.token}` },
+    })
+    const readerOther = streamOther.body!.getReader()
+    openReaders.push(readerOther)
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Only for operator' },
     })
 
     await waitFor(() => hermesClient.requests.length >= 1)
@@ -115,7 +148,7 @@ describe('session stream', () => {
 
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
 
-    const receivedData = await readWithTimeout(readerB, 500)
+    const receivedData = await readWithTimeout(readerOther, 500)
     expect(receivedData).toBe('')
   }, 15_000)
 

@@ -56,6 +56,10 @@ export interface ExecuteAssistantRunInput {
 }
 
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
+  if (input.originSessionId) {
+    input.hub.registerUserSession(input.userId, input.originSessionId)
+  }
+
   const runId =
     input.runId ??
     createRun(input.db, input.conversationId, input.userMessageId, input.originSessionId ?? 'legacy')
