@@ -184,6 +184,45 @@ describe('chat sync routes', () => {
     expect(eventTypes.filter((type) => type === 'message_upsert').length).toBeGreaterThanOrEqual(2)
   })
 
+  it('returns messages_rewound on thread sync after message delete', async () => {
+    await postAndCompleteAssistant('Delete sync check')
+
+    const tipMarker = (
+      await app!.inject({
+        method: 'GET',
+        url: `/conversations/${conversationId}/sync`,
+        headers: { authorization: `Bearer ${operatorToken}` },
+      })
+    ).json().next_sync_marker as string
+
+    const assistantMessageId = listMessages(app!.db, conversationId).find(
+      (message) => message.role === 'assistant',
+    )!.id
+
+    const deleted = await app!.inject({
+      method: 'DELETE',
+      url: `/conversations/${conversationId}/messages/${assistantMessageId}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    expect(deleted.statusCode).toBe(200)
+
+    const thread = await app!.inject({
+      method: 'GET',
+      url: `/conversations/${conversationId}/sync?since=${tipMarker}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(thread.statusCode).toBe(200)
+    const events = (thread.json() as {
+      events: Array<{ type: string; removed_message_ids?: string[] }>
+    }).events
+    const rewind = events.find((event) => event.type === 'messages_rewound')
+    expect(rewind).toMatchObject({
+      type: 'messages_rewound',
+      removed_message_ids: [assistantMessageId],
+    })
+  })
+
   it('returns updated conversation snapshot with empty events after title-only patch', async () => {
     await postAndCompleteAssistant('Title snapshot check')
 

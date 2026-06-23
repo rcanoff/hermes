@@ -577,6 +577,34 @@ describe('message routes', () => {
     expect(newSessionId).not.toBe(oldSessionId)
   })
 
+  it('deletes the tail message and returns removed_message_ids with rotated hermes_session_id', async () => {
+    app!.db.exec(`
+      INSERT INTO messages (id, conversation_id, role, content) VALUES ('u1', '${conversationId}', 'user', 'hello');
+      INSERT INTO messages (id, conversation_id, role, content) VALUES ('a1', '${conversationId}', 'assistant', 'hi');
+    `)
+
+    const oldSessionId = (
+      app!.db
+        .prepare('SELECT hermes_session_id FROM conversations WHERE id = ?')
+        .get(conversationId) as { hermes_session_id: string }
+    ).hermes_session_id
+
+    const response = await app!.inject({
+      method: 'DELETE',
+      url: `/conversations/${conversationId}/messages/a1`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(response.statusCode).toBe(200)
+    const body = response.json() as { removed_message_ids: string[]; hermes_session_id: string }
+    expect(body.removed_message_ids).toEqual(['a1'])
+    expect(body.hermes_session_id).not.toBe(oldSessionId)
+
+    expect(listMessages(app!.db, conversationId)).toEqual([
+      expect.objectContaining({ id: 'u1', role: 'user', content: 'hello' }),
+    ])
+  })
+
   it('returns edit_not_allowed for non-latest user messages', async () => {
     app!.db.exec(`
       INSERT INTO messages (id, conversation_id, role, content) VALUES ('u1', '${conversationId}', 'user', 'first');
