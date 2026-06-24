@@ -9,6 +9,7 @@ import {
   fallbackTitleFromUserMessage,
   generateAndSaveTitle,
   generateConversationTitle,
+  generateTitleFromLlm,
   isGrokComposerModel,
   OPENAI_TITLE_FALLBACK_MODEL,
   resolveTitleGenerationLlm,
@@ -136,7 +137,7 @@ describe('buildTitlePromptMessages', () => {
     expect(messages).toEqual([
       {
         role: 'system',
-        content: expect.stringContaining('max 6 words'),
+        content: expect.stringContaining('Do not copy the message verbatim'),
       },
       {
         role: 'user',
@@ -344,7 +345,7 @@ describe('generateConversationTitle', () => {
           meta: { reason: 'markdown_fence' },
         },
         {
-          message: 'Hermes title generation returned invalid title; using user-message fallback',
+          message: 'Hermes title generation returned invalid title',
           meta: { conversationId },
         },
         {
@@ -410,6 +411,27 @@ describe('scheduleTitleGeneration', () => {
   })
 })
 
+describe('generateTitleFromLlm', () => {
+  const conversationId = 'd899b6f6-283b-4632-bbc3-175b0ebfd1fb'
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('returns null instead of user-message fallback when Hermes returns invalid title', async () => {
+    const hermesClient = new FakeHermesClient()
+    hermesClient.queueCompleteChatResponse('Stale map block ```map ty')
+
+    const title = await generateTitleFromLlm(
+      hermesClient,
+      conversationId,
+      'Why was the sbahn not working yesterday in berlin?',
+    )
+
+    expect(title).toBeNull()
+  })
+})
+
 describe('generateAndSaveTitle', () => {
   it('uses a per-conversation Hermes session key and saves a valid title', async () => {
     const db = new Database(':memory:')
@@ -443,7 +465,7 @@ describe('generateAndSaveTitle', () => {
     expect(row.title).toBe('Berlin S-Bahn outage')
   })
 
-  it('saves a user-message fallback when generated titles are rejected', async () => {
+  it('leaves title null when LLM fails and no provisional was set', async () => {
     const db = new Database(':memory:')
     initSchema(db)
     db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'op', 'hash')`).run()
@@ -470,7 +492,7 @@ describe('generateAndSaveTitle', () => {
     const row = db
       .prepare('SELECT title FROM conversations WHERE id = ?')
       .get(conversationId) as { title: string | null }
-    expect(row.title).toBe('Why was the sbahn not working')
+    expect(row.title).toBeNull()
     expect(warnings).toEqual(
       expect.arrayContaining([
         {
@@ -478,10 +500,81 @@ describe('generateAndSaveTitle', () => {
           meta: { reason: 'markdown_fence' },
         },
         {
-          message: 'title generation using user-message fallback',
+          message: 'title generation produced no title',
           meta: { conversationId },
         },
       ]),
     )
+  })
+
+  it('upgrades provisional title to LLM title and publishes SSE', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'op', 'hash')`).run()
+
+    const conversationId = createConversation(db, 'u1', 'hermes-session-1')
+    const userMessageText = 'hello'
+    const provisionalTitle = fallbackTitleFromUserMessage(userMessageText)!
+    db.prepare('UPDATE conversations SET title = ? WHERE id = ?').run(provisionalTitle, conversationId)
+
+    const hermesClient = new FakeHermesClient()
+    hermesClient.queueCompleteChatResponse('Greeting')
+    const hub = new StreamHub()
+    hub.registerUserSession('u1', 'sess-1')
+    const sessionEvents: Array<{ event: string; data: unknown }> = []
+    hub.subscribeSession('sess-1', (event) => sessionEvents.push(event))
+
+    await generateAndSaveTitle({
+      db,
+      hermesClient,
+      hub,
+      conversationId,
+      userId: 'u1',
+      userMessageText,
+      originSessionId: 'sess-1',
+    })
+
+    const row = db
+      .prepare('SELECT title FROM conversations WHERE id = ?')
+      .get(conversationId) as { title: string | null }
+    expect(row.title).toBe('Greeting')
+    expect(sessionEvents).toContainEqual({
+      event: 'title',
+      data: { conversationId, title: 'Greeting' },
+    })
+  })
+
+  it('keeps provisional title when LLM returns null', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'op', 'hash')`).run()
+
+    const conversationId = createConversation(db, 'u1', 'hermes-session-1')
+    const userMessageText = 'hello'
+    const provisionalTitle = fallbackTitleFromUserMessage(userMessageText)!
+    db.prepare('UPDATE conversations SET title = ? WHERE id = ?').run(provisionalTitle, conversationId)
+
+    const hermesClient = new FakeHermesClient()
+    hermesClient.queueCompleteChatResponse('Stale map block ```map ty')
+    const hub = new StreamHub()
+    hub.registerUserSession('u1', 'sess-1')
+    const sessionEvents: Array<{ event: string; data: unknown }> = []
+    hub.subscribeSession('sess-1', (event) => sessionEvents.push(event))
+
+    await generateAndSaveTitle({
+      db,
+      hermesClient,
+      hub,
+      conversationId,
+      userId: 'u1',
+      userMessageText,
+      originSessionId: 'sess-1',
+    })
+
+    const row = db
+      .prepare('SELECT title FROM conversations WHERE id = ?')
+      .get(conversationId) as { title: string | null }
+    expect(row.title).toBe(provisionalTitle)
+    expect(sessionEvents).toHaveLength(0)
   })
 })

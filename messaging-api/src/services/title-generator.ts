@@ -19,7 +19,7 @@ import { publishAccountConversationUpsert } from '../streams/sse-mutation-publis
 import { emitAccountConversationUpsert } from './chat-sync-emitter.js'
 
 const TITLE_SYSTEM_PROMPT =
-  "Generate a short conversation title (max 6 words) from the user's message. Reply with only the title — no quotes, no punctuation."
+  "Summarize the user's message as a short conversation title (max 6 words). Do not copy the message verbatim — rephrase the topic (e.g. \"hello\" → \"Greeting\", not \"Hello\"). Reply with only the title — no quotes, no punctuation."
 
 const MAX_USER_MESSAGE_CHARS = 500
 const MAX_GENERATED_TITLE_CHARS = 80
@@ -125,7 +125,7 @@ async function completeTitleWithHermes(
   })
 }
 
-export async function generateConversationTitle(
+export async function generateTitleFromLlm(
   hermesClient: HermesClient,
   conversationId: string,
   userMessageText: string,
@@ -159,14 +159,33 @@ export async function generateConversationTitle(
     if (title) {
       return title
     }
-    log?.('Hermes title generation returned invalid title; using user-message fallback', {
-      conversationId,
-    })
+    log?.('Hermes title generation returned invalid title', { conversationId })
   } catch (error) {
     log?.('title generation failed', {
       path: 'hermes_fallback',
       err: error instanceof Error ? error.message : String(error),
     })
+  }
+
+  return null
+}
+
+export async function generateConversationTitle(
+  hermesClient: HermesClient,
+  conversationId: string,
+  userMessageText: string,
+  auxiliaryLlm?: AuxiliaryLlmConfig | null,
+  log?: (message: string, meta?: Record<string, unknown>) => void,
+): Promise<string | null> {
+  const llmTitle = await generateTitleFromLlm(
+    hermesClient,
+    conversationId,
+    userMessageText,
+    auxiliaryLlm,
+    log,
+  )
+  if (llmTitle) {
+    return llmTitle
   }
 
   const fallback = fallbackTitleFromUserMessage(userMessageText)
@@ -202,7 +221,7 @@ export async function generateAndSaveTitle(input: {
   log?: (message: string, meta?: Record<string, unknown>) => void
 }): Promise<void> {
   const provisionalTitle = fallbackTitleFromUserMessage(input.userMessageText)
-  const title = await generateConversationTitle(
+  const title = await generateTitleFromLlm(
     input.hermesClient,
     input.conversationId,
     input.userMessageText,
