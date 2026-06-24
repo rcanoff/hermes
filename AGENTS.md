@@ -15,11 +15,12 @@ The orchestrator invokes this repo via **internal subagents**, not MCP delegate 
 
 ### Task execution (one task per invocation)
 
-The orchestrator sends **one numbered task** from a plan at a time (e.g. “Execute Task 2 only”). Unless the prompt explicitly says otherwise:
+The orchestrator sends **one numbered task** from a plan per invocation (e.g. “Execute Task 2 only”). Several backend tasks may run in parallel — each is still **one task per subagent**. Unless the prompt explicitly says otherwise:
 
-- Implement **only that task** — do not start the next task.
+- Implement **only that task** — do not start the next plan task.
+- **Do not spawn subagents** — no nested `Task` calls. The orchestrator owns dispatch and parallelism.
 - Work on the named **feature branch**; commit before returning.
-- Run tests for that task (`cd messaging-api && node node_modules/vitest/vitest.mjs run` or scoped path from the plan).
+- Run tests per this file before reporting completion.
 
 ### Task status report (end of every subagent response)
 
