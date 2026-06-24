@@ -203,6 +203,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         app.db,
         request.userId,
         conversation.id,
+        app.companionModels,
       )
 
       if (created.shouldGenerateTitle && content) {
@@ -234,6 +235,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         runId: created.runId,
         originSessionId: request.sessionId,
         cronPromptSynthesisLlm: app.cronPromptSynthesis,
+        companionModels: app.companionModels,
         attachmentsDir: app.attachmentsDir,
         visionHistoryMaxBytes: app.visionHistoryMaxBytes,
         cronJobsPath: app.cronJobsPath,

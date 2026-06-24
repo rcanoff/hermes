@@ -46,7 +46,9 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
     const lastId = page.conversations[page.conversations.length - 1]?.id
 
     return {
-      conversations: page.conversations.map(toConversationResponse),
+      conversations: page.conversations.map((row) =>
+        toConversationResponse(row, app.companionModels),
+      ),
       _links: buildHalLinks({
         basePath: '/conversations',
         limit,
@@ -71,8 +73,14 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const conversationId = createConversation(app.db, request.userId, randomUUID(), bootstrapPrompt)
-    emitAccountConversationUpsert(app.db, request.userId, conversationId)
-    publishAccountConversationUpsert(app.streamHub, app.db, request.userId, conversationId)
+    emitAccountConversationUpsert(app.db, request.userId, conversationId, app.companionModels)
+    publishAccountConversationUpsert(
+      app.streamHub,
+      app.db,
+      request.userId,
+      conversationId,
+      app.companionModels,
+    )
     const conversation = getConversationForUser(app.db, request.userId, conversationId)
 
     scheduleConversationSessionWarmup({
@@ -84,7 +92,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
       },
     })
 
-    return reply.code(201).send(toConversationResponse(conversation!))
+    return reply.code(201).send(toConversationResponse(conversation!, app.companionModels))
   })
 
   app.get('/conversations/:id', { preHandler: app.authenticate }, async (request, reply) => {
@@ -98,7 +106,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ error: 'not_found' })
     }
 
-    return toConversationResponse(conversation)
+    return toConversationResponse(conversation, app.companionModels)
   })
 
   app.patch('/conversations/:id', { preHandler: app.authenticate }, async (request, reply) => {
@@ -119,10 +127,16 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
 
     const updated = updateConversationTitle(app.db, conversationId, title)
     if (updated) {
-      emitAccountConversationUpsert(app.db, request.userId, conversationId)
-      publishAccountConversationUpsert(app.streamHub, app.db, request.userId, conversationId)
+      emitAccountConversationUpsert(app.db, request.userId, conversationId, app.companionModels)
+      publishAccountConversationUpsert(
+        app.streamHub,
+        app.db,
+        request.userId,
+        conversationId,
+        app.companionModels,
+      )
     }
-    return updated ? toConversationResponse(updated) : updated
+    return updated ? toConversationResponse(updated, app.companionModels) : updated
   })
 
   app.delete('/conversations/:id', { preHandler: app.authenticate }, async (request, reply) => {

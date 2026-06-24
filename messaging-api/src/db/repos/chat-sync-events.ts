@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
+import { DEFAULT_COMPANION_MODELS } from '../../lib/companion-models.js'
 import { buildConversationSyncEntry } from '../../lib/conversation-sync-entry.js'
 import { isSyncMarkerOrigin, SYNC_MARKER_ORIGIN } from '../../lib/sync-marker.js'
 import { getConversationForUser, type ConversationRow } from './conversations.js'
@@ -11,6 +12,9 @@ export interface ConversationSyncEntryPayload {
   hermes_session_id: string
   kind: 'regular' | 'job'
   title: string | null
+  model: string
+  provider: string
+  model_display: string
   created_at: string
   updated_at: string
   latest_message_id: string | null
@@ -556,7 +560,7 @@ export function backfillAccountSyncEvents(db: Database.Database): void {
       db,
       row.user_id,
       row.id,
-      buildConversationSyncEntry(db, conversation),
+      buildConversationSyncEntry(db, conversation, DEFAULT_COMPANION_MODELS),
     )
   }
 }

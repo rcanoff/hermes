@@ -14,6 +14,7 @@ import {
   type RunEventContext,
 } from '../streams/run-event-publisher.js'
 import { listAttachmentsForMessages } from '../db/repos/message-attachments.js'
+import { DEFAULT_COMPANION_MODELS, type CuratedModelEntry } from '../lib/companion-models.js'
 import { buildHermesMessages } from './prompt-builder.js'
 import type { HermesClient } from './hermes-client.js'
 import {
@@ -47,6 +48,7 @@ export interface ExecuteAssistantRunInput {
   cronJobsPath?: string
   conversationTitle?: string | null
   cronPromptSynthesisLlm?: AuxiliaryLlmConfig | null
+  companionModels?: CuratedModelEntry[]
   onAssistantMessageCommitted?: (ctx: {
     messageId: string
     content: string
@@ -299,7 +301,13 @@ function persistCompletedRun(
 
     emitConversationMessageUpsert(db, userId, conversationId, enrichedMessage, process)
     publishMessageUpsert(hub, userId, conversationId, enrichedMessage, hermesSessionId)
-    publishAccountConversationUpsert(hub, db, userId, conversationId)
+    publishAccountConversationUpsert(
+      hub,
+      db,
+      userId,
+      conversationId,
+      input.companionModels ?? DEFAULT_COMPANION_MODELS,
+    )
 
     return assistantMessageId
   })()

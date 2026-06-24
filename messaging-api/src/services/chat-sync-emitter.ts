@@ -9,12 +9,14 @@ import {
 import { getConversationForUser } from '../db/repos/conversations.js'
 import type { MessageWithAttachments } from '../lib/attachment-serializer.js'
 import type { MessageProcess } from '../db/repos/process.js'
+import { DEFAULT_COMPANION_MODELS, type CuratedModelEntry } from '../lib/companion-models.js'
 import { buildConversationSyncEntry } from '../lib/conversation-sync-entry.js'
 
 export function emitAccountConversationUpsert(
   db: Database.Database,
   userId: string,
   conversationId: string,
+  catalog: CuratedModelEntry[] = DEFAULT_COMPANION_MODELS,
 ): void {
   const conversation = getConversationForUser(db, userId, conversationId)
   if (!conversation) {
@@ -25,7 +27,7 @@ export function emitAccountConversationUpsert(
     db,
     userId,
     conversationId,
-    buildConversationSyncEntry(db, conversation),
+    buildConversationSyncEntry(db, conversation, catalog),
   )
 }
 
@@ -35,12 +37,13 @@ export function emitConversationMessageUpsert(
   conversationId: string,
   message: MessageWithAttachments,
   process?: MessageProcess,
+  catalog: CuratedModelEntry[] = DEFAULT_COMPANION_MODELS,
 ): void {
   appendConversationMessageUpsert(db, userId, conversationId, {
     ...message,
     ...(process ? { process } : {}),
   })
-  emitAccountConversationUpsert(db, userId, conversationId)
+  emitAccountConversationUpsert(db, userId, conversationId, catalog)
 }
 
 export function emitConversationMessagesRewound(

@@ -1,10 +1,12 @@
 import type Database from 'better-sqlite3'
 import type { ConversationSyncEntryPayload } from '../db/repos/chat-sync-events.js'
 import type { ConversationRow } from '../db/repos/conversations.js'
+import { modelDisplayName, type CuratedModelEntry } from './companion-models.js'
 
 export function buildConversationSyncEntry(
   db: Database.Database,
   conversation: ConversationRow,
+  catalog: CuratedModelEntry[],
 ): ConversationSyncEntryPayload {
   const latest = db
     .prepare(`
@@ -21,6 +23,9 @@ export function buildConversationSyncEntry(
     hermes_session_id: conversation.hermes_session_id,
     kind: conversation.kind,
     title: conversation.title,
+    model: conversation.model,
+    provider: conversation.provider,
+    model_display: modelDisplayName(catalog, conversation.model, conversation.provider),
     created_at: conversation.created_at,
     updated_at: conversation.updated_at,
     latest_message_id: latest?.id ?? null,

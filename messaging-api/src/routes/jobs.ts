@@ -25,7 +25,7 @@ const jobRoutes: FastifyPluginAsync = async (app) => {
     const lastId = page.conversations[page.conversations.length - 1]?.id
 
     return {
-      jobs: page.conversations.map(toConversationResponse),
+      jobs: page.conversations.map((row) => toConversationResponse(row, app.companionModels)),
       _links: buildHalLinks({
         basePath: '/jobs',
         limit,

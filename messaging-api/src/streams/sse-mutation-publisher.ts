@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import type { ConversationSyncEntryPayload } from '../db/repos/chat-sync-events.js'
 import { getConversationForUser } from '../db/repos/conversations.js'
+import { DEFAULT_COMPANION_MODELS, type CuratedModelEntry } from '../lib/companion-models.js'
 import { buildConversationSyncEntry } from '../lib/conversation-sync-entry.js'
 import type { MessageWithAttachments } from '../lib/attachment-serializer.js'
 import type { StreamHub } from './hub.js'
@@ -66,11 +67,12 @@ export function publishAccountConversationUpsert(
   db: Database.Database,
   userId: string,
   conversationId: string,
+  catalog: CuratedModelEntry[] = DEFAULT_COMPANION_MODELS,
 ): void {
   const row = getConversationForUser(db, userId, conversationId)
   if (!row) {
     return
   }
 
-  publishConversationUpsert(hub, userId, buildConversationSyncEntry(db, row))
+  publishConversationUpsert(hub, userId, buildConversationSyncEntry(db, row, catalog))
 }

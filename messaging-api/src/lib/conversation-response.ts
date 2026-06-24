@@ -1,10 +1,17 @@
 import type { ConversationRow } from '../db/repos/conversations.js'
+import { modelDisplayName, type CuratedModelEntry } from './companion-models.js'
 
-export function toConversationResponse(conversation: ConversationRow) {
+export function toConversationResponse(
+  conversation: ConversationRow,
+  catalog: CuratedModelEntry[],
+) {
   const { bootstrap_prompt: _bootstrapPrompt, job_enabled, ...rest } = conversation
   const response: Record<string, unknown> = {
     ...rest,
     kind: conversation.kind,
+    model: conversation.model,
+    provider: conversation.provider,
+    model_display: modelDisplayName(catalog, conversation.model, conversation.provider),
   }
 
   if (conversation.kind === 'job') {
