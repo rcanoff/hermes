@@ -91,6 +91,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
   let sawToolingActivity = false
   let pendingStatusText: string | null = null
   let sawCronjobTool = false
+  let titleGenerationScheduled = false
   const knownJobIdsBefore = input.cronJobsPath
     ? await listHermesJobIdsFromFile(input.cronJobsPath)
     : new Set<string>()
@@ -120,6 +121,25 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     publishProcessLine(buildReasoningLine(text))
   }
 
+  const scheduleTitleGenerationIfNeeded = () => {
+    if (titleGenerationScheduled || !input.shouldGenerateTitle || !input.userMessageText) {
+      return
+    }
+
+    titleGenerationScheduled = true
+    scheduleTitleGeneration({
+      db: input.db,
+      hermesClient: input.hermesClient,
+      hub: input.hub,
+      conversationId: input.conversationId,
+      userId: input.userId,
+      userMessageText: input.userMessageText,
+      originSessionId: input.originSessionId,
+      auxiliaryLlm: input.titleGenerationLlm,
+      log: input.log,
+    })
+  }
+
   const beginReplyPhase = () => {
     if (inReplyPhase) {
       return
@@ -130,6 +150,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     if (sawToolingActivity) {
       publishToolingComplete(streamCtx)
     }
+    scheduleTitleGenerationIfNeeded()
   }
 
   const flushPendingInstantReply = (options?: { persist?: boolean }) => {
@@ -265,21 +286,8 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       content: assistantText,
     })
 
+    scheduleTitleGenerationIfNeeded()
     publishReplyDone(streamCtx, assistantMessageId)
-
-    if (input.shouldGenerateTitle && input.userMessageText) {
-      scheduleTitleGeneration({
-        db: input.db,
-        hermesClient: input.hermesClient,
-        hub: input.hub,
-        conversationId: input.conversationId,
-        userId: input.userId,
-        userMessageText: input.userMessageText,
-        originSessionId: input.originSessionId,
-        auxiliaryLlm: input.titleGenerationLlm,
-        log: input.log,
-      })
-    }
 
     return assistantMessageId
   } catch (error) {

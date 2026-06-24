@@ -218,7 +218,7 @@ describe('executeAssistantRun process stream', () => {
     })
   })
 
-  it('generates title in the background after publishing done', async () => {
+  it('generates title in the background when reply phase begins', async () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedConversation(db)
@@ -243,20 +243,29 @@ describe('executeAssistantRun process stream', () => {
     })
 
     hermes.queueCompleteChatResponse('Porto weekend')
+    hermes.pushToolCall('skill_view', '{"name":"travel"}')
     hermes.pushAnswerToken('Here is an idea')
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(hermes.completeRequests).toHaveLength(1)
+    expect(legacyEvents.map((event) => event.event)).toContain('token')
+    expect(legacyEvents.map((event) => event.event)).not.toContain('done')
+
     hermes.pushDone()
     hermes.closeWithoutDone()
 
     await runPromise
 
     expect(hermes.requests).toHaveLength(1)
-    expect(legacyEvents.map((event) => event.event)).toEqual(['token', 'done'])
+    expect(legacyEvents.map((event) => event.event)).toEqual(
+      expect.arrayContaining(['token', 'done', 'title']),
+    )
 
     await new Promise((resolve) => setTimeout(resolve, 0))
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(hermes.completeRequests).toHaveLength(1)
-    expect(legacyEvents.map((event) => event.event)).toEqual(['token', 'done', 'title'])
     expect(db.prepare('SELECT title FROM conversations WHERE id = ?').pluck().get('c1')).toBe('Porto weekend')
   })
 })
