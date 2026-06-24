@@ -214,7 +214,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
           userId: request.userId,
           userMessageText: content,
           originSessionId: request.sessionId ?? 'legacy',
-          auxiliaryLlm: app.titleGeneration,
+          titleGeneration: app.titleGeneration,
           log: (message, meta) => {
             app.log.info(meta ?? {}, message)
           },

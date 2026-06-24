@@ -5,6 +5,11 @@ import { initSchema } from '../src/db/schema.js'
 import * as auxiliaryLlmClient from '../src/services/auxiliary-llm-client.js'
 import { buildTitleGenerationSessionKey } from '../src/services/hermes-client.js'
 import {
+  DEFAULT_TITLE_GENERATION_OPENAI_MODEL,
+  DEFAULT_TITLE_GENERATION_XAI_BASE_URL,
+  DEFAULT_TITLE_GENERATION_XAI_MODEL,
+} from '../src/config.js'
+import {
   buildTitlePromptMessages,
   condenseToTitleWords,
   extractTitleCandidateFromRaw,
@@ -12,9 +17,6 @@ import {
   generateAndSaveTitle,
   generateConversationTitle,
   generateTitleFromLlm,
-  isGrokComposerModel,
-  OPENAI_TITLE_FALLBACK_MODEL,
-  resolveTitleGenerationLlm,
   sanitizeGeneratedTitle,
   scheduleTitleGeneration,
 } from '../src/services/title-generator.js'
@@ -161,53 +163,6 @@ describe('buildTitlePromptMessages', () => {
   })
 })
 
-describe('isGrokComposerModel', () => {
-  it('recognizes grok-composer model names', () => {
-    expect(isGrokComposerModel('grok-composer-2.5-fast')).toBe(true)
-    expect(isGrokComposerModel('GROK-COMPOSER-3')).toBe(true)
-  })
-
-  it('rejects non-grok-composer model names', () => {
-    expect(isGrokComposerModel('gpt-4o-mini')).toBe(false)
-    expect(isGrokComposerModel('grok-3')).toBe(false)
-  })
-})
-
-describe('resolveTitleGenerationLlm', () => {
-  it('returns null when auxiliary LLM is not configured', () => {
-    expect(resolveTitleGenerationLlm(null)).toBeNull()
-    expect(
-      resolveTitleGenerationLlm({ apiKey: '', baseUrl: '', model: 'gpt-4', timeoutMs: 1000 }),
-    ).toBeNull()
-  })
-
-  it('maps grok-composer models to gpt-4o-mini when base URL is empty', () => {
-    expect(
-      resolveTitleGenerationLlm({
-        apiKey: 'test-key',
-        baseUrl: '',
-        model: 'grok-composer-2.5-fast',
-        timeoutMs: 5_000,
-      }),
-    ).toEqual({
-      apiKey: 'test-key',
-      baseUrl: '',
-      model: OPENAI_TITLE_FALLBACK_MODEL,
-      timeoutMs: 5_000,
-    })
-  })
-
-  it('preserves explicit base URL and model when configured', () => {
-    const config = {
-      apiKey: 'test-key',
-      baseUrl: 'https://api.openai.com/v1',
-      model: 'grok-composer-2.5-fast',
-      timeoutMs: 5_000,
-    }
-    expect(resolveTitleGenerationLlm(config)).toEqual(config)
-  })
-})
-
 describe('generateConversationTitle', () => {
   const conversationId = 'd899b6f6-283b-4632-bbc3-175b0ebfd1fb'
 
@@ -231,25 +186,109 @@ describe('generateConversationTitle', () => {
     expect(hermesClient.requests).toHaveLength(0)
   })
 
-  it('prefers auxiliary LLM with OpenAI fallback when grok-composer has no base URL', async () => {
+  it('tries Grok then OpenAI then Hermes in provider cascade order', async () => {
+    const hermesClient = new FakeHermesClient()
+    hermesClient.queueCompleteChatResponse('Morning greeting')
+    const auxiliarySpy = vi
+      .spyOn(auxiliaryLlmClient, 'completeAuxiliaryLlm')
+      .mockRejectedValueOnce(new Error('Grok unavailable'))
+      .mockResolvedValueOnce('   ')
+    const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = []
+    const log = (message: string, meta?: Record<string, unknown>) => {
+      warnings.push({ message, meta })
+    }
+
+    const title = await generateConversationTitle(
+      hermesClient,
+      conversationId,
+      'good morning',
+      {
+        providers: [
+          {
+            apiKey: 'xai-key',
+            baseUrl: DEFAULT_TITLE_GENERATION_XAI_BASE_URL,
+            model: DEFAULT_TITLE_GENERATION_XAI_MODEL,
+            timeoutMs: 5_000,
+          },
+          {
+            apiKey: 'openai-key',
+            baseUrl: 'https://api.openai.com/v1',
+            model: DEFAULT_TITLE_GENERATION_OPENAI_MODEL,
+            timeoutMs: 5_000,
+          },
+        ],
+        timeoutMs: 5_000,
+      },
+      log,
+    )
+
+    expect(title).toBe('Morning greeting')
+    expect(auxiliarySpy).toHaveBeenCalledTimes(2)
+    expect(auxiliarySpy).toHaveBeenNthCalledWith(
+      1,
+      {
+        apiKey: 'xai-key',
+        baseUrl: DEFAULT_TITLE_GENERATION_XAI_BASE_URL,
+        model: DEFAULT_TITLE_GENERATION_XAI_MODEL,
+        timeoutMs: 5_000,
+      },
+      buildTitlePromptMessages('good morning'),
+    )
+    expect(auxiliarySpy).toHaveBeenNthCalledWith(
+      2,
+      {
+        apiKey: 'openai-key',
+        baseUrl: 'https://api.openai.com/v1',
+        model: DEFAULT_TITLE_GENERATION_OPENAI_MODEL,
+        timeoutMs: 5_000,
+      },
+      buildTitlePromptMessages('good morning'),
+    )
+    expect(hermesClient.completeRequests).toEqual([
+      {
+        hermesSessionId: buildTitleGenerationSessionKey(conversationId),
+        messages: buildTitlePromptMessages('good morning'),
+      },
+    ])
+    expect(warnings).toEqual([
+      {
+        message: 'title provider failed; trying next',
+        meta: {
+          model: DEFAULT_TITLE_GENERATION_XAI_MODEL,
+          err: 'Grok unavailable',
+        },
+      },
+      {
+        message: 'title provider returned invalid title; trying next',
+        meta: { model: DEFAULT_TITLE_GENERATION_OPENAI_MODEL },
+      },
+    ])
+  })
+
+  it('uses the first configured provider when it succeeds', async () => {
     const hermesClient = new FakeHermesClient()
     const auxiliarySpy = vi
       .spyOn(auxiliaryLlmClient, 'completeAuxiliaryLlm')
       .mockResolvedValue('Hello there')
 
     const title = await generateConversationTitle(hermesClient, conversationId, 'hello', {
-      apiKey: 'test-key',
-      baseUrl: '',
-      model: 'grok-composer-2.5-fast',
+      providers: [
+        {
+          apiKey: 'openai-key',
+          baseUrl: 'https://api.openai.com/v1',
+          model: DEFAULT_TITLE_GENERATION_OPENAI_MODEL,
+          timeoutMs: 5_000,
+        },
+      ],
       timeoutMs: 5_000,
     })
 
     expect(title).toBe('Hello there')
     expect(auxiliarySpy).toHaveBeenCalledWith(
       {
-        apiKey: 'test-key',
-        baseUrl: '',
-        model: OPENAI_TITLE_FALLBACK_MODEL,
+        apiKey: 'openai-key',
+        baseUrl: 'https://api.openai.com/v1',
+        model: DEFAULT_TITLE_GENERATION_OPENAI_MODEL,
         timeoutMs: 5_000,
       },
       buildTitlePromptMessages('hello'),
@@ -257,7 +296,7 @@ describe('generateConversationTitle', () => {
     expect(hermesClient.completeRequests).toHaveLength(0)
   })
 
-  it('falls back to Hermes when auxiliary LLM fails', async () => {
+  it('falls back to Hermes when all providers fail', async () => {
     const hermesClient = new FakeHermesClient()
     hermesClient.queueCompleteChatResponse('Hello there')
     vi.spyOn(auxiliaryLlmClient, 'completeAuxiliaryLlm').mockRejectedValue(
@@ -273,9 +312,14 @@ describe('generateConversationTitle', () => {
       conversationId,
       'hello',
       {
-        apiKey: 'test-key',
-        baseUrl: 'https://api.openai.com/v1',
-        model: 'gpt-5.4-nano',
+        providers: [
+          {
+            apiKey: 'test-key',
+            baseUrl: 'https://api.openai.com/v1',
+            model: 'gpt-5.4-nano',
+            timeoutMs: 5_000,
+          },
+        ],
         timeoutMs: 5_000,
       },
       log,
@@ -290,7 +334,7 @@ describe('generateConversationTitle', () => {
     ])
     expect(warnings).toEqual([
       {
-        message: 'auxiliary title generation failed; falling back to Hermes',
+        message: 'title provider failed; trying next',
         meta: {
           model: 'gpt-5.4-nano',
           err: 'Auxiliary LLM request failed with status 404',
@@ -299,7 +343,7 @@ describe('generateConversationTitle', () => {
     ])
   })
 
-  it('falls back to Hermes when auxiliary LLM returns an invalid title', async () => {
+  it('falls back to Hermes when all providers return invalid titles', async () => {
     const hermesClient = new FakeHermesClient()
     hermesClient.queueCompleteChatResponse('Morning greeting')
     vi.spyOn(auxiliaryLlmClient, 'completeAuxiliaryLlm').mockResolvedValue('   ')
@@ -313,18 +357,21 @@ describe('generateConversationTitle', () => {
       conversationId,
       'good morning',
       {
-        apiKey: 'test-key',
-        baseUrl: 'https://api.openai.com/v1',
-        model: 'gpt-5.4-nano',
+        providers: [
+          {
+            apiKey: 'test-key',
+            baseUrl: 'https://api.openai.com/v1',
+            model: 'gpt-5.4-nano',
+            timeoutMs: 5_000,
+          },
+        ],
         timeoutMs: 5_000,
       },
       log,
     )
 
     expect(title).toBe('Morning greeting')
-    expect(warnings).toContain(
-      'auxiliary title generation returned invalid title; falling back to Hermes',
-    )
+    expect(warnings).toContain('title provider returned invalid title; trying next')
   })
 
   it('uses user-message fallback when Hermes returns stale assistant content', async () => {

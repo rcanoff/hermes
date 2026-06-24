@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  completeAuxiliaryLlm,
-  DEFAULT_TITLE_GENERATION_MODEL,
-  resolveChatCompletionsUrl,
-} from '../src/services/auxiliary-llm-client.js'
+import { completeAuxiliaryLlm, resolveChatCompletionsUrl } from '../src/services/auxiliary-llm-client.js'
 
 describe('resolveChatCompletionsUrl', () => {
   it('defaults to the OpenAI v1 chat completions endpoint', () => {
@@ -20,12 +16,6 @@ describe('resolveChatCompletionsUrl', () => {
     expect(resolveChatCompletionsUrl('https://proxy.example/v1/chat/completions')).toBe(
       'https://proxy.example/v1/chat/completions',
     )
-  })
-})
-
-describe('DEFAULT_TITLE_GENERATION_MODEL', () => {
-  it('uses Composer 2.5 Fast configured for Hermes auxiliary title generation', () => {
-    expect(DEFAULT_TITLE_GENERATION_MODEL).toBe('grok-composer-2.5-fast')
   })
 })
 

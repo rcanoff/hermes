@@ -3,11 +3,8 @@ import {
   replaceConversationTitleIfEquals,
   updateConversationTitleIfNull,
 } from '../db/repos/conversations.js'
-import {
-  completeAuxiliaryLlm,
-  type AuxiliaryLlmConfig,
-  isAuxiliaryLlmConfigured,
-} from './auxiliary-llm-client.js'
+import type { TitleGenerationConfig } from '../config.js'
+import { completeAuxiliaryLlm } from './auxiliary-llm-client.js'
 import {
   buildTitleGenerationSessionKey,
   type HermesClient,
@@ -24,8 +21,6 @@ const TITLE_SYSTEM_PROMPT =
 const MAX_USER_MESSAGE_CHARS = 500
 const MAX_GENERATED_TITLE_CHARS = 80
 const MAX_GENERATED_TITLE_WORDS = 6
-
-export const OPENAI_TITLE_FALLBACK_MODEL = 'gpt-4o-mini'
 
 const INVALID_TITLE_PATTERNS = [
   /you're at/i,
@@ -164,29 +159,6 @@ export function buildTitlePromptMessages(userMessageText: string): HermesPromptM
   ]
 }
 
-export function isGrokComposerModel(model: string): boolean {
-  return /^grok-composer-/i.test(model.trim())
-}
-
-export function resolveTitleGenerationLlm(
-  auxiliaryLlm?: AuxiliaryLlmConfig | null,
-): AuxiliaryLlmConfig | null {
-  if (!isAuxiliaryLlmConfigured(auxiliaryLlm)) {
-    return null
-  }
-
-  const config = auxiliaryLlm!
-  if (!config.baseUrl.trim() && isGrokComposerModel(config.model)) {
-    return {
-      ...config,
-      model: OPENAI_TITLE_FALLBACK_MODEL,
-      baseUrl: '',
-    }
-  }
-
-  return config
-}
-
 export function fallbackTitleFromUserMessage(text: string): string | null {
   let cleaned = text.trim().replace(/\s+/g, ' ')
   if (cleaned.length === 0) {
@@ -270,29 +242,35 @@ async function completeTitleWithHermes(
   })
 }
 
+function resolveTitleGeneration(
+  titleGeneration?: TitleGenerationConfig | null,
+): TitleGenerationConfig {
+  return titleGeneration ?? { providers: [], timeoutMs: 30_000 }
+}
+
 export async function generateTitleFromLlm(
   hermesClient: HermesClient,
   conversationId: string,
   userMessageText: string,
-  auxiliaryLlm?: AuxiliaryLlmConfig | null,
+  titleGeneration?: TitleGenerationConfig | null,
   log?: (message: string, meta?: Record<string, unknown>) => void,
 ): Promise<string | null> {
   const messages = buildTitlePromptMessages(userMessageText)
-  const resolvedLlm = resolveTitleGenerationLlm(auxiliaryLlm)
+  const resolved = resolveTitleGeneration(titleGeneration)
 
-  if (resolvedLlm) {
+  for (const provider of resolved.providers) {
     try {
-      const raw = await completeAuxiliaryLlm(resolvedLlm, messages)
+      const raw = await completeAuxiliaryLlm(provider, messages)
       const title = sanitizeGeneratedTitle(raw, log)
       if (title) {
         return title
       }
-      log?.('auxiliary title generation returned invalid title; falling back to Hermes', {
-        model: resolvedLlm.model,
+      log?.('title provider returned invalid title; trying next', {
+        model: provider.model,
       })
     } catch (error) {
-      log?.('auxiliary title generation failed; falling back to Hermes', {
-        model: resolvedLlm.model,
+      log?.('title provider failed; trying next', {
+        model: provider.model,
         err: error instanceof Error ? error.message : String(error),
       })
     }
@@ -319,14 +297,14 @@ export async function generateConversationTitle(
   hermesClient: HermesClient,
   conversationId: string,
   userMessageText: string,
-  auxiliaryLlm?: AuxiliaryLlmConfig | null,
+  titleGeneration?: TitleGenerationConfig | null,
   log?: (message: string, meta?: Record<string, unknown>) => void,
 ): Promise<string | null> {
   const llmTitle = await generateTitleFromLlm(
     hermesClient,
     conversationId,
     userMessageText,
-    auxiliaryLlm,
+    titleGeneration,
     log,
   )
   if (llmTitle) {
@@ -362,7 +340,7 @@ export async function generateAndSaveTitle(input: {
   userId: string
   userMessageText: string
   originSessionId: string | null
-  auxiliaryLlm?: AuxiliaryLlmConfig | null
+  titleGeneration?: TitleGenerationConfig | null
   log?: (message: string, meta?: Record<string, unknown>) => void
 }): Promise<void> {
   const provisionalTitle = fallbackTitleFromUserMessage(input.userMessageText)
@@ -370,7 +348,7 @@ export async function generateAndSaveTitle(input: {
     input.hermesClient,
     input.conversationId,
     input.userMessageText,
-    input.auxiliaryLlm,
+    input.titleGeneration,
     input.log,
   )
 
@@ -455,7 +433,7 @@ export function scheduleTitleGeneration(input: {
   userId: string
   userMessageText: string
   originSessionId: string | null
-  auxiliaryLlm?: AuxiliaryLlmConfig | null
+  titleGeneration?: TitleGenerationConfig | null
   log?: (message: string, meta?: Record<string, unknown>) => void
 }): void {
   const provisionalTitle = fallbackTitleFromUserMessage(input.userMessageText)

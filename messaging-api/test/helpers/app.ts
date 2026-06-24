@@ -33,9 +33,7 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
     cronOutputPollMs: 5,
     addressEnrichmentSessionId: 'companion-address-enrichment',
     titleGeneration: {
-      apiKey: '',
-      baseUrl: '',
-      model: 'grok-composer-2.5-fast',
+      providers: [],
       timeoutMs: 30_000,
     },
     cronPromptSynthesis: {

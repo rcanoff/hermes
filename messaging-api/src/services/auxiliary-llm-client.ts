@@ -1,7 +1,5 @@
 import type { HermesPromptMessage } from './prompt-builder.js'
 
-export const DEFAULT_TITLE_GENERATION_MODEL = 'grok-composer-2.5-fast'
-
 export interface AuxiliaryLlmConfig {
   apiKey: string
   baseUrl: string

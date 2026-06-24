@@ -1,15 +1,14 @@
 import { deriveCronJobsPath } from './lib/hermes-cron-jobs.js'
-import {
-  DEFAULT_TITLE_GENERATION_MODEL,
-  type AuxiliaryLlmConfig,
-} from './services/auxiliary-llm-client.js'
+import type { AuxiliaryLlmConfig } from './services/auxiliary-llm-client.js'
 import { DEFAULT_CRON_PROMPT_SYNTHESIS_MODEL } from './services/cron-prompt-synthesizer.js'
 import type { AppOptions } from './types.js'
 
+export const DEFAULT_TITLE_GENERATION_XAI_BASE_URL = 'https://api.x.ai/v1'
+export const DEFAULT_TITLE_GENERATION_XAI_MODEL = 'grok-4.3'
+export const DEFAULT_TITLE_GENERATION_OPENAI_MODEL = 'gpt-5.4-mini'
+
 export interface TitleGenerationConfig {
-  apiKey: string
-  baseUrl: string
-  model: string
+  providers: AuxiliaryLlmConfig[]
   timeoutMs: number
 }
 
@@ -61,12 +60,41 @@ function requireEnv(env: NodeJS.ProcessEnv, key: 'JWT_SECRET' | 'MESSAGING_API_H
 }
 
 function readTitleGenerationConfig(env: NodeJS.ProcessEnv): TitleGenerationConfig {
-  return {
-    apiKey: env.TITLE_GENERATION_API_KEY?.trim() || env.OPENAI_API_KEY?.trim() || '',
-    baseUrl: env.TITLE_GENERATION_BASE_URL?.trim() || env.OPENAI_BASE_URL?.trim() || '',
-    model: env.TITLE_GENERATION_MODEL?.trim() || DEFAULT_TITLE_GENERATION_MODEL,
-    timeoutMs: readPositiveInt(env.TITLE_GENERATION_TIMEOUT_MS, 30_000),
+  const timeoutMs = readPositiveInt(env.TITLE_GENERATION_TIMEOUT_MS, 30_000)
+  const providers: AuxiliaryLlmConfig[] = []
+
+  const xaiApiKey =
+    env.TITLE_GENERATION_XAI_API_KEY?.trim() || env.XAI_API_KEY?.trim() || ''
+  if (xaiApiKey) {
+    providers.push({
+      apiKey: xaiApiKey,
+      baseUrl:
+        env.TITLE_GENERATION_XAI_BASE_URL?.trim() || DEFAULT_TITLE_GENERATION_XAI_BASE_URL,
+      model: env.TITLE_GENERATION_XAI_MODEL?.trim() || DEFAULT_TITLE_GENERATION_XAI_MODEL,
+      timeoutMs,
+    })
   }
+
+  const openaiApiKey =
+    env.TITLE_GENERATION_OPENAI_API_KEY?.trim() ||
+    env.TITLE_GENERATION_API_KEY?.trim() ||
+    env.OPENAI_API_KEY?.trim() ||
+    ''
+  if (openaiApiKey) {
+    providers.push({
+      apiKey: openaiApiKey,
+      baseUrl:
+        env.TITLE_GENERATION_OPENAI_BASE_URL?.trim() ||
+        env.TITLE_GENERATION_BASE_URL?.trim() ||
+        env.OPENAI_BASE_URL?.trim() ||
+        '',
+      model:
+        env.TITLE_GENERATION_OPENAI_MODEL?.trim() || DEFAULT_TITLE_GENERATION_OPENAI_MODEL,
+      timeoutMs,
+    })
+  }
+
+  return { providers, timeoutMs }
 }
 
 function readCronPromptSynthesisConfig(env: NodeJS.ProcessEnv): AuxiliaryLlmConfig {
