@@ -36,17 +36,30 @@ services:
       - ${HERMES_DASHBOARD_PORT:-9119}:9119
     command: ["gateway", "run"]
 
+  hermes-auxiliary-bridge:
+    image: ${HERMES_IMAGE}
+    restart: unless-stopped
+    volumes:
+      - ${HERMES_DATA_DIR}:/opt/data
+      - ./scripts/auxiliary-bridge.py:/opt/auxiliary-bridge.py:ro
+    environment:
+      HERMES_API_SERVER_KEY: ${HERMES_API_SERVER_KEY:-change-me}
+      PORT: 8750
+    command: ["python3", "/opt/auxiliary-bridge.py"]
+
   messaging-api:
     build:
       context: ./messaging-api
     restart: unless-stopped
     depends_on:
       - hermes-gateway
+      - hermes-auxiliary-bridge
     environment:
       PORT: 3000
       JWT_SECRET: ${MESSAGING_API_JWT_SECRET:-change-me}
       HERMES_BASE_URL: http://hermes:8642
       HERMES_API_KEY: ${HERMES_API_SERVER_KEY:-change-me}
+      HERMES_AUXILIARY_BRIDGE_URL: http://hermes-auxiliary-bridge:8750
       DB_PATH: /opt/data/messaging-api.sqlite
       MESSAGING_API_HOST: ${MESSAGING_API_HOST:-}
       INVITE_EXPIRY_HOURS: ${INVITE_EXPIRY_HOURS:-48}
@@ -56,13 +69,6 @@ services:
       CRON_OUTPUT_DIR: ${CRON_OUTPUT_DIR:-/opt/data/cron/output}
       CRON_OUTPUT_POLL_MS: ${CRON_OUTPUT_POLL_MS:-5}
       ADDRESS_ENRICHMENT_SESSION_ID: ${ADDRESS_ENRICHMENT_SESSION_ID:-companion-address-enrichment}
-      XAI_API_KEY: ${XAI_API_KEY:-}
-      TITLE_GENERATION_XAI_API_KEY: ${TITLE_GENERATION_XAI_API_KEY:-${XAI_API_KEY:-}}
-      TITLE_GENERATION_XAI_BASE_URL: ${TITLE_GENERATION_XAI_BASE_URL:-https://api.x.ai/v1}
-      TITLE_GENERATION_XAI_MODEL: ${TITLE_GENERATION_XAI_MODEL:-grok-4.3}
-      TITLE_GENERATION_OPENAI_API_KEY: ${TITLE_GENERATION_OPENAI_API_KEY:-${TITLE_GENERATION_API_KEY:-${OPENAI_API_KEY:-}}}
-      TITLE_GENERATION_OPENAI_BASE_URL: ${TITLE_GENERATION_OPENAI_BASE_URL:-${TITLE_GENERATION_BASE_URL:-${OPENAI_BASE_URL:-}}}
-      TITLE_GENERATION_OPENAI_MODEL: ${TITLE_GENERATION_OPENAI_MODEL:-gpt-5.4-mini}
       TITLE_GENERATION_TIMEOUT_MS: ${TITLE_GENERATION_TIMEOUT_MS:-30000}
     volumes:
       - ${HERMES_DATA_DIR}:/opt/data

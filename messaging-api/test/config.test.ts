@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DEFAULT_TITLE_GENERATION_OPENAI_MODEL,
-  DEFAULT_TITLE_GENERATION_XAI_BASE_URL,
-  DEFAULT_TITLE_GENERATION_XAI_MODEL,
+  DEFAULT_TITLE_GENERATION_PROVIDERS,
   readConfig,
 } from '../src/config.js'
 
@@ -47,7 +45,9 @@ describe('readConfig', () => {
       cronOutputPollMs: 5,
       addressEnrichmentSessionId: 'companion-address-enrichment',
       titleGeneration: {
-        providers: [],
+        bridgeUrl: '',
+        bridgeApiKey: '',
+        providers: DEFAULT_TITLE_GENERATION_PROVIDERS,
         timeoutMs: 30_000,
       },
       cronPromptSynthesis: {
@@ -85,68 +85,21 @@ describe('readConfig', () => {
     ).toBe(500)
   })
 
-  it('builds title generation provider cascade when both API keys are present', () => {
+  it('reads Hermes auxiliary bridge settings for title generation', () => {
     expect(
       readConfig({
         JWT_SECRET: 'test-secret',
         HERMES_BASE_URL: 'http://hermes:8642',
         MESSAGING_API_HOST: '100.64.0.1:3000',
-        XAI_API_KEY: 'xai-test',
-        OPENAI_API_KEY: 'sk-test',
-        OPENAI_BASE_URL: 'https://proxy.example/v1',
+        HERMES_AUXILIARY_BRIDGE_URL: 'http://hermes-auxiliary-bridge:8750',
+        HERMES_API_KEY: 'bridge-key',
         TITLE_GENERATION_TIMEOUT_MS: '45000',
       }).titleGeneration,
     ).toEqual({
-      providers: [
-        {
-          apiKey: 'xai-test',
-          baseUrl: DEFAULT_TITLE_GENERATION_XAI_BASE_URL,
-          model: DEFAULT_TITLE_GENERATION_XAI_MODEL,
-          timeoutMs: 45_000,
-        },
-        {
-          apiKey: 'sk-test',
-          baseUrl: 'https://proxy.example/v1',
-          model: DEFAULT_TITLE_GENERATION_OPENAI_MODEL,
-          timeoutMs: 45_000,
-        },
-      ],
+      bridgeUrl: 'http://hermes-auxiliary-bridge:8750',
+      bridgeApiKey: 'bridge-key',
+      providers: DEFAULT_TITLE_GENERATION_PROVIDERS,
       timeoutMs: 45_000,
-    })
-  })
-
-  it('builds a single OpenAI provider when only OpenAI key is present', () => {
-    expect(
-      readConfig({
-        JWT_SECRET: 'test-secret',
-        HERMES_BASE_URL: 'http://hermes:8642',
-        MESSAGING_API_HOST: '100.64.0.1:3000',
-        OPENAI_API_KEY: 'sk-test',
-        TITLE_GENERATION_OPENAI_MODEL: 'gpt-5.4-nano',
-      }).titleGeneration,
-    ).toEqual({
-      providers: [
-        {
-          apiKey: 'sk-test',
-          baseUrl: '',
-          model: 'gpt-5.4-nano',
-          timeoutMs: 30_000,
-        },
-      ],
-      timeoutMs: 30_000,
-    })
-  })
-
-  it('returns empty title providers when no API keys are configured', () => {
-    expect(
-      readConfig({
-        JWT_SECRET: 'test-secret',
-        HERMES_BASE_URL: 'http://hermes:8642',
-        MESSAGING_API_HOST: '100.64.0.1:3000',
-      }).titleGeneration,
-    ).toEqual({
-      providers: [],
-      timeoutMs: 30_000,
     })
   })
 

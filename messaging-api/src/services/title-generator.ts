@@ -4,7 +4,7 @@ import {
   updateConversationTitleIfNull,
 } from '../db/repos/conversations.js'
 import type { TitleGenerationConfig } from '../config.js'
-import { completeAuxiliaryLlm } from './auxiliary-llm-client.js'
+import { completeHermesAuxiliary } from './hermes-auxiliary-client.js'
 import {
   buildTitleGenerationSessionKey,
   type HermesClient,
@@ -245,7 +245,14 @@ async function completeTitleWithHermes(
 function resolveTitleGeneration(
   titleGeneration?: TitleGenerationConfig | null,
 ): TitleGenerationConfig {
-  return titleGeneration ?? { providers: [], timeoutMs: 30_000 }
+  return (
+    titleGeneration ?? {
+      bridgeUrl: '',
+      bridgeApiKey: '',
+      providers: [],
+      timeoutMs: 30_000,
+    }
+  )
 }
 
 export async function generateTitleFromLlm(
@@ -258,21 +265,34 @@ export async function generateTitleFromLlm(
   const messages = buildTitlePromptMessages(userMessageText)
   const resolved = resolveTitleGeneration(titleGeneration)
 
-  for (const provider of resolved.providers) {
-    try {
-      const raw = await completeAuxiliaryLlm(provider, messages)
-      const title = sanitizeGeneratedTitle(raw, log)
-      if (title) {
-        return title
+  if (resolved.bridgeUrl) {
+    for (const provider of resolved.providers) {
+      try {
+        const raw = await completeHermesAuxiliary(
+          resolved.bridgeUrl,
+          resolved.bridgeApiKey,
+          {
+            provider: provider.provider,
+            model: provider.model,
+            messages,
+            timeoutMs: resolved.timeoutMs,
+          },
+        )
+        const title = sanitizeGeneratedTitle(raw, log)
+        if (title) {
+          return title
+        }
+        log?.('title provider returned invalid title; trying next', {
+          provider: provider.provider,
+          model: provider.model,
+        })
+      } catch (error) {
+        log?.('title provider failed; trying next', {
+          provider: provider.provider,
+          model: provider.model,
+          err: error instanceof Error ? error.message : String(error),
+        })
       }
-      log?.('title provider returned invalid title; trying next', {
-        model: provider.model,
-      })
-    } catch (error) {
-      log?.('title provider failed; trying next', {
-        model: provider.model,
-        err: error instanceof Error ? error.message : String(error),
-      })
     }
   }
 

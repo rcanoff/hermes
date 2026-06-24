@@ -33,6 +33,8 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
     cronOutputPollMs: 5,
     addressEnrichmentSessionId: 'companion-address-enrichment',
     titleGeneration: {
+      bridgeUrl: '',
+      bridgeApiKey: '',
       providers: [],
       timeoutMs: 30_000,
     },

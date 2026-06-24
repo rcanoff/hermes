@@ -2,13 +2,13 @@ import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createConversation } from '../src/db/repos/conversations.js'
 import { initSchema } from '../src/db/schema.js'
-import * as auxiliaryLlmClient from '../src/services/auxiliary-llm-client.js'
-import { buildTitleGenerationSessionKey } from '../src/services/hermes-client.js'
 import {
+  DEFAULT_TITLE_GENERATION_GROK_MODEL,
   DEFAULT_TITLE_GENERATION_OPENAI_MODEL,
-  DEFAULT_TITLE_GENERATION_XAI_BASE_URL,
-  DEFAULT_TITLE_GENERATION_XAI_MODEL,
+  DEFAULT_TITLE_GENERATION_PROVIDERS,
 } from '../src/config.js'
+import * as hermesAuxiliaryClient from '../src/services/hermes-auxiliary-client.js'
+import { buildTitleGenerationSessionKey } from '../src/services/hermes-client.js'
 import {
   buildTitlePromptMessages,
   condenseToTitleWords,
@@ -189,8 +189,8 @@ describe('generateConversationTitle', () => {
   it('tries Grok then OpenAI then Hermes in provider cascade order', async () => {
     const hermesClient = new FakeHermesClient()
     hermesClient.queueCompleteChatResponse('Morning greeting')
-    const auxiliarySpy = vi
-      .spyOn(auxiliaryLlmClient, 'completeAuxiliaryLlm')
+    const bridgeSpy = vi
+      .spyOn(hermesAuxiliaryClient, 'completeHermesAuxiliary')
       .mockRejectedValueOnce(new Error('Grok unavailable'))
       .mockResolvedValueOnce('   ')
     const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = []
@@ -203,46 +203,37 @@ describe('generateConversationTitle', () => {
       conversationId,
       'good morning',
       {
-        providers: [
-          {
-            apiKey: 'xai-key',
-            baseUrl: DEFAULT_TITLE_GENERATION_XAI_BASE_URL,
-            model: DEFAULT_TITLE_GENERATION_XAI_MODEL,
-            timeoutMs: 5_000,
-          },
-          {
-            apiKey: 'openai-key',
-            baseUrl: 'https://api.openai.com/v1',
-            model: DEFAULT_TITLE_GENERATION_OPENAI_MODEL,
-            timeoutMs: 5_000,
-          },
-        ],
+        bridgeUrl: 'http://bridge.test:8750',
+        bridgeApiKey: 'bridge-key',
+        providers: DEFAULT_TITLE_GENERATION_PROVIDERS,
         timeoutMs: 5_000,
       },
       log,
     )
 
     expect(title).toBe('Morning greeting')
-    expect(auxiliarySpy).toHaveBeenCalledTimes(2)
-    expect(auxiliarySpy).toHaveBeenNthCalledWith(
+    expect(bridgeSpy).toHaveBeenCalledTimes(2)
+    expect(bridgeSpy).toHaveBeenNthCalledWith(
       1,
+      'http://bridge.test:8750',
+      'bridge-key',
       {
-        apiKey: 'xai-key',
-        baseUrl: DEFAULT_TITLE_GENERATION_XAI_BASE_URL,
-        model: DEFAULT_TITLE_GENERATION_XAI_MODEL,
+        provider: 'xai-oauth',
+        model: DEFAULT_TITLE_GENERATION_GROK_MODEL,
+        messages: buildTitlePromptMessages('good morning'),
         timeoutMs: 5_000,
       },
-      buildTitlePromptMessages('good morning'),
     )
-    expect(auxiliarySpy).toHaveBeenNthCalledWith(
+    expect(bridgeSpy).toHaveBeenNthCalledWith(
       2,
+      'http://bridge.test:8750',
+      'bridge-key',
       {
-        apiKey: 'openai-key',
-        baseUrl: 'https://api.openai.com/v1',
+        provider: 'openai-codex',
         model: DEFAULT_TITLE_GENERATION_OPENAI_MODEL,
+        messages: buildTitlePromptMessages('good morning'),
         timeoutMs: 5_000,
       },
-      buildTitlePromptMessages('good morning'),
     )
     expect(hermesClient.completeRequests).toEqual([
       {
@@ -254,44 +245,49 @@ describe('generateConversationTitle', () => {
       {
         message: 'title provider failed; trying next',
         meta: {
-          model: DEFAULT_TITLE_GENERATION_XAI_MODEL,
+          provider: 'xai-oauth',
+          model: DEFAULT_TITLE_GENERATION_GROK_MODEL,
           err: 'Grok unavailable',
         },
       },
       {
         message: 'title provider returned invalid title; trying next',
-        meta: { model: DEFAULT_TITLE_GENERATION_OPENAI_MODEL },
+        meta: {
+          provider: 'openai-codex',
+          model: DEFAULT_TITLE_GENERATION_OPENAI_MODEL,
+        },
       },
     ])
   })
 
   it('uses the first configured provider when it succeeds', async () => {
     const hermesClient = new FakeHermesClient()
-    const auxiliarySpy = vi
-      .spyOn(auxiliaryLlmClient, 'completeAuxiliaryLlm')
+    const bridgeSpy = vi
+      .spyOn(hermesAuxiliaryClient, 'completeHermesAuxiliary')
       .mockResolvedValue('Hello there')
 
     const title = await generateConversationTitle(hermesClient, conversationId, 'hello', {
+      bridgeUrl: 'http://bridge.test:8750',
+      bridgeApiKey: 'bridge-key',
       providers: [
         {
-          apiKey: 'openai-key',
-          baseUrl: 'https://api.openai.com/v1',
+          provider: 'openai-codex',
           model: DEFAULT_TITLE_GENERATION_OPENAI_MODEL,
-          timeoutMs: 5_000,
         },
       ],
       timeoutMs: 5_000,
     })
 
     expect(title).toBe('Hello there')
-    expect(auxiliarySpy).toHaveBeenCalledWith(
+    expect(bridgeSpy).toHaveBeenCalledWith(
+      'http://bridge.test:8750',
+      'bridge-key',
       {
-        apiKey: 'openai-key',
-        baseUrl: 'https://api.openai.com/v1',
+        provider: 'openai-codex',
         model: DEFAULT_TITLE_GENERATION_OPENAI_MODEL,
+        messages: buildTitlePromptMessages('hello'),
         timeoutMs: 5_000,
       },
-      buildTitlePromptMessages('hello'),
     )
     expect(hermesClient.completeRequests).toHaveLength(0)
   })
@@ -299,8 +295,8 @@ describe('generateConversationTitle', () => {
   it('falls back to Hermes when all providers fail', async () => {
     const hermesClient = new FakeHermesClient()
     hermesClient.queueCompleteChatResponse('Hello there')
-    vi.spyOn(auxiliaryLlmClient, 'completeAuxiliaryLlm').mockRejectedValue(
-      new Error('Auxiliary LLM request failed with status 404'),
+    vi.spyOn(hermesAuxiliaryClient, 'completeHermesAuxiliary').mockRejectedValue(
+      new Error('Hermes auxiliary bridge failed with status 502'),
     )
     const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = []
     const log = (message: string, meta?: Record<string, unknown>) => {
@@ -312,12 +308,12 @@ describe('generateConversationTitle', () => {
       conversationId,
       'hello',
       {
+        bridgeUrl: 'http://bridge.test:8750',
+        bridgeApiKey: 'bridge-key',
         providers: [
           {
-            apiKey: 'test-key',
-            baseUrl: 'https://api.openai.com/v1',
+            provider: 'openai-codex',
             model: 'gpt-5.4-nano',
-            timeoutMs: 5_000,
           },
         ],
         timeoutMs: 5_000,
@@ -336,8 +332,9 @@ describe('generateConversationTitle', () => {
       {
         message: 'title provider failed; trying next',
         meta: {
+          provider: 'openai-codex',
           model: 'gpt-5.4-nano',
-          err: 'Auxiliary LLM request failed with status 404',
+          err: 'Hermes auxiliary bridge failed with status 502',
         },
       },
     ])
@@ -346,7 +343,7 @@ describe('generateConversationTitle', () => {
   it('falls back to Hermes when all providers return invalid titles', async () => {
     const hermesClient = new FakeHermesClient()
     hermesClient.queueCompleteChatResponse('Morning greeting')
-    vi.spyOn(auxiliaryLlmClient, 'completeAuxiliaryLlm').mockResolvedValue('   ')
+    vi.spyOn(hermesAuxiliaryClient, 'completeHermesAuxiliary').mockResolvedValue('   ')
     const warnings: string[] = []
     const log = (message: string) => {
       warnings.push(message)
@@ -357,12 +354,12 @@ describe('generateConversationTitle', () => {
       conversationId,
       'good morning',
       {
+        bridgeUrl: 'http://bridge.test:8750',
+        bridgeApiKey: 'bridge-key',
         providers: [
           {
-            apiKey: 'test-key',
-            baseUrl: 'https://api.openai.com/v1',
+            provider: 'openai-codex',
             model: 'gpt-5.4-nano',
-            timeoutMs: 5_000,
           },
         ],
         timeoutMs: 5_000,
