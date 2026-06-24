@@ -74,7 +74,12 @@ export function buildApp(options: AppOptions) {
   app.decorate('db', getDb(options.dbPath))
   app.decorate(
     'hermesClient',
-    options.hermesClient ?? new OpenAiHermesClient(options.hermesBaseUrl, options.hermesApiKey),
+    options.hermesClient ??
+      new OpenAiHermesClient(
+        options.hermesBaseUrl,
+        options.hermesApiKey,
+        options.hermesStateDbPath,
+      ),
   )
   app.decorate('streamHub', options.streamHub ?? new StreamHub())
   app.decorate('streamWaitMs', options.streamWaitMs ?? 30_000)

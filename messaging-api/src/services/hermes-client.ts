@@ -1,4 +1,9 @@
 import type { HermesPromptMessage } from './prompt-builder.js'
+import {
+  openHermesStateDbRw,
+  updateSessionModel,
+  upsertCompanionSession,
+} from './hermes-session-store.js'
 
 /** Stable Hermes gateway session key — identifies messaging-api traffic as Companion App. */
 export const COMPANION_APP_SESSION_KEY = 'companion-app'
@@ -170,7 +175,35 @@ export class OpenAiHermesClient implements HermesClient {
   constructor(
     private readonly baseUrl: string,
     private readonly apiKey = '',
+    private readonly hermesStateDbPath?: string,
   ) {}
+
+  private syncSessionModelToStateDb(input: {
+    hermesSessionId: string
+    model?: string
+    provider?: string
+    systemPrompt?: string | null
+  }): void {
+    if (!this.hermesStateDbPath || !input.model || !input.provider) {
+      return
+    }
+
+    const db = openHermesStateDbRw(this.hermesStateDbPath)
+    if (!db) {
+      return
+    }
+
+    try {
+      upsertCompanionSession(db, {
+        sessionId: input.hermesSessionId,
+        model: input.model,
+        provider: input.provider,
+        systemPrompt: input.systemPrompt,
+      })
+    } finally {
+      db.close()
+    }
+  }
 
   async ensureSession(input: EnsureSessionInput): Promise<void> {
     const headers: Record<string, string> = {
@@ -200,6 +233,15 @@ export class OpenAiHermesClient implements HermesClient {
       body: JSON.stringify(body),
     })
 
+    if (response.status === 409 || response.ok) {
+      this.syncSessionModelToStateDb({
+        hermesSessionId: input.hermesSessionId,
+        model: input.model,
+        provider: input.provider,
+        systemPrompt: input.systemPrompt,
+      })
+    }
+
     if (response.status === 409) {
       return
     }
@@ -210,26 +252,23 @@ export class OpenAiHermesClient implements HermesClient {
   }
 
   async patchSessionModel(input: PatchSessionModelInput): Promise<void> {
-    const headers: Record<string, string> = {
-      'content-type': 'application/json',
-      'x-hermes-session-key': COMPANION_APP_SESSION_KEY,
+    if (!this.hermesStateDbPath) {
+      throw new Error('Hermes state database path is not configured')
     }
 
-    if (this.apiKey) {
-      headers.authorization = `Bearer ${this.apiKey}`
+    const db = openHermesStateDbRw(this.hermesStateDbPath)
+    if (!db) {
+      throw new Error('Hermes state database unavailable')
     }
 
-    const response = await fetch(new URL(`/api/sessions/${input.hermesSessionId}`, this.baseUrl), {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify({
+    try {
+      updateSessionModel(db, {
+        sessionId: input.hermesSessionId,
         model: input.model,
         provider: input.provider,
-      }),
-    })
-
-    if (!response.ok) {
-      throw new Error(`Hermes session model patch failed with status ${response.status}`)
+      })
+    } finally {
+      db.close()
     }
   }
 

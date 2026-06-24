@@ -326,7 +326,7 @@ describe('conversation routes', () => {
     expect(create.json()).toMatchObject({
       model: 'gpt-5.4-mini',
       provider: 'openai-codex',
-      model_display: 'GPT 5.4 Mini',
+      model_display: 'gpt-5.4-mini',
     })
   })
 
@@ -359,7 +359,7 @@ describe('conversation routes', () => {
     expect((list.json() as { conversations: Array<Record<string, unknown>> }).conversations[0]).toMatchObject({
       model: 'grok-composer-2.5-fast',
       provider: 'xai-oauth',
-      model_display: 'Grok 2.5',
+      model_display: 'grok-composer-2.5-fast',
     })
     expect((list.json() as { conversations: Array<{ id: string }> }).conversations[0]?.id).toBe(
       (create.json() as { id: string }).id,

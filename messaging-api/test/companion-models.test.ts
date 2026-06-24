@@ -39,8 +39,8 @@ describe('companion-models', () => {
   it('maps model display names from catalog', () => {
     expect(
       modelDisplayName(DEFAULT_COMPANION_MODELS, COMPANION_DEFAULT_MODEL, COMPANION_DEFAULT_PROVIDER),
-    ).toBe('Grok 2.5')
-    expect(modelDisplayName(DEFAULT_COMPANION_MODELS, 'grok-4.3', 'xai-oauth')).toBe('Grok 4.3')
+    ).toBe(COMPANION_DEFAULT_MODEL)
+    expect(modelDisplayName(DEFAULT_COMPANION_MODELS, 'grok-4.3', 'xai-oauth')).toBe('grok-4.3')
     expect(modelDisplayName(DEFAULT_COMPANION_MODELS, 'unknown-model', 'xai-oauth')).toBe(
       'unknown-model',
     )

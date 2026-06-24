@@ -283,7 +283,7 @@ describe('PATCH /conversations/:id model change', () => {
       hermes_session_id: conversation.hermes_session_id,
       model: 'grok-4.3',
       provider: 'xai-oauth',
-      model_display: 'Grok 4.3',
+      model_display: 'grok-4.3',
     })
     expect(hermesClient.patchSessionModelRequests).toEqual([
       { hermesSessionId: conversation.hermes_session_id, model: 'grok-4.3', provider: 'xai-oauth' },
@@ -338,14 +338,14 @@ describe('PATCH /conversations/:id model change', () => {
     expect(body).toMatchObject({
       model: 'gpt-5.4-mini',
       provider: 'openai-codex',
-      model_display: 'GPT 5.4 Mini',
+      model_display: 'gpt-5.4-mini',
     })
 
     const payload = await readUntilConversationUpsert(readerB, conversation.id, body.hermes_session_id)
     expect(payload).toContain('event: conversation_upsert')
     expect(payload).toContain('"model":"gpt-5.4-mini"')
     expect(payload).toContain('"provider":"openai-codex"')
-    expect(payload).toContain('"model_display":"GPT 5.4 Mini"')
+    expect(payload).toContain('"model_display":"gpt-5.4-mini"')
     expect(payload).toContain(`"hermes_session_id":"${body.hermes_session_id}"`)
   }, 15_000)
 

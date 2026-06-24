@@ -12,20 +12,20 @@ export const DEFAULT_COMPANION_MODELS: CuratedModelEntry[] = [
   {
     model: COMPANION_DEFAULT_MODEL,
     provider: COMPANION_DEFAULT_PROVIDER,
-    display: 'Grok 2.5',
-    subtitle: 'xAI · default',
+    display: COMPANION_DEFAULT_MODEL,
+    subtitle: 'xAI Grok OAuth (SuperGrok / Premium+)',
   },
   {
     model: 'grok-4.3',
     provider: 'xai-oauth',
-    display: 'Grok 4.3',
-    subtitle: 'xAI',
+    display: 'grok-4.3',
+    subtitle: 'xAI Grok OAuth (SuperGrok / Premium+)',
   },
   {
     model: 'gpt-5.4-mini',
     provider: 'openai-codex',
-    display: 'GPT 5.4 Mini',
-    subtitle: 'OpenAI',
+    display: 'gpt-5.4-mini',
+    subtitle: 'OpenAI Codex',
   },
 ]
 

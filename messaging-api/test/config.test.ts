@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_TITLE_GENERATION_PROVIDERS,
@@ -124,6 +125,40 @@ describe('readConfig', () => {
         MESSAGING_API_HOST: '100.64.0.1:3000',
       }).apns.enabled,
     ).toBe(false)
+  })
+
+  it('loads companion models from provider cache file when env json is unset', () => {
+    const cachePath = '/tmp/hermes-provider-models-test-cache.json'
+    fs.writeFileSync(
+      cachePath,
+      JSON.stringify({
+        'xai-oauth': { models: ['grok-composer-2.5-fast', 'grok-4.3'] },
+      }),
+    )
+
+    expect(
+      readConfig({
+        JWT_SECRET: 'test-secret',
+        HERMES_BASE_URL: 'http://hermes:8642',
+        MESSAGING_API_HOST: '100.64.0.1:3000',
+        PROVIDER_MODELS_CACHE_PATH: cachePath,
+      }).companionModels,
+    ).toEqual([
+      {
+        model: 'grok-composer-2.5-fast',
+        provider: 'xai-oauth',
+        display: 'grok-composer-2.5-fast',
+        subtitle: 'xAI Grok OAuth (SuperGrok / Premium+)',
+      },
+      {
+        model: 'grok-4.3',
+        provider: 'xai-oauth',
+        display: 'grok-4.3',
+        subtitle: 'xAI Grok OAuth (SuperGrok / Premium+)',
+      },
+    ])
+
+    fs.rmSync(cachePath, { force: true })
   })
 
   it('parses COMPANION_MODELS_JSON override', () => {

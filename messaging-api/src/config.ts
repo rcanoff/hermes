@@ -1,5 +1,8 @@
 import { deriveCronJobsPath } from './lib/hermes-cron-jobs.js'
-import { parseCompanionModelsJson } from './lib/companion-models.js'
+import {
+  DEFAULT_PROVIDER_MODELS_CACHE_PATH,
+  resolveCompanionModels,
+} from './lib/hermes-model-catalog.js'
 import type { AuxiliaryLlmConfig } from './services/auxiliary-llm-client.js'
 import { DEFAULT_CRON_PROMPT_SYNTHESIS_MODEL } from './services/cron-prompt-synthesizer.js'
 import type { AppOptions } from './types.js'
@@ -140,6 +143,9 @@ export function readConfig(env: NodeJS.ProcessEnv): AppOptions {
     visionMaxEdgePx: readPositiveInt(env.VISION_MAX_EDGE_PX, 1536),
     thumbMaxEdgePx: readPositiveInt(env.THUMB_MAX_EDGE_PX, 200),
     visionHistoryMaxBytes: readPositiveInt(env.VISION_HISTORY_MAX_BYTES, 8_388_608),
-    companionModels: parseCompanionModelsJson(env.COMPANION_MODELS_JSON),
+    companionModels: resolveCompanionModels(
+      env.COMPANION_MODELS_JSON,
+      env.PROVIDER_MODELS_CACHE_PATH?.trim() || DEFAULT_PROVIDER_MODELS_CACHE_PATH,
+    ),
   }
 }
