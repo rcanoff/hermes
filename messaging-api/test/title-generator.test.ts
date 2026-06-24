@@ -6,6 +6,8 @@ import * as auxiliaryLlmClient from '../src/services/auxiliary-llm-client.js'
 import { buildTitleGenerationSessionKey } from '../src/services/hermes-client.js'
 import {
   buildTitlePromptMessages,
+  condenseToTitleWords,
+  extractTitleCandidateFromRaw,
   fallbackTitleFromUserMessage,
   generateAndSaveTitle,
   generateConversationTitle,
@@ -46,24 +48,18 @@ describe('sanitizeGeneratedTitle', () => {
     expect(warnings).toEqual([
       {
         message: 'title generation rejected invalid title',
-        meta: { reason: 'markdown_fence' },
+        meta: { reason: 'address_like' },
       },
     ])
   })
 
-  it('rejects titles containing newlines', () => {
-    const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = []
-    const log = (message: string, meta?: Record<string, unknown>) => {
-      warnings.push({ message, meta })
-    }
-
-    expect(sanitizeGeneratedTitle('Line one\nLine two', log)).toBeNull()
-    expect(warnings).toEqual([
-      {
-        message: 'title generation rejected invalid title',
-        meta: { reason: 'newline' },
-      },
-    ])
+  it('extracts and condenses the first useful line from multiline output', () => {
+    expect(sanitizeGeneratedTitle('Line one\nLine two')).toBe('Line one')
+    expect(
+      sanitizeGeneratedTitle(
+        'Here are solid places for long-term rentals (Miete) in Berlin:\n\nhttps://example.com',
+      ),
+    ).toBe('Berlin long term rentals')
   })
 
   it('rejects address-like titles', () => {
@@ -83,35 +79,33 @@ describe('sanitizeGeneratedTitle', () => {
     ])
   })
 
-  it('rejects titles with more than 6 words', () => {
-    const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = []
-    const log = (message: string, meta?: Record<string, unknown>) => {
-      warnings.push({ message, meta })
-    }
-
-    const tooLong = 'one two three four five six seven'
-    expect(sanitizeGeneratedTitle(tooLong, log)).toBeNull()
-    expect(warnings).toEqual([
-      {
-        message: 'title generation rejected invalid title',
-        meta: { reason: 'too_many_words', wordCount: 7 },
-      },
-    ])
+  it('condenses titles with more than 6 words', () => {
+    expect(sanitizeGeneratedTitle('one two three four five six seven')).toBe(
+      'one two three four five six',
+    )
   })
 
-  it('rejects titles with excessive whitespace', () => {
-    const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = []
-    const log = (message: string, meta?: Record<string, unknown>) => {
-      warnings.push({ message, meta })
-    }
+  it('collapses excessive whitespace during extraction', () => {
+    expect(sanitizeGeneratedTitle('Grocery   list')).toBe('Grocery list')
+  })
+})
 
-    expect(sanitizeGeneratedTitle('Grocery   list', log)).toBeNull()
-    expect(warnings).toEqual([
-      {
-        message: 'title generation rejected invalid title',
-        meta: { reason: 'whitespace' },
-      },
-    ])
+describe('extractTitleCandidateFromRaw', () => {
+  it('returns the first non-url line and strips markdown fences', () => {
+    expect(
+      extractTitleCandidateFromRaw(
+        'Here are rentals in Berlin:\n\nhttps://example.com\n\nMore text',
+      ),
+    ).toBe('Here are rentals in Berlin:')
+    expect(extractTitleCandidateFromRaw('```title```\nActual title')).toBe('Actual title')
+  })
+})
+
+describe('condenseToTitleWords', () => {
+  it('drops filler prefixes and prefers place-led rental titles', () => {
+    expect(
+      condenseToTitleWords('Here are solid places for long-term rentals (Miete) in Berlin:'),
+    ).toBe('Berlin long term rentals')
   })
 })
 
@@ -124,6 +118,20 @@ describe('fallbackTitleFromUserMessage', () => {
     expect(
       fallbackTitleFromUserMessage('hello,   where can I find bucher shops near me'),
     ).toBe('Hello, where can I find bucher')
+  })
+
+  it('builds a city-led rental title for Berlin apartment questions', () => {
+    expect(
+      fallbackTitleFromUserMessage(
+        'what websites can we find apartments for long term rent in berlin? give me a list of links',
+      ),
+    ).toBe('Berlin apartment rental websites')
+  })
+
+  it('strips trailing request clauses and question marks', () => {
+    expect(
+      fallbackTitleFromUserMessage('What is the weather in Lisbon? give me details'),
+    ).toBe('Lisbon is the weather')
   })
 
   it('returns null for empty input', () => {
@@ -337,12 +345,12 @@ describe('generateConversationTitle', () => {
       log,
     )
 
-    expect(title).toBe('Why was the sbahn not working')
+    expect(title).toBe('Berlin was the sbahn not working')
     expect(warnings).toEqual(
       expect.arrayContaining([
         {
           message: 'title generation rejected invalid title',
-          meta: { reason: 'markdown_fence' },
+          meta: { reason: 'address_like' },
         },
         {
           message: 'Hermes title generation returned invalid title',
@@ -430,6 +438,21 @@ describe('generateTitleFromLlm', () => {
 
     expect(title).toBeNull()
   })
+
+  it('extracts a condensed title from multiline Hermes apartment list output', async () => {
+    const hermesClient = new FakeHermesClient()
+    hermesClient.queueCompleteChatResponse(
+      'Here are solid places for long-term rentals (Miete) in Berlin:\n\nhttps://www.immobilienscout24.de\nhttps://www.wg-gesucht.de',
+    )
+
+    const title = await generateTitleFromLlm(
+      hermesClient,
+      conversationId,
+      'what websites can we find apartments for long term rent in berlin? give me a list of links',
+    )
+
+    expect(title).toBe('Berlin long term rentals')
+  })
 })
 
 describe('generateAndSaveTitle', () => {
@@ -497,7 +520,7 @@ describe('generateAndSaveTitle', () => {
       expect.arrayContaining([
         {
           message: 'title generation rejected invalid title',
-          meta: { reason: 'markdown_fence' },
+          meta: { reason: 'address_like' },
         },
         {
           message: 'title generation produced no title',
