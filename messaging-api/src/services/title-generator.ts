@@ -20,13 +20,55 @@ const TITLE_SYSTEM_PROMPT =
 
 const MAX_USER_MESSAGE_CHARS = 500
 const MAX_GENERATED_TITLE_CHARS = 80
-const MAX_GENERATED_TITLE_WORDS = 10
+const MAX_GENERATED_TITLE_WORDS = 6
+
+export const OPENAI_TITLE_FALLBACK_MODEL = 'gpt-4o-mini'
+
+const INVALID_TITLE_PATTERNS = [/you're at/i, /you are at/i]
 
 export function buildTitlePromptMessages(userMessageText: string): HermesPromptMessage[] {
   return [
     { role: 'system', content: TITLE_SYSTEM_PROMPT },
     { role: 'user', content: userMessageText.slice(0, MAX_USER_MESSAGE_CHARS) },
   ]
+}
+
+export function isGrokComposerModel(model: string): boolean {
+  return /^grok-composer-/i.test(model.trim())
+}
+
+export function resolveTitleGenerationLlm(
+  auxiliaryLlm?: AuxiliaryLlmConfig | null,
+): AuxiliaryLlmConfig | null {
+  if (!isAuxiliaryLlmConfigured(auxiliaryLlm)) {
+    return null
+  }
+
+  const config = auxiliaryLlm!
+  if (!config.baseUrl.trim() && isGrokComposerModel(config.model)) {
+    return {
+      ...config,
+      model: OPENAI_TITLE_FALLBACK_MODEL,
+      baseUrl: '',
+    }
+  }
+
+  return config
+}
+
+export function fallbackTitleFromUserMessage(text: string): string | null {
+  const collapsed = text.trim().replace(/\s+/g, ' ')
+  if (collapsed.length === 0) {
+    return null
+  }
+
+  const words = collapsed.split(/\s+/).filter(Boolean).slice(0, MAX_GENERATED_TITLE_WORDS)
+  const capped = words.join(' ').slice(0, MAX_GENERATED_TITLE_CHARS).trim()
+  if (capped.length === 0) {
+    return null
+  }
+
+  return capped.charAt(0).toUpperCase() + capped.slice(1)
 }
 
 export function sanitizeGeneratedTitle(
@@ -40,6 +82,16 @@ export function sanitizeGeneratedTitle(
 
   if (/\r|\n/.test(raw)) {
     log?.('title generation rejected invalid title', { reason: 'newline' })
+    return null
+  }
+
+  if (/^\s*[\r\n]/.test(raw) || /\s{3,}/.test(raw)) {
+    log?.('title generation rejected invalid title', { reason: 'whitespace' })
+    return null
+  }
+
+  if (INVALID_TITLE_PATTERNS.some((pattern) => pattern.test(raw))) {
+    log?.('title generation rejected invalid title', { reason: 'address_like' })
     return null
   }
 
@@ -57,27 +109,6 @@ export function sanitizeGeneratedTitle(
   }
 
   return capped
-}
-
-export function isLikelyOpenAiChatModel(model: string): boolean {
-  const normalized = model.trim().toLowerCase()
-  return (
-    normalized.startsWith('gpt-') ||
-    normalized.startsWith('chatgpt-') ||
-    /^o\d/.test(normalized)
-  )
-}
-
-export function shouldPreferHermesTitleGeneration(
-  auxiliaryLlm?: AuxiliaryLlmConfig | null,
-): boolean {
-  if (!isAuxiliaryLlmConfigured(auxiliaryLlm)) {
-    return true
-  }
-  if (auxiliaryLlm!.baseUrl.trim()) {
-    return false
-  }
-  return !isLikelyOpenAiChatModel(auxiliaryLlm!.model)
 }
 
 async function completeTitleWithHermes(
@@ -99,46 +130,49 @@ export async function generateConversationTitle(
   log?: (message: string, meta?: Record<string, unknown>) => void,
 ): Promise<string | null> {
   const messages = buildTitlePromptMessages(userMessageText)
+  const resolvedLlm = resolveTitleGenerationLlm(auxiliaryLlm)
 
-  if (shouldPreferHermesTitleGeneration(auxiliaryLlm)) {
+  if (resolvedLlm) {
     try {
-      const raw = await completeTitleWithHermes(hermesClient, conversationId, messages)
-      return sanitizeGeneratedTitle(raw, log)
+      const raw = await completeAuxiliaryLlm(resolvedLlm, messages)
+      const title = sanitizeGeneratedTitle(raw, log)
+      if (title) {
+        return title
+      }
+      log?.('auxiliary title generation returned invalid title; falling back to Hermes', {
+        model: resolvedLlm.model,
+      })
     } catch (error) {
-      log?.('title generation failed', {
-        path: 'hermes',
+      log?.('auxiliary title generation failed; falling back to Hermes', {
+        model: resolvedLlm.model,
         err: error instanceof Error ? error.message : String(error),
       })
-      return null
     }
-  }
-
-  try {
-    const raw = await completeAuxiliaryLlm(auxiliaryLlm!, messages)
-    const title = sanitizeGeneratedTitle(raw, log)
-    if (title) {
-      return title
-    }
-    log?.('auxiliary title generation returned empty result; falling back to Hermes', {
-      model: auxiliaryLlm!.model,
-    })
-  } catch (error) {
-    log?.('auxiliary title generation failed; falling back to Hermes', {
-      model: auxiliaryLlm!.model,
-      err: error instanceof Error ? error.message : String(error),
-    })
   }
 
   try {
     const raw = await completeTitleWithHermes(hermesClient, conversationId, messages)
-    return sanitizeGeneratedTitle(raw, log)
+    const title = sanitizeGeneratedTitle(raw, log)
+    if (title) {
+      return title
+    }
+    log?.('Hermes title generation returned invalid title; using user-message fallback', {
+      conversationId,
+    })
   } catch (error) {
     log?.('title generation failed', {
       path: 'hermes_fallback',
       err: error instanceof Error ? error.message : String(error),
     })
-    return null
   }
+
+  const fallback = fallbackTitleFromUserMessage(userMessageText)
+  if (fallback) {
+    log?.('title generation using user-message fallback', { conversationId })
+    return fallback
+  }
+
+  return null
 }
 
 export async function generateAndSaveTitle(input: {

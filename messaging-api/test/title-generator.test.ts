@@ -6,11 +6,13 @@ import * as auxiliaryLlmClient from '../src/services/auxiliary-llm-client.js'
 import { buildTitleGenerationSessionKey } from '../src/services/hermes-client.js'
 import {
   buildTitlePromptMessages,
+  fallbackTitleFromUserMessage,
   generateAndSaveTitle,
   generateConversationTitle,
-  isLikelyOpenAiChatModel,
+  isGrokComposerModel,
+  OPENAI_TITLE_FALLBACK_MODEL,
+  resolveTitleGenerationLlm,
   sanitizeGeneratedTitle,
-  shouldPreferHermesTitleGeneration,
 } from '../src/services/title-generator.js'
 import { StreamHub } from '../src/streams/hub.js'
 import { FakeHermesClient } from './helpers/hermes.js'
@@ -62,20 +64,68 @@ describe('sanitizeGeneratedTitle', () => {
     ])
   })
 
-  it('rejects titles with more than 10 words', () => {
+  it('rejects address-like titles', () => {
     const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = []
     const log = (message: string, meta?: Record<string, unknown>) => {
       warnings.push({ message, meta })
     }
 
-    const tooLong = 'one two three four five six seven eight nine ten eleven'
+    const addressTitle =
+      "You're at Simon-Dach-Straße 10, Friedrichshain, 10245 Berlin, Germany."
+    expect(sanitizeGeneratedTitle(addressTitle, log)).toBeNull()
+    expect(warnings).toEqual([
+      {
+        message: 'title generation rejected invalid title',
+        meta: { reason: 'address_like' },
+      },
+    ])
+  })
+
+  it('rejects titles with more than 6 words', () => {
+    const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = []
+    const log = (message: string, meta?: Record<string, unknown>) => {
+      warnings.push({ message, meta })
+    }
+
+    const tooLong = 'one two three four five six seven'
     expect(sanitizeGeneratedTitle(tooLong, log)).toBeNull()
     expect(warnings).toEqual([
       {
         message: 'title generation rejected invalid title',
-        meta: { reason: 'too_many_words', wordCount: 11 },
+        meta: { reason: 'too_many_words', wordCount: 7 },
       },
     ])
+  })
+
+  it('rejects titles with excessive whitespace', () => {
+    const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = []
+    const log = (message: string, meta?: Record<string, unknown>) => {
+      warnings.push({ message, meta })
+    }
+
+    expect(sanitizeGeneratedTitle('Grocery   list', log)).toBeNull()
+    expect(warnings).toEqual([
+      {
+        message: 'title generation rejected invalid title',
+        meta: { reason: 'whitespace' },
+      },
+    ])
+  })
+})
+
+describe('fallbackTitleFromUserMessage', () => {
+  it('capitalizes a short greeting', () => {
+    expect(fallbackTitleFromUserMessage('hello')).toBe('Hello')
+  })
+
+  it('collapses whitespace and caps at 6 words', () => {
+    expect(
+      fallbackTitleFromUserMessage('hello,   where can I find bucher shops near me'),
+    ).toBe('Hello, where can I find bucher')
+  })
+
+  it('returns null for empty input', () => {
+    expect(fallbackTitleFromUserMessage('   ')).toBeNull()
   })
 })
 
@@ -101,55 +151,50 @@ describe('buildTitlePromptMessages', () => {
   })
 })
 
-describe('isLikelyOpenAiChatModel', () => {
-  it('recognizes common OpenAI chat model names', () => {
-    expect(isLikelyOpenAiChatModel('gpt-5.4-nano')).toBe(true)
-    expect(isLikelyOpenAiChatModel('chatgpt-4o-latest')).toBe(true)
-    expect(isLikelyOpenAiChatModel('o3-mini')).toBe(true)
+describe('isGrokComposerModel', () => {
+  it('recognizes grok-composer model names', () => {
+    expect(isGrokComposerModel('grok-composer-2.5-fast')).toBe(true)
+    expect(isGrokComposerModel('GROK-COMPOSER-3')).toBe(true)
   })
 
-  it('rejects non-OpenAI model names', () => {
-    expect(isLikelyOpenAiChatModel('grok-composer-2.5-fast')).toBe(false)
-    expect(isLikelyOpenAiChatModel('claude-3-5-sonnet')).toBe(false)
+  it('rejects non-grok-composer model names', () => {
+    expect(isGrokComposerModel('gpt-4o-mini')).toBe(false)
+    expect(isGrokComposerModel('grok-3')).toBe(false)
   })
 })
 
-describe('shouldPreferHermesTitleGeneration', () => {
-  it('prefers Hermes when auxiliary LLM is not configured', () => {
-    expect(shouldPreferHermesTitleGeneration(null)).toBe(true)
-    expect(shouldPreferHermesTitleGeneration({ apiKey: '', baseUrl: '', model: 'gpt-4', timeoutMs: 1000 })).toBe(
-      true,
-    )
+describe('resolveTitleGenerationLlm', () => {
+  it('returns null when auxiliary LLM is not configured', () => {
+    expect(resolveTitleGenerationLlm(null)).toBeNull()
+    expect(
+      resolveTitleGenerationLlm({ apiKey: '', baseUrl: '', model: 'gpt-4', timeoutMs: 1000 }),
+    ).toBeNull()
   })
 
-  it('prefers Hermes when base URL is empty and model is not OpenAI', () => {
+  it('maps grok-composer models to gpt-4o-mini when base URL is empty', () => {
     expect(
-      shouldPreferHermesTitleGeneration({
-        apiKey: 'key',
+      resolveTitleGenerationLlm({
+        apiKey: 'test-key',
         baseUrl: '',
         model: 'grok-composer-2.5-fast',
-        timeoutMs: 1000,
+        timeoutMs: 5_000,
       }),
-    ).toBe(true)
+    ).toEqual({
+      apiKey: 'test-key',
+      baseUrl: '',
+      model: OPENAI_TITLE_FALLBACK_MODEL,
+      timeoutMs: 5_000,
+    })
   })
 
-  it('prefers auxiliary LLM when base URL is set or model is OpenAI', () => {
-    expect(
-      shouldPreferHermesTitleGeneration({
-        apiKey: 'key',
-        baseUrl: 'https://api.openai.com/v1',
-        model: 'grok-composer-2.5-fast',
-        timeoutMs: 1000,
-      }),
-    ).toBe(false)
-    expect(
-      shouldPreferHermesTitleGeneration({
-        apiKey: 'key',
-        baseUrl: '',
-        model: 'gpt-5.4-nano',
-        timeoutMs: 1000,
-      }),
-    ).toBe(false)
+  it('preserves explicit base URL and model when configured', () => {
+    const config = {
+      apiKey: 'test-key',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'grok-composer-2.5-fast',
+      timeoutMs: 5_000,
+    }
+    expect(resolveTitleGenerationLlm(config)).toEqual(config)
   })
 })
 
@@ -160,7 +205,7 @@ describe('generateConversationTitle', () => {
     vi.restoreAllMocks()
   })
 
-  it('uses completeChat with a per-conversation title-generation session key when auxiliary LLM is not configured', async () => {
+  it('uses Hermes when auxiliary LLM is not configured', async () => {
     const hermesClient = new FakeHermesClient()
     hermesClient.queueCompleteChatResponse('Grocery list')
 
@@ -176,10 +221,11 @@ describe('generateConversationTitle', () => {
     expect(hermesClient.requests).toHaveLength(0)
   })
 
-  it('prefers Hermes when auxiliary model is non-OpenAI and base URL is empty', async () => {
+  it('prefers auxiliary LLM with OpenAI fallback when grok-composer has no base URL', async () => {
     const hermesClient = new FakeHermesClient()
-    hermesClient.queueCompleteChatResponse('Hello there')
-    const auxiliarySpy = vi.spyOn(auxiliaryLlmClient, 'completeAuxiliaryLlm')
+    const auxiliarySpy = vi
+      .spyOn(auxiliaryLlmClient, 'completeAuxiliaryLlm')
+      .mockResolvedValue('Hello there')
 
     const title = await generateConversationTitle(hermesClient, conversationId, 'hello', {
       apiKey: 'test-key',
@@ -189,11 +235,16 @@ describe('generateConversationTitle', () => {
     })
 
     expect(title).toBe('Hello there')
-    expect(auxiliarySpy).not.toHaveBeenCalled()
-    expect(hermesClient.completeRequests).toHaveLength(1)
-    expect(hermesClient.completeRequests[0]?.hermesSessionId).toBe(
-      buildTitleGenerationSessionKey(conversationId),
+    expect(auxiliarySpy).toHaveBeenCalledWith(
+      {
+        apiKey: 'test-key',
+        baseUrl: '',
+        model: OPENAI_TITLE_FALLBACK_MODEL,
+        timeoutMs: 5_000,
+      },
+      buildTitlePromptMessages('hello'),
     )
+    expect(hermesClient.completeRequests).toHaveLength(0)
   })
 
   it('falls back to Hermes when auxiliary LLM fails', async () => {
@@ -238,7 +289,7 @@ describe('generateConversationTitle', () => {
     ])
   })
 
-  it('falls back to Hermes when auxiliary LLM returns an empty title', async () => {
+  it('falls back to Hermes when auxiliary LLM returns an invalid title', async () => {
     const hermesClient = new FakeHermesClient()
     hermesClient.queueCompleteChatResponse('Morning greeting')
     vi.spyOn(auxiliaryLlmClient, 'completeAuxiliaryLlm').mockResolvedValue('   ')
@@ -262,11 +313,11 @@ describe('generateConversationTitle', () => {
 
     expect(title).toBe('Morning greeting')
     expect(warnings).toContain(
-      'auxiliary title generation returned empty result; falling back to Hermes',
+      'auxiliary title generation returned invalid title; falling back to Hermes',
     )
   })
 
-  it('rejects stale Hermes output that looks like leaked assistant content', async () => {
+  it('uses user-message fallback when Hermes returns stale assistant content', async () => {
     const hermesClient = new FakeHermesClient()
     hermesClient.queueCompleteChatResponse(
       "You're at Simon-Dach-Straße 10, Friedrichshain, 10245 Berlin, Germany. ```map ty",
@@ -284,13 +335,23 @@ describe('generateConversationTitle', () => {
       log,
     )
 
-    expect(title).toBeNull()
-    expect(warnings).toEqual([
-      {
-        message: 'title generation rejected invalid title',
-        meta: { reason: 'markdown_fence' },
-      },
-    ])
+    expect(title).toBe('Why was the sbahn not working')
+    expect(warnings).toEqual(
+      expect.arrayContaining([
+        {
+          message: 'title generation rejected invalid title',
+          meta: { reason: 'markdown_fence' },
+        },
+        {
+          message: 'Hermes title generation returned invalid title; using user-message fallback',
+          meta: { conversationId },
+        },
+        {
+          message: 'title generation using user-message fallback',
+          meta: { conversationId },
+        },
+      ]),
+    )
   })
 })
 
@@ -327,7 +388,7 @@ describe('generateAndSaveTitle', () => {
     expect(row.title).toBe('Berlin S-Bahn outage')
   })
 
-  it('does not save a rejected title', async () => {
+  it('saves a user-message fallback when generated titles are rejected', async () => {
     const db = new Database(':memory:')
     initSchema(db)
     db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'op', 'hash')`).run()
@@ -354,7 +415,7 @@ describe('generateAndSaveTitle', () => {
     const row = db
       .prepare('SELECT title FROM conversations WHERE id = ?')
       .get(conversationId) as { title: string | null }
-    expect(row.title).toBeNull()
+    expect(row.title).toBe('Why was the sbahn not working')
     expect(warnings).toEqual(
       expect.arrayContaining([
         {
@@ -362,7 +423,7 @@ describe('generateAndSaveTitle', () => {
           meta: { reason: 'markdown_fence' },
         },
         {
-          message: 'title generation produced no title',
+          message: 'title generation using user-message fallback',
           meta: { conversationId },
         },
       ]),
