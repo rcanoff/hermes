@@ -13,6 +13,8 @@ export function scheduleConversationSessionWarmup(input: {
     | 'hermes_job_id'
     | 'title'
     | 'schedule_display'
+    | 'model'
+    | 'provider'
   >
   companionUsername?: string
   log?: (message: string, meta?: Record<string, unknown>) => void
@@ -30,6 +32,8 @@ export function scheduleConversationSessionWarmup(input: {
     .ensureSession({
       hermesSessionId: input.conversation.hermes_session_id,
       systemPrompt: systemPrompt || null,
+      model: input.conversation.model,
+      provider: input.conversation.provider,
     })
     .catch((error) => {
       input.log?.('conversation session warmup failed', {

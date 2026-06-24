@@ -26,6 +26,14 @@ export interface CompleteChatInput {
 export interface EnsureSessionInput {
   hermesSessionId: string
   systemPrompt?: string | null
+  model?: string
+  provider?: string
+}
+
+export interface PatchSessionModelInput {
+  hermesSessionId: string
+  model: string
+  provider: string
 }
 
 export interface HermesStreamEvent {
@@ -40,6 +48,7 @@ export interface HermesClient {
   streamChat(input: StreamChatInput): AsyncIterable<HermesStreamEvent>
   completeChat(input: CompleteChatInput): Promise<string>
   ensureSession(input: EnsureSessionInput): Promise<void>
+  patchSessionModel(input: PatchSessionModelInput): Promise<void>
 }
 
 interface OpenAiChatCompletion {
@@ -178,6 +187,12 @@ export class OpenAiHermesClient implements HermesClient {
     if (systemPrompt) {
       body.system_prompt = systemPrompt
     }
+    if (input.model) {
+      body.model = input.model
+    }
+    if (input.provider) {
+      body.provider = input.provider
+    }
 
     const response = await fetch(new URL('/api/sessions', this.baseUrl), {
       method: 'POST',
@@ -191,6 +206,30 @@ export class OpenAiHermesClient implements HermesClient {
 
     if (!response.ok) {
       throw new Error(`Hermes session warmup failed with status ${response.status}`)
+    }
+  }
+
+  async patchSessionModel(input: PatchSessionModelInput): Promise<void> {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      'x-hermes-session-key': COMPANION_APP_SESSION_KEY,
+    }
+
+    if (this.apiKey) {
+      headers.authorization = `Bearer ${this.apiKey}`
+    }
+
+    const response = await fetch(new URL(`/api/sessions/${input.hermesSessionId}`, this.baseUrl), {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        model: input.model,
+        provider: input.provider,
+      }),
+    })
+
+    if (!response.ok) {
+      throw new Error(`Hermes session model patch failed with status ${response.status}`)
     }
   }
 

@@ -3,6 +3,7 @@ import type {
   EnsureSessionInput,
   HermesClient,
   HermesStreamEvent,
+  PatchSessionModelInput,
   StreamChatInput,
 } from '../../src/services/hermes-client.js'
 
@@ -15,6 +16,7 @@ export class FakeHermesClient implements HermesClient {
   readonly requests: StreamChatInput[] = []
   readonly completeRequests: CompleteChatInput[] = []
   readonly ensureSessionRequests: EnsureSessionInput[] = []
+  readonly patchSessionModelRequests: PatchSessionModelInput[] = []
 
   private readonly completeResponses: Array<string | Error> = []
   private readonly queues = new Map<number, QueueEntry[]>()
@@ -56,6 +58,10 @@ export class FakeHermesClient implements HermesClient {
 
   async ensureSession(input: EnsureSessionInput): Promise<void> {
     this.ensureSessionRequests.push(input)
+  }
+
+  async patchSessionModel(input: PatchSessionModelInput): Promise<void> {
+    this.patchSessionModelRequests.push(input)
   }
 
   async completeChat(input: CompleteChatInput): Promise<string> {

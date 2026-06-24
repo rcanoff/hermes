@@ -196,6 +196,7 @@ Canonical URL: https://www.immobilienscout24.de/Suche/de/berlin/berlin/mitte/woh
       completeChat,
       async *streamChat() {},
       ensureSession: async () => {},
+      patchSessionModel: async () => {},
     }
 
     const classified = await classifyAndSynthesizeCompanionCronPrompt({
@@ -276,6 +277,7 @@ Canonical URL: https://www.immobilienscout24.de/Suche/de/berlin/berlin/mitte/woh
       completeChat,
       async *streamChat() {},
       ensureSession: async () => {},
+      patchSessionModel: async () => {},
     }
 
     const classified = await classifyAndSynthesizeCompanionCronPrompt({
@@ -342,6 +344,7 @@ Canonical URL: https://www.immobilienscout24.de/Suche/de/berlin/berlin/mitte/woh
       completeChat,
       async *streamChat() {},
       ensureSession: async () => {},
+      patchSessionModel: async () => {},
     }
 
     const classified = await classifyAndSynthesizeCompanionCronPrompt({
@@ -404,6 +407,7 @@ Canonical URL: https://www.immobilienscout24.de/Suche/de/berlin/berlin/mitte/woh
       completeChat,
       async *streamChat() {},
       ensureSession: async () => {},
+      patchSessionModel: async () => {},
     }
 
     const classified = await classifyAndSynthesizeCompanionCronPromptFromConversation({
@@ -432,6 +436,7 @@ Canonical URL: https://www.immobilienscout24.de/Suche/de/berlin/berlin/mitte/woh
       completeChat,
       async *streamChat() {},
       ensureSession: async () => {},
+      patchSessionModel: async () => {},
     }
 
     const prompt = await synthesizeCompanionCronPrompt({

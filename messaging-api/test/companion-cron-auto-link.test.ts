@@ -186,6 +186,7 @@ Open Home Assistant → Bermuda BLE Trilateration → Configure. Start with smoo
       completeChat,
       async *streamChat() {},
       ensureSession: async () => {},
+      patchSessionModel: async () => {},
     }
 
     const linked = await autoLinkNewCompanionCronJobs({
@@ -267,6 +268,7 @@ Earlier we guessed a coastal overlook — steep cliffs, turquoise water — poss
       completeChat,
       async *streamChat() {},
       ensureSession: async () => {},
+      patchSessionModel: async () => {},
     }
 
     const linked = await autoLinkNewCompanionCronJobs({
@@ -368,6 +370,7 @@ Output: link line then Kalt X · Warm Y · m² · Zi. · title, sorted cheapest 
       completeChat,
       async *streamChat() {},
       ensureSession: async () => {},
+      patchSessionModel: async () => {},
     }
 
     const linked = await autoLinkNewCompanionCronJobs({

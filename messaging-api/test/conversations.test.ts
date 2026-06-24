@@ -96,6 +96,8 @@ describe('conversation routes', () => {
     expect(hermesClient.ensureSessionRequests[0]).toEqual({
       hermesSessionId: body.hermes_session_id,
       systemPrompt: expect.stringContaining('companion-app'),
+      model: 'grok-composer-2.5-fast',
+      provider: 'xai-oauth',
     })
   })
 
