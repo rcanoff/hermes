@@ -35,22 +35,82 @@ export function sanitizeGeneratedTitle(raw: string): string | null {
   return capped.length > 0 ? capped : null
 }
 
+export function isLikelyOpenAiChatModel(model: string): boolean {
+  const normalized = model.trim().toLowerCase()
+  return (
+    normalized.startsWith('gpt-') ||
+    normalized.startsWith('chatgpt-') ||
+    /^o\d/.test(normalized)
+  )
+}
+
+export function shouldPreferHermesTitleGeneration(
+  auxiliaryLlm?: AuxiliaryLlmConfig | null,
+): boolean {
+  if (!isAuxiliaryLlmConfigured(auxiliaryLlm)) {
+    return true
+  }
+  if (auxiliaryLlm!.baseUrl.trim()) {
+    return false
+  }
+  return !isLikelyOpenAiChatModel(auxiliaryLlm!.model)
+}
+
+async function completeTitleWithHermes(
+  hermesClient: HermesClient,
+  messages: HermesPromptMessage[],
+): Promise<string> {
+  return hermesClient.completeChat({
+    hermesSessionId: COMPANION_TITLE_GENERATION_SESSION_KEY,
+    messages,
+  })
+}
+
 export async function generateConversationTitle(
   hermesClient: HermesClient,
   userMessageText: string,
   auxiliaryLlm?: AuxiliaryLlmConfig | null,
+  log?: (message: string, meta?: Record<string, unknown>) => void,
 ): Promise<string | null> {
   const messages = buildTitlePromptMessages(userMessageText)
 
+  if (shouldPreferHermesTitleGeneration(auxiliaryLlm)) {
+    try {
+      const raw = await completeTitleWithHermes(hermesClient, messages)
+      return sanitizeGeneratedTitle(raw)
+    } catch (error) {
+      log?.('title generation failed', {
+        path: 'hermes',
+        err: error instanceof Error ? error.message : String(error),
+      })
+      return null
+    }
+  }
+
   try {
-    const raw = isAuxiliaryLlmConfigured(auxiliaryLlm)
-      ? await completeAuxiliaryLlm(auxiliaryLlm!, messages)
-      : await hermesClient.completeChat({
-          hermesSessionId: COMPANION_TITLE_GENERATION_SESSION_KEY,
-          messages,
-        })
+    const raw = await completeAuxiliaryLlm(auxiliaryLlm!, messages)
+    const title = sanitizeGeneratedTitle(raw)
+    if (title) {
+      return title
+    }
+    log?.('auxiliary title generation returned empty result; falling back to Hermes', {
+      model: auxiliaryLlm!.model,
+    })
+  } catch (error) {
+    log?.('auxiliary title generation failed; falling back to Hermes', {
+      model: auxiliaryLlm!.model,
+      err: error instanceof Error ? error.message : String(error),
+    })
+  }
+
+  try {
+    const raw = await completeTitleWithHermes(hermesClient, messages)
     return sanitizeGeneratedTitle(raw)
-  } catch {
+  } catch (error) {
+    log?.('title generation failed', {
+      path: 'hermes_fallback',
+      err: error instanceof Error ? error.message : String(error),
+    })
     return null
   }
 }
@@ -64,13 +124,18 @@ export async function generateAndSaveTitle(input: {
   userMessageText: string
   originSessionId: string | null
   auxiliaryLlm?: AuxiliaryLlmConfig | null
+  log?: (message: string, meta?: Record<string, unknown>) => void
 }): Promise<void> {
   const title = await generateConversationTitle(
     input.hermesClient,
     input.userMessageText,
     input.auxiliaryLlm,
+    input.log,
   )
   if (!title) {
+    input.log?.('title generation produced no title', {
+      conversationId: input.conversationId,
+    })
     return
   }
 
