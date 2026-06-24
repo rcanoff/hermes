@@ -1,4 +1,8 @@
 import type Database from 'better-sqlite3'
+import {
+  COMPANION_DEFAULT_MODEL,
+  COMPANION_DEFAULT_PROVIDER,
+} from '../lib/companion-models.js'
 import { backfillAccountSyncEvents } from './repos/chat-sync-events.js'
 
 export function initSchema(db: Database.Database): void {
@@ -135,6 +139,7 @@ export function initSchema(db: Database.Database): void {
 
   ensureLegacyUserColumns(db)
   ensureLegacyConversationColumns(db)
+  ensureConversationModelColumns(db)
   ensureJobConversationColumns(db)
   ensureCronOutputDeliveries(db)
   ensureLegacyHealthDailySummaries(db)
@@ -220,6 +225,31 @@ function ensureLegacyConversationColumns(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS conversations_user_updated_idx
       ON conversations (user_id, updated_at DESC, id DESC)
   `)
+}
+
+function ensureConversationModelColumns(db: Database.Database): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(conversations)`)
+    .all() as Array<{ name: string }>
+
+  if (!columns.some((column) => column.name === 'model')) {
+    db.exec(
+      `ALTER TABLE conversations ADD COLUMN model TEXT NOT NULL DEFAULT '${COMPANION_DEFAULT_MODEL}'`,
+    )
+  }
+
+  if (!columns.some((column) => column.name === 'provider')) {
+    db.exec(
+      `ALTER TABLE conversations ADD COLUMN provider TEXT NOT NULL DEFAULT '${COMPANION_DEFAULT_PROVIDER}'`,
+    )
+  }
+
+  db.exec(
+    `UPDATE conversations SET model = '${COMPANION_DEFAULT_MODEL}' WHERE model IS NULL OR model = ''`,
+  )
+  db.exec(
+    `UPDATE conversations SET provider = '${COMPANION_DEFAULT_PROVIDER}' WHERE provider IS NULL OR provider = ''`,
+  )
 }
 
 function ensureJobConversationColumns(db: Database.Database): void {

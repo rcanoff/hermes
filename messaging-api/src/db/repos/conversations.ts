@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
+import {
+  COMPANION_DEFAULT_MODEL,
+  COMPANION_DEFAULT_PROVIDER,
+} from '../../lib/companion-models.js'
 import { buildJobConversationBootstrap } from '../../lib/job-conversation.js'
 
 export type ConversationKind = 'regular' | 'job'
@@ -16,6 +20,8 @@ export interface ConversationRow {
   job_enabled: number
   job_last_run_at: string | null
   job_last_status: string | null
+  model: string
+  provider: string
   created_at: string
   updated_at: string
 }
@@ -38,7 +44,7 @@ export interface ListConversationsFilter {
 const CONVERSATION_COLUMNS = `
   id, user_id, hermes_session_id, kind, title, bootstrap_prompt,
   hermes_job_id, schedule_display, job_enabled, job_last_run_at, job_last_status,
-  created_at, updated_at
+  model, provider, created_at, updated_at
 `
 
 export function touchConversationUpdatedAt(db: Database.Database, conversationId: string): void {
@@ -71,12 +77,17 @@ export function createConversation(
   userId: string,
   hermesSessionId: string,
   bootstrapPrompt?: string | null,
+  modelProvider?: { model: string; provider: string },
 ): string {
+  const model = modelProvider?.model ?? COMPANION_DEFAULT_MODEL
+  const provider = modelProvider?.provider ?? COMPANION_DEFAULT_PROVIDER
   const id = randomUUID()
   db.prepare(`
-    INSERT INTO conversations (id, user_id, hermes_session_id, bootstrap_prompt, updated_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
-  `).run(id, userId, hermesSessionId, bootstrapPrompt ?? null)
+    INSERT INTO conversations (
+      id, user_id, hermes_session_id, bootstrap_prompt, model, provider, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+  `).run(id, userId, hermesSessionId, bootstrapPrompt ?? null, model, provider)
   return id
 }
 
@@ -321,6 +332,29 @@ export function replaceConversationTitleIfEquals(
   }
 
   return result.changes === 1
+}
+
+export function updateConversationModel(
+  db: Database.Database,
+  conversationId: string,
+  model: string,
+  provider: string,
+): ConversationRow | undefined {
+  db.prepare(`
+    UPDATE conversations
+    SET model = ?, provider = ?
+    WHERE id = ?
+  `).run(model, provider, conversationId)
+
+  touchConversationUpdatedAt(db, conversationId)
+
+  return db
+    .prepare(`
+      SELECT ${CONVERSATION_COLUMNS}
+      FROM conversations
+      WHERE id = ?
+    `)
+    .get(conversationId) as ConversationRow | undefined
 }
 
 export function updateConversationTitle(

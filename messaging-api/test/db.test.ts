@@ -3,10 +3,19 @@ import os from 'node:os'
 import path from 'node:path'
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
+import {
+  createConversation,
+  getConversationForUser,
+  updateConversationModel,
+} from '../src/db/repos/conversations.js'
 import { denyToken, isTokenDenied } from '../src/db/repos/sessions.js'
 import { markRunCompleted, markRunFailed } from '../src/db/repos/runs.js'
 import { initSchema, reconcileRunningRuns } from '../src/db/schema.js'
 import { closeDb, getDb } from '../src/db/index.js'
+import {
+  COMPANION_DEFAULT_MODEL,
+  COMPANION_DEFAULT_PROVIDER,
+} from '../src/lib/companion-models.js'
 
 describe('schema', () => {
   it('creates health_daily_summaries table', () => {
@@ -88,6 +97,93 @@ describe('schema', () => {
       .prepare(`PRAGMA table_info(conversations)`)
       .all() as Array<{ name: string }>
     expect(columns.map((c) => c.name)).toContain('bootstrap_prompt')
+  })
+
+  it('includes model and provider on conversations', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const columns = db
+      .prepare(`PRAGMA table_info(conversations)`)
+      .all() as Array<{ name: string }>
+    const names = columns.map((c) => c.name)
+    expect(names).toContain('model')
+    expect(names).toContain('provider')
+  })
+
+  it('backfills model and provider on legacy conversations', () => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE conversations (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        hermes_session_id TEXT NOT NULL,
+        title TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      );
+      INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash');
+      INSERT INTO conversations (id, user_id, hermes_session_id) VALUES ('c1', 'u1', 'hs1');
+    `)
+
+    initSchema(db)
+
+    const row = db
+      .prepare('SELECT model, provider FROM conversations WHERE id = ?')
+      .get('c1') as { model: string; provider: string }
+
+    expect(row.model).toBe(COMPANION_DEFAULT_MODEL)
+    expect(row.provider).toBe(COMPANION_DEFAULT_PROVIDER)
+  })
+
+  it('stores default model and provider when creating a conversation', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    db.exec(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash');`)
+
+    const conversationId = createConversation(db, 'u1', 'hs1')
+    const conversation = getConversationForUser(db, 'u1', conversationId)
+
+    expect(conversation?.model).toBe(COMPANION_DEFAULT_MODEL)
+    expect(conversation?.provider).toBe(COMPANION_DEFAULT_PROVIDER)
+  })
+
+  it('stores explicit model and provider when creating a conversation', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    db.exec(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash');`)
+
+    const conversationId = createConversation(db, 'u1', 'hs1', null, {
+      model: 'gpt-5.4-mini',
+      provider: 'openai-codex',
+    })
+    const conversation = getConversationForUser(db, 'u1', conversationId)
+
+    expect(conversation?.model).toBe('gpt-5.4-mini')
+    expect(conversation?.provider).toBe('openai-codex')
+  })
+
+  it('updates model and provider via updateConversationModel', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    db.exec(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash');`)
+
+    const conversationId = createConversation(db, 'u1', 'hs1')
+    const updated = updateConversationModel(db, conversationId, 'grok-4.3', 'xai-oauth')
+
+    expect(updated?.model).toBe('grok-4.3')
+    expect(updated?.provider).toBe('xai-oauth')
+
+    const conversation = getConversationForUser(db, 'u1', conversationId)
+    expect(conversation?.model).toBe('grok-4.3')
+    expect(conversation?.provider).toBe('xai-oauth')
   })
 
   it('includes job conversation columns on conversations', () => {
