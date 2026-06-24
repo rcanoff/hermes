@@ -29,9 +29,14 @@ describe('applyConversationModelChange', () => {
     await app.close()
   })
 
-  it('patches Hermes session in place for same-provider model change', async () => {
+  it('patches Hermes session in place and rewarms transcript for same-provider model change', async () => {
     const hermesClient = new FakeHermesClient()
+    hermesClient.queueCompleteChatResponse('OK')
+
     const conversationId = createConversation(app.db, userId, 'hs-original')
+    insertMessage(app.db, { conversationId, role: 'user', content: 'Hello' })
+    insertMessage(app.db, { conversationId, role: 'assistant', content: 'Hi there' })
+
     const conversation = app.db
       .prepare('SELECT * FROM conversations WHERE id = ?')
       .get(conversationId) as {
@@ -70,6 +75,58 @@ describe('applyConversationModelChange', () => {
       { hermesSessionId: 'hs-original', model: 'grok-4.3', provider: 'xai-oauth' },
     ])
     expect(hermesClient.ensureSessionRequests).toHaveLength(0)
+    expect(hermesClient.completeRequests).toHaveLength(1)
+    expect(hermesClient.completeRequests[0]?.hermesSessionId).toBe('hs-original')
+    expect(hermesClient.completeRequests[0]?.messages.at(-1)).toEqual({
+      role: 'user',
+      content: expect.stringContaining('model changed'),
+    })
+  })
+
+  it('skips rewarm when same-provider selection is unchanged', async () => {
+    const hermesClient = new FakeHermesClient()
+    const conversationId = createConversation(app.db, userId, 'hs-original')
+    insertMessage(app.db, { conversationId, role: 'user', content: 'Hello' })
+
+    const conversation = app.db
+      .prepare('SELECT * FROM conversations WHERE id = ?')
+      .get(conversationId) as {
+      id: string
+      user_id: string
+      hermes_session_id: string
+      kind: 'regular' | 'job'
+      title: string | null
+      bootstrap_prompt: string | null
+      hermes_job_id: string | null
+      schedule_display: string | null
+      job_enabled: number
+      job_last_run_at: string | null
+      job_last_status: string | null
+      model: string
+      provider: string
+      created_at: string
+      updated_at: string
+    }
+
+    const result = await applyConversationModelChange({
+      db: app.db,
+      hermesClient,
+      catalog: DEFAULT_COMPANION_MODELS,
+      userId,
+      conversation,
+      model: conversation.model,
+      provider: conversation.provider,
+    })
+
+    expect(result.providerChanged).toBe(false)
+    expect(result.hermesSessionId).toBe('hs-original')
+    expect(hermesClient.patchSessionModelRequests).toEqual([
+      {
+        hermesSessionId: 'hs-original',
+        model: conversation.model,
+        provider: conversation.provider,
+      },
+    ])
     expect(hermesClient.completeRequests).toHaveLength(0)
   })
 

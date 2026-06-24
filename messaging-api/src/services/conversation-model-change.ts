@@ -28,8 +28,11 @@ export interface ModelChangeResult {
   hermesSessionId: string
 }
 
-const CONTEXT_REBUILD_USER_MESSAGE =
+const CONTEXT_REBUILD_PROVIDER_CHANGE_USER_MESSAGE =
   '[System: LLM provider changed. Re-read the conversation history above. Reply with exactly "OK" and nothing else.]'
+
+const CONTEXT_REBUILD_MODEL_CHANGE_USER_MESSAGE =
+  '[System: LLM model changed. Re-read the conversation history above. Reply with exactly "OK" and nothing else.]'
 
 export async function rewarmSessionTranscript(input: {
   db: Database.Database
@@ -38,6 +41,7 @@ export async function rewarmSessionTranscript(input: {
   companionUsername?: string
   attachmentsDir?: string
   visionHistoryMaxBytes?: number
+  rebuildUserMessage?: string
 }): Promise<void> {
   const history = listMessages(input.db, input.conversation.id)
   if (history.length === 0) {
@@ -65,7 +69,10 @@ export async function rewarmSessionTranscript(input: {
     visionHistoryMaxBytes: input.visionHistoryMaxBytes,
   })
 
-  messages.push({ role: 'user', content: CONTEXT_REBUILD_USER_MESSAGE })
+  messages.push({
+    role: 'user',
+    content: input.rebuildUserMessage ?? CONTEXT_REBUILD_PROVIDER_CHANGE_USER_MESSAGE,
+  })
 
   await input.hermesClient.completeChat({
     hermesSessionId: input.conversation.hermes_session_id,
@@ -103,6 +110,8 @@ export async function applyConversationModelChange(input: {
   const sameProvider = input.conversation.provider === input.provider
 
   if (sameProvider) {
+    const modelChanged = input.model !== input.conversation.model
+
     await input.hermesClient.patchSessionModel({
       hermesSessionId: previousHermesSessionId,
       model: input.model,
@@ -117,6 +126,18 @@ export async function applyConversationModelChange(input: {
     )
     if (!updated) {
       throw new ModelChangeError('invalid_request')
+    }
+
+    if (modelChanged) {
+      await rewarmSessionTranscript({
+        db: input.db,
+        hermesClient: input.hermesClient,
+        conversation: updated,
+        companionUsername: input.companionUsername,
+        attachmentsDir: input.attachmentsDir,
+        visionHistoryMaxBytes: input.visionHistoryMaxBytes,
+        rebuildUserMessage: CONTEXT_REBUILD_MODEL_CHANGE_USER_MESSAGE,
+      })
     }
 
     return {
