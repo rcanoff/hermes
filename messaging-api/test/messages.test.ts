@@ -428,6 +428,8 @@ describe('message routes', () => {
     await app!.listen({ host: '127.0.0.1', port: 0 })
     const address = app!.server.address() as AddressInfo
 
+    prepareTitleResponse(hermesClient, 'Porto weekend')
+
     const postResponse = await app!.inject({
       method: 'POST',
       url: `/conversations/${conversationId}/messages`,
@@ -436,22 +438,24 @@ describe('message routes', () => {
     })
     expect(postResponse.statusCode).toBe(202)
 
+    const titleRow = app!.db
+      .prepare('SELECT title FROM conversations WHERE id = ?')
+      .get(conversationId) as { title: string | null }
+    expect(titleRow.title).not.toBeNull()
+
     const response = await fetch(`http://127.0.0.1:${address.port}/conversations/${conversationId}/stream`, {
       headers: { authorization: `Bearer ${operatorToken}` },
     })
     const reader = response.body?.getReader()
     expect(reader).toBeTruthy()
-
-    prepareTitleResponse(hermesClient, 'Porto weekend')
     hermesClient.pushAnswerToken('Here is', 0)
     hermesClient.pushAnswerToken(' an idea', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
 
     const payload = await readUntilDone(reader!)
+    expect(payload).toContain('event: token\ndata: {"text":"Here is"}')
     expect(payload).toContain('event: done\ndata: {"messageId":')
-
-    await completeTitleAfterReply(hermesClient, 'Porto weekend')
 
     await waitFor(() => {
       const row = app!.db

@@ -19,14 +19,12 @@ import type { HermesClient } from './hermes-client.js'
 import {
   buildActivityLine,
   buildReasoningLine,
-  buildStatusLine,
 } from './tooling-line.js'
 import { emitConversationMessageUpsert } from './chat-sync-emitter.js'
 import {
   publishAccountConversationUpsert,
   publishMessageUpsert,
 } from '../streams/sse-mutation-publisher.js'
-import { scheduleTitleGeneration } from './title-generator.js'
 import type { AuxiliaryLlmConfig } from './auxiliary-llm-client.js'
 import { listHermesJobIdsFromFile } from '../lib/hermes-cron-jobs.js'
 import { autoLinkNewCompanionCronJobs } from './companion-cron-auto-link.js'
@@ -44,13 +42,10 @@ export interface ExecuteAssistantRunInput {
   rewindMessageIds?: string[]
   userId: string
   originSessionId: string | null
-  shouldGenerateTitle?: boolean
-  userMessageText?: string
   attachmentsDir?: string
   visionHistoryMaxBytes?: number
   cronJobsPath?: string
   conversationTitle?: string | null
-  titleGenerationLlm?: AuxiliaryLlmConfig | null
   cronPromptSynthesisLlm?: AuxiliaryLlmConfig | null
   onAssistantMessageCommitted?: (ctx: {
     messageId: string
@@ -89,9 +84,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
   let sawFirstTool = false
   let outstandingTools = 0
   let sawToolingActivity = false
-  let pendingStatusText: string | null = null
   let sawCronjobTool = false
-  let titleGenerationScheduled = false
   const knownJobIdsBefore = input.cronJobsPath
     ? await listHermesJobIdsFromFile(input.cronJobsPath)
     : new Set<string>()
@@ -100,15 +93,6 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     processLines.push(line)
     sawToolingActivity = true
     publishToolingLine(streamCtx, line)
-  }
-
-  const flushPendingStatus = (tool: string) => {
-    if (!pendingStatusText) {
-      return
-    }
-
-    publishProcessLine(buildStatusLine({ text: pendingStatusText, tool }))
-    pendingStatusText = null
   }
 
   const flushReasoningBuffer = () => {
@@ -121,25 +105,6 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     publishProcessLine(buildReasoningLine(text))
   }
 
-  const scheduleTitleGenerationIfNeeded = () => {
-    if (titleGenerationScheduled || !input.shouldGenerateTitle || !input.userMessageText) {
-      return
-    }
-
-    titleGenerationScheduled = true
-    scheduleTitleGeneration({
-      db: input.db,
-      hermesClient: input.hermesClient,
-      hub: input.hub,
-      conversationId: input.conversationId,
-      userId: input.userId,
-      userMessageText: input.userMessageText,
-      originSessionId: input.originSessionId,
-      auxiliaryLlm: input.titleGenerationLlm,
-      log: input.log,
-    })
-  }
-
   const beginReplyPhase = () => {
     if (inReplyPhase) {
       return
@@ -150,20 +115,6 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     if (sawToolingActivity) {
       publishToolingComplete(streamCtx)
     }
-    scheduleTitleGenerationIfNeeded()
-  }
-
-  const flushPendingInstantReply = (options?: { persist?: boolean }) => {
-    if (!pendingStatusText || sawFirstTool || inReplyPhase) {
-      return
-    }
-
-    beginReplyPhase()
-    if (options?.persist !== false) {
-      assistantText += pendingStatusText
-    }
-    publishReplyToken(streamCtx, pendingStatusText)
-    pendingStatusText = null
   }
 
   if (input.rewindMessageIds && input.rewindMessageIds.length > 0) {
@@ -197,7 +148,6 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
         if (event.name === 'cronjob') {
           sawCronjobTool = true
         }
-        flushPendingStatus(event.name)
         const line = buildActivityLine({
           tool: event.name,
           label: event.label,
@@ -223,7 +173,9 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
         }
 
         if (!sawFirstTool) {
-          pendingStatusText = pendingStatusText == null ? event.text : pendingStatusText + event.text
+          beginReplyPhase()
+          assistantText += event.text
+          publishReplyToken(streamCtx, event.text)
           continue
         }
 
@@ -245,8 +197,6 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     if (!sawDone) {
       throw new Error('Hermes stream ended without a done event')
     }
-
-    flushPendingInstantReply()
 
     const assistantMessageId = persistCompletedRun(
       input.db,
@@ -286,12 +236,10 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       content: assistantText,
     })
 
-    scheduleTitleGenerationIfNeeded()
     publishReplyDone(streamCtx, assistantMessageId)
 
     return assistantMessageId
   } catch (error) {
-    flushPendingInstantReply({ persist: false })
     const message = error instanceof Error ? error.message : 'unknown'
     markRunFailed(input.db, runId, 'hermes_stream_failed', message)
     publishRunError(streamCtx, 'hermes_stream_failed')

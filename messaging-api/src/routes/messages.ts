@@ -29,6 +29,7 @@ import {
   removeConversationMessagesFrom,
 } from '../services/conversation-message-rewind.js'
 import { executeAssistantRun } from '../services/run-executor.js'
+import { scheduleTitleGeneration } from '../services/title-generator.js'
 import { scheduleConversationSessionWarmup } from '../services/session-warmup.js'
 import { emitConversationMessageUpsert } from '../services/chat-sync-emitter.js'
 import {
@@ -204,6 +205,22 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         conversation.id,
       )
 
+      if (created.shouldGenerateTitle && content) {
+        scheduleTitleGeneration({
+          db: app.db,
+          hermesClient: app.hermesClient,
+          hub: app.streamHub,
+          conversationId: conversation.id,
+          userId: request.userId,
+          userMessageText: content,
+          originSessionId: request.sessionId ?? 'legacy',
+          auxiliaryLlm: app.titleGeneration,
+          log: (message, meta) => {
+            app.log.info(meta ?? {}, message)
+          },
+        })
+      }
+
       void executeAssistantRun({
         db: app.db,
         hermesClient: app.hermesClient,
@@ -216,9 +233,6 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         bootstrapPrompt,
         runId: created.runId,
         originSessionId: request.sessionId,
-        shouldGenerateTitle: created.shouldGenerateTitle,
-        userMessageText: content,
-        titleGenerationLlm: app.titleGeneration,
         cronPromptSynthesisLlm: app.cronPromptSynthesis,
         attachmentsDir: app.attachmentsDir,
         visionHistoryMaxBytes: app.visionHistoryMaxBytes,

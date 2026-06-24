@@ -1,5 +1,8 @@
 import type Database from 'better-sqlite3'
-import { updateConversationTitleIfNull } from '../db/repos/conversations.js'
+import {
+  replaceConversationTitleIfEquals,
+  updateConversationTitleIfNull,
+} from '../db/repos/conversations.js'
 import {
   completeAuxiliaryLlm,
   type AuxiliaryLlmConfig,
@@ -175,6 +178,18 @@ export async function generateConversationTitle(
   return null
 }
 
+function publishConversationTitle(
+  db: Database.Database,
+  hub: StreamHub,
+  userId: string,
+  conversationId: string,
+  title: string,
+): void {
+  emitAccountConversationUpsert(db, userId, conversationId)
+  publishAccountConversationUpsert(hub, db, userId, conversationId)
+  publishSessionTitle(hub, userId, conversationId, title)
+}
+
 export async function generateAndSaveTitle(input: {
   db: Database.Database
   hermesClient: HermesClient
@@ -186,6 +201,7 @@ export async function generateAndSaveTitle(input: {
   auxiliaryLlm?: AuxiliaryLlmConfig | null
   log?: (message: string, meta?: Record<string, unknown>) => void
 }): Promise<void> {
+  const provisionalTitle = fallbackTitleFromUserMessage(input.userMessageText)
   const title = await generateConversationTitle(
     input.hermesClient,
     input.conversationId,
@@ -200,11 +216,45 @@ export async function generateAndSaveTitle(input: {
     return
   }
 
-  const updated = updateConversationTitleIfNull(input.db, input.conversationId, title)
-  if (updated) {
-    emitAccountConversationUpsert(input.db, input.userId, input.conversationId)
-    publishAccountConversationUpsert(input.hub, input.db, input.userId, input.conversationId)
-    publishSessionTitle(input.hub, input.userId, input.conversationId, title)
+  const currentTitle = input.db
+    .prepare('SELECT title FROM conversations WHERE id = ?')
+    .pluck()
+    .get(input.conversationId) as string | null | undefined
+
+  if (currentTitle === null || currentTitle === undefined) {
+    const updated = updateConversationTitleIfNull(input.db, input.conversationId, title)
+    if (updated) {
+      publishConversationTitle(
+        input.db,
+        input.hub,
+        input.userId,
+        input.conversationId,
+        title,
+      )
+    }
+    return
+  }
+
+  if (
+    provisionalTitle &&
+    currentTitle === provisionalTitle &&
+    title !== provisionalTitle
+  ) {
+    const upgraded = replaceConversationTitleIfEquals(
+      input.db,
+      input.conversationId,
+      provisionalTitle,
+      title,
+    )
+    if (upgraded) {
+      publishConversationTitle(
+        input.db,
+        input.hub,
+        input.userId,
+        input.conversationId,
+        title,
+      )
+    }
   }
 }
 
@@ -219,6 +269,24 @@ export function scheduleTitleGeneration(input: {
   auxiliaryLlm?: AuxiliaryLlmConfig | null
   log?: (message: string, meta?: Record<string, unknown>) => void
 }): void {
+  const provisionalTitle = fallbackTitleFromUserMessage(input.userMessageText)
+  if (provisionalTitle) {
+    const updated = updateConversationTitleIfNull(
+      input.db,
+      input.conversationId,
+      provisionalTitle,
+    )
+    if (updated) {
+      publishConversationTitle(
+        input.db,
+        input.hub,
+        input.userId,
+        input.conversationId,
+        provisionalTitle,
+      )
+    }
+  }
+
   void generateAndSaveTitle(input).catch((error) => {
     input.log?.('title generation failed', {
       conversationId: input.conversationId,

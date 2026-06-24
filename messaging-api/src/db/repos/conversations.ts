@@ -302,6 +302,27 @@ export function updateConversationTitleIfNull(
   return result.changes === 1
 }
 
+export function replaceConversationTitleIfEquals(
+  db: Database.Database,
+  conversationId: string,
+  expectedTitle: string,
+  newTitle: string,
+): boolean {
+  const result = db
+    .prepare(`
+      UPDATE conversations
+      SET title = ?
+      WHERE id = ? AND title = ?
+    `)
+    .run(newTitle, conversationId, expectedTitle)
+
+  if (result.changes === 1) {
+    touchConversationUpdatedAt(db, conversationId)
+  }
+
+  return result.changes === 1
+}
+
 export function updateConversationTitle(
   db: Database.Database,
   conversationId: string,

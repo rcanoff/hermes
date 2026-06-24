@@ -92,7 +92,7 @@ describe('executeAssistantRun process stream', () => {
     ])
   })
 
-  it('emits status line for pre-tool answer tokens then activity for memory', async () => {
+  it('streams pre-tool answer tokens immediately then emits activity for memory', async () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedConversation(db)
@@ -124,18 +124,15 @@ describe('executeAssistantRun process stream', () => {
     const assistantMessageId = await runPromise
 
     expect(events).toContainEqual({
-      event: 'tooling',
+      event: 'reply',
       data: expect.objectContaining({
-        phase: 'status',
         text: 'Updating user preferences…',
-        tool: 'memory',
       }),
     })
 
     const process = getProcessByAssistantMessageIds(db, [assistantMessageId]).get(assistantMessageId)
     expect(process?.lines).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ phase: 'status', tool: 'memory' }),
         expect.objectContaining({
           phase: 'activity',
           tool: 'memory',
@@ -143,6 +140,46 @@ describe('executeAssistantRun process stream', () => {
         }),
       ]),
     )
+  })
+
+  it('streams no-tool reply tokens immediately instead of buffering until stream end', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedConversation(db)
+
+    const hermes = new FakeHermesClient()
+    const hub = new StreamHub()
+    const legacyEvents: Array<{ event: string; data: unknown }> = []
+    hub.subscribeLegacy('c1', (event) => legacyEvents.push(event))
+
+    const runPromise = executeAssistantRun({
+      db,
+      hermesClient: hermes,
+      hub,
+      conversationId: 'c1',
+      hermesSessionId: 'sess-1',
+      userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
+      runId: 'run-1',
+      userId: 'u1',
+      originSessionId: 'sess-1',
+    })
+
+    hermes.pushAnswerToken('Here is')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(legacyEvents.map((event) => event.event)).toContain('token')
+    expect(legacyEvents.map((event) => event.event)).not.toContain('done')
+
+    hermes.pushAnswerToken(' an idea')
+    hermes.pushDone()
+    hermes.closeWithoutDone()
+
+    await runPromise
+
+    expect(legacyEvents.filter((event) => event.event === 'token')).toEqual([
+      { event: 'token', data: { text: 'Here is' } },
+      { event: 'token', data: { text: ' an idea' } },
+    ])
   })
 
   it('streams reasoning drafts and ignores tool completion events', async () => {
@@ -218,54 +255,4 @@ describe('executeAssistantRun process stream', () => {
     })
   })
 
-  it('generates title in the background when reply phase begins', async () => {
-    const db = new Database(':memory:')
-    initSchema(db)
-    seedConversation(db)
-
-    const hermes = new FakeHermesClient()
-    const hub = new StreamHub()
-    const legacyEvents: Array<{ event: string; data: unknown }> = []
-    hub.subscribeLegacy('c1', (event) => legacyEvents.push(event))
-
-    const runPromise = executeAssistantRun({
-      db,
-      hermesClient: hermes,
-      hub,
-      conversationId: 'c1',
-      hermesSessionId: 'sess-1',
-      userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
-      runId: 'run-1',
-      userId: 'u1',
-      originSessionId: 'sess-1',
-      shouldGenerateTitle: true,
-      userMessageText: 'Plan a weekend in Porto',
-    })
-
-    hermes.queueCompleteChatResponse('Porto weekend')
-    hermes.pushToolCall('skill_view', '{"name":"travel"}')
-    hermes.pushAnswerToken('Here is an idea')
-
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
-    expect(hermes.completeRequests).toHaveLength(1)
-    expect(legacyEvents.map((event) => event.event)).toContain('token')
-    expect(legacyEvents.map((event) => event.event)).not.toContain('done')
-
-    hermes.pushDone()
-    hermes.closeWithoutDone()
-
-    await runPromise
-
-    expect(hermes.requests).toHaveLength(1)
-    expect(legacyEvents.map((event) => event.event)).toEqual(
-      expect.arrayContaining(['token', 'done', 'title']),
-    )
-
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
-    expect(db.prepare('SELECT title FROM conversations WHERE id = ?').pluck().get('c1')).toBe('Porto weekend')
-  })
 })

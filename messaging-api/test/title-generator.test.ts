@@ -13,6 +13,7 @@ import {
   OPENAI_TITLE_FALLBACK_MODEL,
   resolveTitleGenerationLlm,
   sanitizeGeneratedTitle,
+  scheduleTitleGeneration,
 } from '../src/services/title-generator.js'
 import { StreamHub } from '../src/streams/hub.js'
 import { FakeHermesClient } from './helpers/hermes.js'
@@ -352,6 +353,60 @@ describe('generateConversationTitle', () => {
         },
       ]),
     )
+  })
+})
+
+describe('scheduleTitleGeneration', () => {
+  it('saves and publishes a provisional title synchronously before LLM work', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'op', 'hash')`).run()
+
+    const conversationId = createConversation(db, 'u1', 'hermes-session-1')
+    const hermesClient = new FakeHermesClient()
+    hermesClient.queueCompleteChatResponse('Porto weekend')
+    const hub = new StreamHub()
+    const legacyEvents: Array<{ event: string; data: unknown }> = []
+    hub.subscribeLegacy(conversationId, (event) => legacyEvents.push(event))
+    hub.registerUserSession('u1', 'sess-1')
+
+    const sessionEvents: Array<{ event: string; data: unknown }> = []
+    hub.subscribeSession('sess-1', (event) => sessionEvents.push(event))
+
+    scheduleTitleGeneration({
+      db,
+      hermesClient,
+      hub,
+      conversationId,
+      userId: 'u1',
+      userMessageText: 'Plan a weekend in Porto',
+      originSessionId: 'sess-1',
+    })
+
+    const row = db
+      .prepare('SELECT title FROM conversations WHERE id = ?')
+      .get(conversationId) as { title: string | null }
+    expect(row.title).toBe('Plan a weekend in Porto')
+    expect(legacyEvents).toContainEqual({
+      event: 'title',
+      data: { title: 'Plan a weekend in Porto' },
+    })
+    expect(sessionEvents).toContainEqual({
+      event: 'title',
+      data: { conversationId, title: 'Plan a weekend in Porto' },
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const upgraded = db
+      .prepare('SELECT title FROM conversations WHERE id = ?')
+      .get(conversationId) as { title: string | null }
+    expect(upgraded.title).toBe('Porto weekend')
+    expect(legacyEvents.at(-1)).toEqual({
+      event: 'title',
+      data: { title: 'Porto weekend' },
+    })
   })
 })
 
