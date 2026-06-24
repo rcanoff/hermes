@@ -32,6 +32,7 @@ import { executeAssistantRun } from '../services/run-executor.js'
 import { scheduleConversationSessionWarmup } from '../services/session-warmup.js'
 import { emitConversationMessageUpsert } from '../services/chat-sync-emitter.js'
 import {
+  publishAccountConversationUpsert,
   publishMessageUpsert,
   publishMessagesRewound,
 } from '../streams/sse-mutation-publisher.js'
@@ -195,6 +196,12 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         request.userId,
         conversation.id,
         enrichedMessage,
+      )
+      publishAccountConversationUpsert(
+        app.streamHub,
+        app.db,
+        request.userId,
+        conversation.id,
       )
 
       void executeAssistantRun({

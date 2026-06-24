@@ -22,7 +22,10 @@ import {
   buildStatusLine,
 } from './tooling-line.js'
 import { emitConversationMessageUpsert } from './chat-sync-emitter.js'
-import { publishMessageUpsert } from '../streams/sse-mutation-publisher.js'
+import {
+  publishAccountConversationUpsert,
+  publishMessageUpsert,
+} from '../streams/sse-mutation-publisher.js'
 import { scheduleTitleGeneration } from './title-generator.js'
 import type { AuxiliaryLlmConfig } from './auxiliary-llm-client.js'
 import { listHermesJobIdsFromFile } from '../lib/hermes-cron-jobs.js'
@@ -340,6 +343,7 @@ function persistCompletedRun(
 
     emitConversationMessageUpsert(db, userId, conversationId, enrichedMessage, process)
     publishMessageUpsert(hub, userId, conversationId, enrichedMessage, hermesSessionId)
+    publishAccountConversationUpsert(hub, db, userId, conversationId)
 
     return assistantMessageId
   })()

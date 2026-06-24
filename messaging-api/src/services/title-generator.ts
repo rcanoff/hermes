@@ -12,6 +12,7 @@ import {
 import type { HermesPromptMessage } from './prompt-builder.js'
 import type { StreamHub } from '../streams/hub.js'
 import { publishSessionTitle } from '../streams/run-event-publisher.js'
+import { publishAccountConversationUpsert } from '../streams/sse-mutation-publisher.js'
 import { emitAccountConversationUpsert } from './chat-sync-emitter.js'
 
 const TITLE_SYSTEM_PROMPT =
@@ -76,6 +77,7 @@ export async function generateAndSaveTitle(input: {
   const updated = updateConversationTitleIfNull(input.db, input.conversationId, title)
   if (updated) {
     emitAccountConversationUpsert(input.db, input.userId, input.conversationId)
+    publishAccountConversationUpsert(input.hub, input.db, input.userId, input.conversationId)
     publishSessionTitle(input.hub, input.userId, input.conversationId, title)
   }
 }

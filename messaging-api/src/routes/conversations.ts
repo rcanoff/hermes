@@ -17,7 +17,10 @@ import {
   emitAccountConversationUpsert,
   emitConversationDeleted,
 } from '../services/chat-sync-emitter.js'
-import { publishConversationDeleted } from '../streams/sse-mutation-publisher.js'
+import {
+  publishAccountConversationUpsert,
+  publishConversationDeleted,
+} from '../streams/sse-mutation-publisher.js'
 import { removeHermesCronJob } from '../lib/hermes-cron-jobs.js'
 import { scheduleConversationSessionWarmup } from '../services/session-warmup.js'
 
@@ -69,6 +72,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
 
     const conversationId = createConversation(app.db, request.userId, randomUUID(), bootstrapPrompt)
     emitAccountConversationUpsert(app.db, request.userId, conversationId)
+    publishAccountConversationUpsert(app.streamHub, app.db, request.userId, conversationId)
     const conversation = getConversationForUser(app.db, request.userId, conversationId)
 
     scheduleConversationSessionWarmup({
@@ -116,6 +120,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
     const updated = updateConversationTitle(app.db, conversationId, title)
     if (updated) {
       emitAccountConversationUpsert(app.db, request.userId, conversationId)
+      publishAccountConversationUpsert(app.streamHub, app.db, request.userId, conversationId)
     }
     return updated ? toConversationResponse(updated) : updated
   })

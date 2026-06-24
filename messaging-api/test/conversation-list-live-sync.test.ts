@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { AddressInfo } from 'node:net'
 import type { FastifyInstance } from 'fastify'
-import { publishAccountConversationUpsert } from '../src/streams/sse-mutation-publisher.js'
 import { createTestApp } from './helpers/app.js'
 import { seedTestUser } from './helpers/users.js'
 
@@ -34,25 +33,51 @@ describe('conversation list live sync', () => {
     app = undefined
   })
 
-  it('fans out conversation_upsert to every connected session for the user', async () => {
+  it('emits conversation_upsert to peer session on POST /conversations', async () => {
     const userId = app!.db.prepare(`SELECT id FROM users WHERE username = 'operator'`).pluck().get() as string
-    const sessionA = randomUUID()
     const sessionB = randomUUID()
-    const tokenA = await app!.jwt.sign({ sub: userId, username: 'operator', jti: sessionA })
     const tokenB = await app!.jwt.sign({ sub: userId, username: 'operator', jti: sessionB })
 
     await app!.listen({ host: '127.0.0.1', port: 0 })
     const address = app!.server.address() as AddressInfo
 
-    const streamA = await fetch(`http://127.0.0.1:${address.port}/events/stream`, {
-      headers: { authorization: `Bearer ${tokenA}` },
-    })
     const streamB = await fetch(`http://127.0.0.1:${address.port}/events/stream`, {
       headers: { authorization: `Bearer ${tokenB}` },
     })
-    const readerA = streamA.body!.getReader()
     const readerB = streamB.body!.getReader()
-    openReaders.push(readerA, readerB)
+    openReaders.push(readerB)
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    const createResponse = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    expect(createResponse.statusCode).toBe(201)
+
+    const newConversationId = (createResponse.json() as { id: string }).id
+
+    const payload = await readUntilConversationUpsert(readerB, newConversationId)
+    expect(payload).toContain('event: conversation_upsert')
+    expect(payload).toContain(newConversationId)
+    expect(payload).toContain('"kind":"regular"')
+    expect(payload).toContain('"title":null')
+  }, 15_000)
+
+  it('emits conversation_upsert to peer session on PATCH title', async () => {
+    const userId = app!.db.prepare(`SELECT id FROM users WHERE username = 'operator'`).pluck().get() as string
+    const sessionB = randomUUID()
+    const tokenB = await app!.jwt.sign({ sub: userId, username: 'operator', jti: sessionB })
+
+    await app!.listen({ host: '127.0.0.1', port: 0 })
+    const address = app!.server.address() as AddressInfo
+
+    const streamB = await fetch(`http://127.0.0.1:${address.port}/events/stream`, {
+      headers: { authorization: `Bearer ${tokenB}` },
+    })
+    const readerB = streamB.body!.getReader()
+    openReaders.push(readerB)
 
     await new Promise((resolve) => setTimeout(resolve, 100))
 
@@ -64,24 +89,22 @@ describe('conversation list live sync', () => {
     })
     expect(patchResponse.statusCode).toBe(200)
 
-    publishAccountConversationUpsert(app!.streamHub, app!.db, userId, conversationId)
-
-    const payloadA = await readUntilConversationUpsert(readerA, conversationId, 'Peer list sync title')
-    const payloadB = await readUntilConversationUpsert(readerB, conversationId, 'Peer list sync title')
-
-    for (const payload of [payloadA, payloadB]) {
-      expect(payload).toContain('event: conversation_upsert')
-      expect(payload).toContain(conversationId)
-      expect(payload).toContain('"title":"Peer list sync title"')
-      expect(payload).toContain('"kind":"regular"')
-    }
+    const payload = await readUntilConversationUpsert(
+      readerB,
+      conversationId,
+      'Peer list sync title',
+    )
+    expect(payload).toContain('event: conversation_upsert')
+    expect(payload).toContain(conversationId)
+    expect(payload).toContain('"title":"Peer list sync title"')
+    expect(payload).toContain('"kind":"regular"')
   }, 15_000)
 })
 
 async function readUntilConversationUpsert(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   conversationId: string,
-  title: string,
+  title?: string,
 ): Promise<string> {
   const decoder = new TextDecoder()
   let payload = ''
@@ -90,11 +113,10 @@ async function readUntilConversationUpsert(
     const { value, done } = await reader.read()
     if (value) {
       payload += decoder.decode(value, { stream: !done })
-      if (
-        payload.includes('event: conversation_upsert') &&
-        payload.includes(conversationId) &&
-        payload.includes(`"title":"${title}"`)
-      ) {
+      const hasEvent =
+        payload.includes('event: conversation_upsert') && payload.includes(conversationId)
+      const hasTitle = title === undefined || payload.includes(`"title":"${title}"`)
+      if (hasEvent && hasTitle) {
         return payload
       }
     }
