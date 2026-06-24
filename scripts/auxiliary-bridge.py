@@ -19,6 +19,34 @@ API_KEY = os.environ.get("HERMES_API_SERVER_KEY", "").strip()
 PORT = int(os.environ.get("PORT", "8750"))
 
 
+def extract_llm_content(result: Any) -> str:
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result
+
+    choices = getattr(result, "choices", None)
+    if choices:
+        first = choices[0]
+        message = getattr(first, "message", None) or (
+            first.get("message") if isinstance(first, dict) else None
+        )
+        if message is not None:
+            content = getattr(message, "content", None)
+            if content is None and isinstance(message, dict):
+                content = message.get("content")
+            if isinstance(content, str):
+                return content
+
+    content = getattr(result, "content", None)
+    if content is None and isinstance(result, dict):
+        content = result.get("content")
+    if isinstance(content, str):
+        return content
+
+    return str(result)
+
+
 class BridgeHandler(BaseHTTPRequestHandler):
     server_version = "hermes-auxiliary-bridge/1.0"
 
@@ -74,11 +102,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if timeout is not None:
                 kwargs["timeout"] = timeout
 
-            content = call_llm(**kwargs)
-            if content is None:
-                content = ""
-            elif not isinstance(content, str):
-                content = str(content)
+            content = extract_llm_content(call_llm(**kwargs))
 
             self._send_json(200, {"content": content})
         except Exception as exc:
