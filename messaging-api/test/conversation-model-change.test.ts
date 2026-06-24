@@ -29,7 +29,7 @@ describe('applyConversationModelChange', () => {
     await app.close()
   })
 
-  it('patches Hermes session in place and rewarms transcript for same-provider model change', async () => {
+  it('patches Hermes session in place without rewarm for same-provider model change', async () => {
     const hermesClient = new FakeHermesClient()
     hermesClient.queueCompleteChatResponse('OK')
 
@@ -75,12 +75,7 @@ describe('applyConversationModelChange', () => {
       { hermesSessionId: 'hs-original', model: 'grok-4.3', provider: 'xai-oauth' },
     ])
     expect(hermesClient.ensureSessionRequests).toHaveLength(0)
-    expect(hermesClient.completeRequests).toHaveLength(1)
-    expect(hermesClient.completeRequests[0]?.hermesSessionId).toBe('hs-original')
-    expect(hermesClient.completeRequests[0]?.messages.at(-1)).toEqual({
-      role: 'user',
-      content: expect.stringContaining('model changed'),
-    })
+    expect(hermesClient.completeRequests).toHaveLength(0)
   })
 
   it('skips rewarm when same-provider selection is unchanged', async () => {

@@ -58,16 +58,26 @@ describe('OpenAiHermesClient session model sync', () => {
 
     expect(row.model).toBe('grok-4.3')
     expect(JSON.parse(row.model_config)).toEqual({ companion_provider: 'xai-oauth' })
-    expect(row.system_prompt).toBe('Bootstrap')
+    expect(row.system_prompt).toContain('Bootstrap')
+    expect(row.system_prompt).toContain('Model: grok-4.3')
+    expect(row.system_prompt).toContain('Provider: xai-oauth')
   })
 
   it('writes model changes via patchSessionModel on state.db', async () => {
     const dbPath = createStateDb()
     const db = openHermesStateDbRw(dbPath)!
     db.prepare(
-      `INSERT INTO sessions (id, source, model, model_config, started_at)
-       VALUES ('hs1', 'api_server', 'grok-composer-2.5-fast', '{}', 1)`,
-    ).run()
+      `INSERT INTO sessions (id, source, model, model_config, system_prompt, started_at)
+       VALUES ('hs1', 'api_server', 'grok-composer-2.5-fast', '{}', ?, 1)`,
+    ).run(
+      [
+        'Bootstrap prompt',
+        '',
+        'Conversation started: Wednesday, June 10, 2026',
+        'Model: grok-composer-2.5-fast',
+        'Provider: xai-oauth',
+      ].join('\n'),
+    )
     db.close()
 
     const client = new OpenAiHermesClient('http://hermes.test', 'api-key', dbPath)
@@ -79,11 +89,13 @@ describe('OpenAiHermesClient session model sync', () => {
 
     const verifyDb = openHermesStateDbRw(dbPath)!
     const row = verifyDb
-      .prepare('SELECT model, model_config FROM sessions WHERE id = ?')
-      .get('hs1') as { model: string; model_config: string }
+      .prepare('SELECT model, model_config, system_prompt FROM sessions WHERE id = ?')
+      .get('hs1') as { model: string; model_config: string; system_prompt: string }
     verifyDb.close()
 
     expect(row.model).toBe('grok-4.3')
     expect(JSON.parse(row.model_config)).toEqual({ companion_provider: 'xai-oauth' })
+    expect(row.system_prompt).toContain('Model: grok-4.3')
+    expect(row.system_prompt).not.toContain('grok-composer-2.5-fast')
   })
 })

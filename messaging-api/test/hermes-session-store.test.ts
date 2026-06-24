@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   openHermesStateDbRw,
+  syncSessionPromptModelFooter,
   updateSessionModel,
   upsertCompanionSession,
 } from '../src/services/hermes-session-store.js'
@@ -37,6 +38,35 @@ describe('hermes-session-store', () => {
     return filePath
   }
 
+  it('replaces existing model and provider footer lines', () => {
+    const prompt = [
+      'You are helpful.',
+      '',
+      'Conversation started: Wednesday, June 10, 2026',
+      'Model: grok-composer-2.5-fast',
+      'Provider: xai-oauth',
+    ].join('\n')
+
+    expect(syncSessionPromptModelFooter(prompt, 'grok-4.3', 'xai-oauth')).toBe(
+      [
+        'You are helpful.',
+        '',
+        'Conversation started: Wednesday, June 10, 2026',
+        'Model: grok-4.3',
+        'Provider: xai-oauth',
+      ].join('\n'),
+    )
+  })
+
+  it('appends footer when model and provider lines are missing', () => {
+    expect(syncSessionPromptModelFooter('You are helpful.', 'grok-4.3', 'xai-oauth')).toMatch(
+      /^You are helpful\.\n\nConversation started: .+\nModel: grok-4\.3\nProvider: xai-oauth$/,
+    )
+    expect(syncSessionPromptModelFooter(null, 'grok-4.3', 'xai-oauth')).toMatch(
+      /^Conversation started: .+\nModel: grok-4\.3\nProvider: xai-oauth$/,
+    )
+  })
+
   it('creates a session row when missing and stores companion provider', () => {
     const dbPath = createStateDb()
     const db = openHermesStateDbRw(dbPath)!
@@ -62,8 +92,10 @@ describe('hermes-session-store', () => {
       id: 'hs1',
       source: 'api_server',
       model: 'grok-4.3',
-      system_prompt: 'You are helpful.',
     })
+    expect(row.system_prompt).toContain('You are helpful.')
+    expect(row.system_prompt).toContain('Model: grok-4.3')
+    expect(row.system_prompt).toContain('Provider: xai-oauth')
     expect(JSON.parse(row.model_config)).toEqual({ companion_provider: 'xai-oauth' })
     db.close()
   })
@@ -76,6 +108,13 @@ describe('hermes-session-store', () => {
       sessionId: 'hs1',
       model: 'grok-composer-2.5-fast',
       provider: 'xai-oauth',
+      systemPrompt: [
+        'You are helpful.',
+        '',
+        'Conversation started: Wednesday, June 10, 2026',
+        'Model: grok-composer-2.5-fast',
+        'Provider: xai-oauth',
+      ].join('\n'),
     })
 
     updateSessionModel(db, {
@@ -85,11 +124,13 @@ describe('hermes-session-store', () => {
     })
 
     const row = db
-      .prepare('SELECT model, model_config FROM sessions WHERE id = ?')
-      .get('hs1') as { model: string; model_config: string }
+      .prepare('SELECT model, model_config, system_prompt FROM sessions WHERE id = ?')
+      .get('hs1') as { model: string; model_config: string; system_prompt: string }
 
     expect(row.model).toBe('grok-4.3')
     expect(JSON.parse(row.model_config)).toEqual({ companion_provider: 'xai-oauth' })
+    expect(row.system_prompt).toContain('Model: grok-4.3')
+    expect(row.system_prompt).not.toContain('grok-composer-2.5-fast')
     db.close()
   })
 })

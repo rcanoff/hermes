@@ -31,9 +31,6 @@ export interface ModelChangeResult {
 const CONTEXT_REBUILD_PROVIDER_CHANGE_USER_MESSAGE =
   '[System: LLM provider changed. Re-read the conversation history above. Reply with exactly "OK" and nothing else.]'
 
-const CONTEXT_REBUILD_MODEL_CHANGE_USER_MESSAGE =
-  '[System: LLM model changed. Re-read the conversation history above. Reply with exactly "OK" and nothing else.]'
-
 export async function rewarmSessionTranscript(input: {
   db: Database.Database
   hermesClient: HermesClient
@@ -110,8 +107,6 @@ export async function applyConversationModelChange(input: {
   const sameProvider = input.conversation.provider === input.provider
 
   if (sameProvider) {
-    const modelChanged = input.model !== input.conversation.model
-
     await input.hermesClient.patchSessionModel({
       hermesSessionId: previousHermesSessionId,
       model: input.model,
@@ -126,18 +121,6 @@ export async function applyConversationModelChange(input: {
     )
     if (!updated) {
       throw new ModelChangeError('invalid_request')
-    }
-
-    if (modelChanged) {
-      await rewarmSessionTranscript({
-        db: input.db,
-        hermesClient: input.hermesClient,
-        conversation: updated,
-        companionUsername: input.companionUsername,
-        attachmentsDir: input.attachmentsDir,
-        visionHistoryMaxBytes: input.visionHistoryMaxBytes,
-        rebuildUserMessage: CONTEXT_REBUILD_MODEL_CHANGE_USER_MESSAGE,
-      })
     }
 
     return {
