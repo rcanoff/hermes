@@ -1,13 +1,18 @@
+import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createConversation } from '../src/db/repos/conversations.js'
+import { initSchema } from '../src/db/schema.js'
 import * as auxiliaryLlmClient from '../src/services/auxiliary-llm-client.js'
-import { COMPANION_TITLE_GENERATION_SESSION_KEY } from '../src/services/hermes-client.js'
+import { buildTitleGenerationSessionKey } from '../src/services/hermes-client.js'
 import {
   buildTitlePromptMessages,
+  generateAndSaveTitle,
   generateConversationTitle,
   isLikelyOpenAiChatModel,
   sanitizeGeneratedTitle,
   shouldPreferHermesTitleGeneration,
 } from '../src/services/title-generator.js'
+import { StreamHub } from '../src/streams/hub.js'
 import { FakeHermesClient } from './helpers/hermes.js'
 
 describe('sanitizeGeneratedTitle', () => {
@@ -15,15 +20,62 @@ describe('sanitizeGeneratedTitle', () => {
     expect(sanitizeGeneratedTitle('  "Grocery list"  ')).toBe('Grocery list')
   })
 
-  it('removes newlines and caps length at 80 characters', () => {
+  it('caps length at 80 characters', () => {
     const long = 'a'.repeat(100)
     expect(sanitizeGeneratedTitle(long)).toHaveLength(80)
-    expect(sanitizeGeneratedTitle('Line one\nLine two')).toBe('Line one Line two')
   })
 
   it('returns null for empty results', () => {
     expect(sanitizeGeneratedTitle('   ')).toBeNull()
     expect(sanitizeGeneratedTitle('""')).toBeNull()
+  })
+
+  it('rejects titles containing markdown fences', () => {
+    const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = []
+    const log = (message: string, meta?: Record<string, unknown>) => {
+      warnings.push({ message, meta })
+    }
+
+    expect(
+      sanitizeGeneratedTitle("You're at Simon-Dach-Straße 10 ```map ty", log),
+    ).toBeNull()
+    expect(warnings).toEqual([
+      {
+        message: 'title generation rejected invalid title',
+        meta: { reason: 'markdown_fence' },
+      },
+    ])
+  })
+
+  it('rejects titles containing newlines', () => {
+    const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = []
+    const log = (message: string, meta?: Record<string, unknown>) => {
+      warnings.push({ message, meta })
+    }
+
+    expect(sanitizeGeneratedTitle('Line one\nLine two', log)).toBeNull()
+    expect(warnings).toEqual([
+      {
+        message: 'title generation rejected invalid title',
+        meta: { reason: 'newline' },
+      },
+    ])
+  })
+
+  it('rejects titles with more than 10 words', () => {
+    const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = []
+    const log = (message: string, meta?: Record<string, unknown>) => {
+      warnings.push({ message, meta })
+    }
+
+    const tooLong = 'one two three four five six seven eight nine ten eleven'
+    expect(sanitizeGeneratedTitle(tooLong, log)).toBeNull()
+    expect(warnings).toEqual([
+      {
+        message: 'title generation rejected invalid title',
+        meta: { reason: 'too_many_words', wordCount: 11 },
+      },
+    ])
   })
 })
 
@@ -102,20 +154,22 @@ describe('shouldPreferHermesTitleGeneration', () => {
 })
 
 describe('generateConversationTitle', () => {
+  const conversationId = 'd899b6f6-283b-4632-bbc3-175b0ebfd1fb'
+
   afterEach(() => {
     vi.restoreAllMocks()
   })
 
-  it('uses completeChat with the stable title-generation session key when auxiliary LLM is not configured', async () => {
+  it('uses completeChat with a per-conversation title-generation session key when auxiliary LLM is not configured', async () => {
     const hermesClient = new FakeHermesClient()
     hermesClient.queueCompleteChatResponse('Grocery list')
 
-    const title = await generateConversationTitle(hermesClient, 'Add milk and eggs')
+    const title = await generateConversationTitle(hermesClient, conversationId, 'Add milk and eggs')
 
     expect(title).toBe('Grocery list')
     expect(hermesClient.completeRequests).toEqual([
       {
-        hermesSessionId: COMPANION_TITLE_GENERATION_SESSION_KEY,
+        hermesSessionId: buildTitleGenerationSessionKey(conversationId),
         messages: buildTitlePromptMessages('Add milk and eggs'),
       },
     ])
@@ -127,7 +181,7 @@ describe('generateConversationTitle', () => {
     hermesClient.queueCompleteChatResponse('Hello there')
     const auxiliarySpy = vi.spyOn(auxiliaryLlmClient, 'completeAuxiliaryLlm')
 
-    const title = await generateConversationTitle(hermesClient, 'hello', {
+    const title = await generateConversationTitle(hermesClient, conversationId, 'hello', {
       apiKey: 'test-key',
       baseUrl: '',
       model: 'grok-composer-2.5-fast',
@@ -137,6 +191,9 @@ describe('generateConversationTitle', () => {
     expect(title).toBe('Hello there')
     expect(auxiliarySpy).not.toHaveBeenCalled()
     expect(hermesClient.completeRequests).toHaveLength(1)
+    expect(hermesClient.completeRequests[0]?.hermesSessionId).toBe(
+      buildTitleGenerationSessionKey(conversationId),
+    )
   })
 
   it('falls back to Hermes when auxiliary LLM fails', async () => {
@@ -152,6 +209,7 @@ describe('generateConversationTitle', () => {
 
     const title = await generateConversationTitle(
       hermesClient,
+      conversationId,
       'hello',
       {
         apiKey: 'test-key',
@@ -165,7 +223,7 @@ describe('generateConversationTitle', () => {
     expect(title).toBe('Hello there')
     expect(hermesClient.completeRequests).toEqual([
       {
-        hermesSessionId: COMPANION_TITLE_GENERATION_SESSION_KEY,
+        hermesSessionId: buildTitleGenerationSessionKey(conversationId),
         messages: buildTitlePromptMessages('hello'),
       },
     ])
@@ -191,6 +249,7 @@ describe('generateConversationTitle', () => {
 
     const title = await generateConversationTitle(
       hermesClient,
+      conversationId,
       'good morning',
       {
         apiKey: 'test-key',
@@ -204,6 +263,109 @@ describe('generateConversationTitle', () => {
     expect(title).toBe('Morning greeting')
     expect(warnings).toContain(
       'auxiliary title generation returned empty result; falling back to Hermes',
+    )
+  })
+
+  it('rejects stale Hermes output that looks like leaked assistant content', async () => {
+    const hermesClient = new FakeHermesClient()
+    hermesClient.queueCompleteChatResponse(
+      "You're at Simon-Dach-Straße 10, Friedrichshain, 10245 Berlin, Germany. ```map ty",
+    )
+    const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = []
+    const log = (message: string, meta?: Record<string, unknown>) => {
+      warnings.push({ message, meta })
+    }
+
+    const title = await generateConversationTitle(
+      hermesClient,
+      conversationId,
+      'Why was the sbahn not working yesterday in berlin?',
+      undefined,
+      log,
+    )
+
+    expect(title).toBeNull()
+    expect(warnings).toEqual([
+      {
+        message: 'title generation rejected invalid title',
+        meta: { reason: 'markdown_fence' },
+      },
+    ])
+  })
+})
+
+describe('generateAndSaveTitle', () => {
+  it('uses a per-conversation Hermes session key and saves a valid title', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'op', 'hash')`).run()
+
+    const conversationId = createConversation(db, 'u1', 'hermes-session-1')
+    const hermesClient = new FakeHermesClient()
+    hermesClient.queueCompleteChatResponse('Berlin S-Bahn outage')
+
+    await generateAndSaveTitle({
+      db,
+      hermesClient,
+      hub: new StreamHub(),
+      conversationId,
+      userId: 'u1',
+      userMessageText: 'Why was the sbahn not working yesterday in berlin?',
+      originSessionId: null,
+    })
+
+    expect(hermesClient.completeRequests).toEqual([
+      {
+        hermesSessionId: buildTitleGenerationSessionKey(conversationId),
+        messages: buildTitlePromptMessages('Why was the sbahn not working yesterday in berlin?'),
+      },
+    ])
+
+    const row = db
+      .prepare('SELECT title FROM conversations WHERE id = ?')
+      .get(conversationId) as { title: string | null }
+    expect(row.title).toBe('Berlin S-Bahn outage')
+  })
+
+  it('does not save a rejected title', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'op', 'hash')`).run()
+
+    const conversationId = createConversation(db, 'u1', 'hermes-session-1')
+    const hermesClient = new FakeHermesClient()
+    hermesClient.queueCompleteChatResponse('Stale map block ```map ty')
+    const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = []
+    const log = (message: string, meta?: Record<string, unknown>) => {
+      warnings.push({ message, meta })
+    }
+
+    await generateAndSaveTitle({
+      db,
+      hermesClient,
+      hub: new StreamHub(),
+      conversationId,
+      userId: 'u1',
+      userMessageText: 'Why was the sbahn not working yesterday in berlin?',
+      originSessionId: null,
+      log,
+    })
+
+    const row = db
+      .prepare('SELECT title FROM conversations WHERE id = ?')
+      .get(conversationId) as { title: string | null }
+    expect(row.title).toBeNull()
+    expect(warnings).toEqual(
+      expect.arrayContaining([
+        {
+          message: 'title generation rejected invalid title',
+          meta: { reason: 'markdown_fence' },
+        },
+        {
+          message: 'title generation produced no title',
+          meta: { conversationId },
+        },
+      ]),
     )
   })
 })

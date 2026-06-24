@@ -3,8 +3,12 @@ import type { HermesPromptMessage } from './prompt-builder.js'
 /** Stable Hermes gateway session key — identifies messaging-api traffic as Companion App. */
 export const COMPANION_APP_SESSION_KEY = 'companion-app'
 
-/** Stable Hermes session for one-shot title generation (non-agent completeChat). */
+/** Prefix for per-conversation Hermes sessions used in one-shot title generation. */
 export const COMPANION_TITLE_GENERATION_SESSION_KEY = 'companion-title-generation'
+
+export function buildTitleGenerationSessionKey(conversationId: string): string {
+  return `${COMPANION_TITLE_GENERATION_SESSION_KEY}:${conversationId}`
+}
 
 /** Stable Hermes session for companion cron prompt synthesis (non-agent completeChat). */
 export const COMPANION_CRON_PROMPT_SYNTHESIS_SESSION_KEY = 'companion-cron-prompt-synthesis'

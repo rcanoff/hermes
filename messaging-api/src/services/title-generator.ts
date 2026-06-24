@@ -6,7 +6,7 @@ import {
   isAuxiliaryLlmConfigured,
 } from './auxiliary-llm-client.js'
 import {
-  COMPANION_TITLE_GENERATION_SESSION_KEY,
+  buildTitleGenerationSessionKey,
   type HermesClient,
 } from './hermes-client.js'
 import type { HermesPromptMessage } from './prompt-builder.js'
@@ -20,6 +20,7 @@ const TITLE_SYSTEM_PROMPT =
 
 const MAX_USER_MESSAGE_CHARS = 500
 const MAX_GENERATED_TITLE_CHARS = 80
+const MAX_GENERATED_TITLE_WORDS = 10
 
 export function buildTitlePromptMessages(userMessageText: string): HermesPromptMessage[] {
   return [
@@ -28,11 +29,34 @@ export function buildTitlePromptMessages(userMessageText: string): HermesPromptM
   ]
 }
 
-export function sanitizeGeneratedTitle(raw: string): string | null {
+export function sanitizeGeneratedTitle(
+  raw: string,
+  log?: (message: string, meta?: Record<string, unknown>) => void,
+): string | null {
+  if (raw.includes('```')) {
+    log?.('title generation rejected invalid title', { reason: 'markdown_fence' })
+    return null
+  }
+
+  if (/\r|\n/.test(raw)) {
+    log?.('title generation rejected invalid title', { reason: 'newline' })
+    return null
+  }
+
   const collapsed = raw.trim().replace(/\s+/g, ' ')
   const unquoted = collapsed.replace(/^["'`]+|["'`]+$/g, '').trim()
   const capped = unquoted.slice(0, MAX_GENERATED_TITLE_CHARS).trim()
-  return capped.length > 0 ? capped : null
+  if (capped.length === 0) {
+    return null
+  }
+
+  const wordCount = capped.split(/\s+/).filter(Boolean).length
+  if (wordCount > MAX_GENERATED_TITLE_WORDS) {
+    log?.('title generation rejected invalid title', { reason: 'too_many_words', wordCount })
+    return null
+  }
+
+  return capped
 }
 
 export function isLikelyOpenAiChatModel(model: string): boolean {
@@ -58,16 +82,18 @@ export function shouldPreferHermesTitleGeneration(
 
 async function completeTitleWithHermes(
   hermesClient: HermesClient,
+  conversationId: string,
   messages: HermesPromptMessage[],
 ): Promise<string> {
   return hermesClient.completeChat({
-    hermesSessionId: COMPANION_TITLE_GENERATION_SESSION_KEY,
+    hermesSessionId: buildTitleGenerationSessionKey(conversationId),
     messages,
   })
 }
 
 export async function generateConversationTitle(
   hermesClient: HermesClient,
+  conversationId: string,
   userMessageText: string,
   auxiliaryLlm?: AuxiliaryLlmConfig | null,
   log?: (message: string, meta?: Record<string, unknown>) => void,
@@ -76,8 +102,8 @@ export async function generateConversationTitle(
 
   if (shouldPreferHermesTitleGeneration(auxiliaryLlm)) {
     try {
-      const raw = await completeTitleWithHermes(hermesClient, messages)
-      return sanitizeGeneratedTitle(raw)
+      const raw = await completeTitleWithHermes(hermesClient, conversationId, messages)
+      return sanitizeGeneratedTitle(raw, log)
     } catch (error) {
       log?.('title generation failed', {
         path: 'hermes',
@@ -89,7 +115,7 @@ export async function generateConversationTitle(
 
   try {
     const raw = await completeAuxiliaryLlm(auxiliaryLlm!, messages)
-    const title = sanitizeGeneratedTitle(raw)
+    const title = sanitizeGeneratedTitle(raw, log)
     if (title) {
       return title
     }
@@ -104,8 +130,8 @@ export async function generateConversationTitle(
   }
 
   try {
-    const raw = await completeTitleWithHermes(hermesClient, messages)
-    return sanitizeGeneratedTitle(raw)
+    const raw = await completeTitleWithHermes(hermesClient, conversationId, messages)
+    return sanitizeGeneratedTitle(raw, log)
   } catch (error) {
     log?.('title generation failed', {
       path: 'hermes_fallback',
@@ -128,6 +154,7 @@ export async function generateAndSaveTitle(input: {
 }): Promise<void> {
   const title = await generateConversationTitle(
     input.hermesClient,
+    input.conversationId,
     input.userMessageText,
     input.auxiliaryLlm,
     input.log,
