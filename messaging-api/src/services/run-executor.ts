@@ -209,6 +209,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       input.hermesSessionId,
       assistantText,
       processLines,
+      input.companionModels ?? DEFAULT_COMPANION_MODELS,
     )
 
     if (input.cronJobsPath && input.companionUsername) {
@@ -258,6 +259,7 @@ function persistCompletedRun(
   hermesSessionId: string,
   assistantText: string,
   processLines: ToolingLine[],
+  companionModels: CuratedModelEntry[],
 ): string {
   return db.transaction(() => {
     const assistantMessageId = insertMessage(db, {
@@ -301,13 +303,7 @@ function persistCompletedRun(
 
     emitConversationMessageUpsert(db, userId, conversationId, enrichedMessage, process)
     publishMessageUpsert(hub, userId, conversationId, enrichedMessage, hermesSessionId)
-    publishAccountConversationUpsert(
-      hub,
-      db,
-      userId,
-      conversationId,
-      input.companionModels ?? DEFAULT_COMPANION_MODELS,
-    )
+    publishAccountConversationUpsert(hub, db, userId, conversationId, companionModels)
 
     return assistantMessageId
   })()

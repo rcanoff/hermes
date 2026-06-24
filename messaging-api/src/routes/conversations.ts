@@ -9,6 +9,7 @@ import {
   updateConversationTitle,
   type ConversationRow,
 } from '../db/repos/conversations.js'
+import { assertCuratedModel } from '../lib/companion-models.js'
 import { validateBootstrap } from '../lib/bootstrap.js'
 import { getActiveRun } from '../db/repos/runs.js'
 import { buildHalLinks, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
@@ -22,6 +23,10 @@ import {
   publishConversationDeleted,
 } from '../streams/sse-mutation-publisher.js'
 import { removeHermesCronJob } from '../lib/hermes-cron-jobs.js'
+import {
+  applyConversationModelChange,
+  ModelChangeError,
+} from '../services/conversation-model-change.js'
 import { scheduleConversationSessionWarmup } from '../services/session-warmup.js'
 
 const conversationRoutes: FastifyPluginAsync = async (app) => {
@@ -64,15 +69,45 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/conversations', { preHandler: app.authenticate }, async (request, reply) => {
     let bootstrapPrompt: string | null = null
+    let modelProvider: { model: string; provider: string } | undefined
+
     if (isCreateConversationBody(request.body)) {
       const bootstrap = validateBootstrap(request.body.bootstrap)
       if (request.body?.bootstrap !== undefined && !bootstrap) {
         return reply.code(400).send({ error: 'invalid_request' })
       }
       bootstrapPrompt = bootstrap
+
+      const hasModel = request.body.model !== undefined
+      const hasProvider = request.body.provider !== undefined
+      if (hasModel !== hasProvider) {
+        return reply.code(400).send({ error: 'invalid_request' })
+      }
+
+      if (hasModel && hasProvider) {
+        const model = request.body.model?.trim()
+        const provider = request.body.provider?.trim()
+        if (!model || !provider) {
+          return reply.code(400).send({ error: 'invalid_request' })
+        }
+
+        try {
+          assertCuratedModel(app.companionModels, model, provider)
+        } catch {
+          return reply.code(400).send({ error: 'invalid_request' })
+        }
+
+        modelProvider = { model, provider }
+      }
     }
 
-    const conversationId = createConversation(app.db, request.userId, randomUUID(), bootstrapPrompt)
+    const conversationId = createConversation(
+      app.db,
+      request.userId,
+      randomUUID(),
+      bootstrapPrompt,
+      modelProvider,
+    )
     emitAccountConversationUpsert(app.db, request.userId, conversationId, app.companionModels)
     publishAccountConversationUpsert(
       app.streamHub,
@@ -120,12 +155,59 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    const title = normalizeConversationTitle(request.body.title)
-    if (!title) {
+    if (request.body.model !== undefined || request.body.provider !== undefined) {
+      const model = request.body.model?.trim()
+      const provider = request.body.provider?.trim()
+      if (!model || !provider) {
+        return reply.code(400).send({ error: 'invalid_request' })
+      }
+
+      try {
+        const result = await applyConversationModelChange({
+          db: app.db,
+          hermesClient: app.hermesClient,
+          catalog: app.companionModels,
+          userId: request.userId,
+          conversation: existing,
+          model,
+          provider,
+          companionUsername: request.username,
+          attachmentsDir: app.attachmentsDir,
+          visionHistoryMaxBytes: app.visionHistoryMaxBytes,
+        })
+
+        emitAccountConversationUpsert(app.db, request.userId, conversationId, app.companionModels)
+        publishAccountConversationUpsert(
+          app.streamHub,
+          app.db,
+          request.userId,
+          conversationId,
+          app.companionModels,
+        )
+
+        return toConversationResponse(result.conversation, app.companionModels)
+      } catch (error) {
+        if (error instanceof ModelChangeError) {
+          if (error.code === 'run_conflict') {
+            return reply.code(409).send({ error: 'run_conflict' })
+          }
+          return reply.code(400).send({ error: 'invalid_request' })
+        }
+        throw error
+      }
+    }
+
+    const title = request.body.title
+    if (title === undefined) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    const updated = updateConversationTitle(app.db, conversationId, title)
+    const normalizedTitle = normalizeConversationTitle(title)
+    if (!normalizedTitle) {
+      return reply.code(400).send({ error: 'invalid_request' })
+    }
+
+    const updated = updateConversationTitle(app.db, conversationId, normalizedTitle)
     if (updated) {
       emitAccountConversationUpsert(app.db, request.userId, conversationId, app.companionModels)
       publishAccountConversationUpsert(
@@ -189,14 +271,43 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
 
 export default conversationRoutes
 
-function isCreateConversationBody(value: unknown): value is { bootstrap?: string } {
+function isCreateConversationBody(
+  value: unknown,
+): value is { bootstrap?: string; model?: string; provider?: string } {
   return typeof value === 'object' && value !== null
 }
 
-function isPatchConversationBody(value: unknown): value is { title: string } {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as { title?: unknown }).title === 'string'
-  )
+function isPatchConversationBody(
+  value: unknown,
+): value is { title?: string; model?: string; provider?: string } {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const body = value as { title?: unknown; model?: unknown; provider?: unknown }
+  const hasTitle = body.title !== undefined
+  const hasModel = body.model !== undefined
+  const hasProvider = body.provider !== undefined
+
+  if (!hasTitle && !hasModel && !hasProvider) {
+    return false
+  }
+
+  if (hasTitle && typeof body.title !== 'string') {
+    return false
+  }
+
+  if (hasModel && typeof body.model !== 'string') {
+    return false
+  }
+
+  if (hasProvider && typeof body.provider !== 'string') {
+    return false
+  }
+
+  if ((hasModel || hasProvider) && !(hasModel && hasProvider)) {
+    return false
+  }
+
+  return true
 }

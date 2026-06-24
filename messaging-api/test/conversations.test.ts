@@ -314,6 +314,58 @@ describe('conversation routes', () => {
     })
   })
 
+  it('creates a conversation with an explicit curated model', async () => {
+    const create = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { model: 'gpt-5.4-mini', provider: 'openai-codex' },
+    })
+
+    expect(create.statusCode).toBe(201)
+    expect(create.json()).toMatchObject({
+      model: 'gpt-5.4-mini',
+      provider: 'openai-codex',
+      model_display: 'GPT 5.4 Mini',
+    })
+  })
+
+  it('rejects invalid model on create', async () => {
+    const create = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { model: 'unknown', provider: 'xai-oauth' },
+    })
+
+    expect(create.statusCode).toBe(400)
+    expect(create.json()).toEqual({ error: 'invalid_request' })
+  })
+
+  it('includes model metadata on list responses', async () => {
+    const create = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    const list = await app!.inject({
+      method: 'GET',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(list.statusCode).toBe(200)
+    expect((list.json() as { conversations: Array<Record<string, unknown>> }).conversations[0]).toMatchObject({
+      model: 'grok-composer-2.5-fast',
+      provider: 'xai-oauth',
+      model_display: 'Grok 2.5',
+    })
+    expect((list.json() as { conversations: Array<{ id: string }> }).conversations[0]?.id).toBe(
+      (create.json() as { id: string }).id,
+    )
+  })
+
   it('rejects empty or oversized titles', async () => {
     const create = await app!.inject({
       method: 'POST',
