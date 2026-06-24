@@ -1,4 +1,5 @@
 import type { ApnsConfig, TitleGenerationConfig } from './config.js'
+import type { CuratedModelEntry } from './lib/companion-models.js'
 import type { AuxiliaryLlmConfig } from './services/auxiliary-llm-client.js'
 import type { AddressEnrichmentQueue } from './services/address-enrichment.js'
 import type { ApnsClient } from './services/apns-client.js'
@@ -32,6 +33,7 @@ export interface AppOptions {
   visionMaxEdgePx: number
   thumbMaxEdgePx: number
   visionHistoryMaxBytes: number
+  companionModels: CuratedModelEntry[]
   apnsClient?: ApnsClient
   cronOutputBridge?: CronOutputBridge
   hermesClient?: HermesClient

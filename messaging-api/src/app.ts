@@ -21,6 +21,7 @@ import dataLocationRoutes from './routes/data-location.js'
 import dataHealthRoutes from './routes/data-health.js'
 import mcpRoutes from './routes/mcp.js'
 import jobRoutes from './routes/jobs.js'
+import modelsRoutes from './routes/models.js'
 import cronInternalRoutes from './routes/cron-internal.js'
 import pushRoutes from './routes/push.js'
 import { AddressEnrichmentQueue } from './services/address-enrichment.js'
@@ -61,6 +62,7 @@ declare module 'fastify' {
     visionHistoryMaxBytes: number
     titleGeneration: import('./config.js').TitleGenerationConfig
     cronPromptSynthesis: import('./services/auxiliary-llm-client.js').AuxiliaryLlmConfig
+    companionModels: import('./lib/companion-models.js').CuratedModelEntry[]
   }
 }
 
@@ -119,6 +121,7 @@ export function buildApp(options: AppOptions) {
   app.decorate('visionHistoryMaxBytes', options.visionHistoryMaxBytes)
   app.decorate('titleGeneration', options.titleGeneration)
   app.decorate('cronPromptSynthesis', options.cronPromptSynthesis)
+  app.decorate('companionModels', options.companionModels)
   app.decorate(
     'addressEnrichmentQueue',
     options.addressEnrichmentQueue ??
@@ -141,6 +144,7 @@ export function buildApp(options: AppOptions) {
   app.register(devicesRoutes)
   app.register(syncInboxRoutes)
   app.register(conversationRoutes)
+  app.register(modelsRoutes)
   app.register(jobRoutes)
   app.register(cronInternalRoutes)
   app.register(attachmentRoutes)

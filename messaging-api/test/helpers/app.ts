@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { buildApp } from '../../src/app.js'
+import { DEFAULT_COMPANION_MODELS } from '../../src/lib/companion-models.js'
 import type { AppOptions } from '../../src/types.js'
 
 const defaultAttachmentsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-attachments-'))
@@ -52,6 +53,7 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
     visionMaxEdgePx: 1536,
     thumbMaxEdgePx: 200,
     visionHistoryMaxBytes: 8_388_608,
+    companionModels: DEFAULT_COMPANION_MODELS,
     ...overrides,
   })
 }

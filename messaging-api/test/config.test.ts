@@ -3,6 +3,7 @@ import {
   DEFAULT_TITLE_GENERATION_PROVIDERS,
   readConfig,
 } from '../src/config.js'
+import { DEFAULT_COMPANION_MODELS } from '../src/lib/companion-models.js'
 
 describe('readConfig', () => {
   it('fails when JWT_SECRET is missing', () => {
@@ -72,6 +73,7 @@ describe('readConfig', () => {
       visionMaxEdgePx: 1536,
       thumbMaxEdgePx: 200,
       visionHistoryMaxBytes: 8_388_608,
+      companionModels: DEFAULT_COMPANION_MODELS,
     })
   })
 
@@ -122,6 +124,24 @@ describe('readConfig', () => {
         MESSAGING_API_HOST: '100.64.0.1:3000',
       }).apns.enabled,
     ).toBe(false)
+  })
+
+  it('parses COMPANION_MODELS_JSON override', () => {
+    const custom = [
+      {
+        model: 'custom-model',
+        provider: 'custom-provider',
+        display: 'Custom',
+      },
+    ]
+    expect(
+      readConfig({
+        JWT_SECRET: 'test-secret',
+        HERMES_BASE_URL: 'http://hermes:8642',
+        MESSAGING_API_HOST: '100.64.0.1:3000',
+        COMPANION_MODELS_JSON: JSON.stringify(custom),
+      }).companionModels,
+    ).toEqual(custom)
   })
 
   it('requires APNS fields when enabled', () => {
