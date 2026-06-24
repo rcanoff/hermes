@@ -107,6 +107,17 @@ When returning multiple URLs from a site search (rentals, products):
 
 See `web-search-result-extraction` for filter-and-extract workflow.
 
+### Local business recommendations (shops, not listings)
+
+When the user asks **where to buy** something in person (butcher, store, market):
+
+1. One-line intro (synonyms, call-ahead tip if relevant).
+2. Per place: **plain-text block** — shop name, address, phone on one or two lines; optional hours quirk.
+3. **Full product or shop URL on its own line** (proof the item appears in their catalog).
+4. No markdown table; no ImmoScout-style `Kalt/Warm` price line unless the page shows retail price.
+
+Optional: `companion-map-preview` for one shop if the user asks “nearest” and you have coordinates.
+
 ## Do not
 
 - Use markdown tables for listing-link dumps unless the user explicitly asks for a table

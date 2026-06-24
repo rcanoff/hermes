@@ -44,7 +44,8 @@ Before writing any Companion App reply, load `companion-replies` and follow its 
 | Nutrition / water / protein | `companion-user-health` → `companion-replies` | Fetch data first |
 | Mindfulness / meditation | `companion-user-health` → `companion-replies` | Fetch data first |
 | Remind me / run every day / cron / job | `companion-cron` (load first, follow exactly) | MCP create/link + `cronjob` with `deliver: local` — never `origin` |
-| Site search / listing links (ImmoScout, etc.) | `web-search-result-extraction` → `companion-replies` → `companion-links` | Apply filters on site; reply = URL line + detail line per listing, **no table** |
+| Site search / listing links (ImmoScout, Kleinanzeigen, etc.) | `web-search-result-extraction` → `companion-replies` → `companion-links` | ImmoScout: `immoscout-apartment-search`. Kleinanzeigen/Nachmieter: same reply shape; see `references/kleinanzeigen-rental-extraction.md` |
+| Where to buy X locally (shops, butchers, no named site) | `web-search-result-extraction` → `companion-replies` → `companion-links` | See `references/local-retail-product-hunt.md`; verify on each merchant site |
 
 ## Data → present pipeline (required)
 
