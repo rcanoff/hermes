@@ -1,4 +1,5 @@
 import type { MessageWithAttachments } from '../lib/attachment-serializer.js'
+import type { ConversationSyncEntryPayload } from '../db/repos/chat-sync-events.js'
 import type { ToolingLine, ToolingPhase } from '../db/repos/process.js'
 
 export type { ToolingLine, ToolingPhase } from '../db/repos/process.js'
@@ -59,6 +60,12 @@ export type SessionStreamEvent =
       }
     }
   | { event: 'conversation_deleted'; data: { conversationId: string } }
+  | {
+      event: 'conversation_upsert'
+      data: {
+        conversation: ConversationSyncEntryPayload
+      }
+    }
 
 type SessionListener = (event: SessionStreamEvent) => void
 type LegacyListener = (event: LegacyStreamEvent) => void
