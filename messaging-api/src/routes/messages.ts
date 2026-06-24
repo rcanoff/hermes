@@ -382,6 +382,17 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
           removed.removedMessageIds,
           removed.hermesSessionId,
         )
+        app.log.info(
+          {
+            userId: request.userId,
+            sessionId: request.sessionId,
+            conversationId: conversation.id,
+            removedCount: removed.removedMessageIds.length,
+            registeredSessions: app.streamHub.countUserSessions(request.userId),
+            connectedSessions: app.streamHub.countUserSessionsWithListeners(request.userId),
+          },
+          'messages_rewound published to user sessions',
+        )
 
         const refreshed = getConversationForUser(app.db, request.userId, conversation.id)
         if (refreshed) {

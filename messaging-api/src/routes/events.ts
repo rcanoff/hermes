@@ -9,6 +9,15 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
     const sessionId = request.sessionId
     const userId = request.userId
     app.streamHub.registerUserSession(userId, sessionId)
+    request.log.info(
+      {
+        userId,
+        sessionId,
+        registeredSessions: app.streamHub.countUserSessions(userId),
+        connectedSessions: app.streamHub.countUserSessionsWithListeners(userId),
+      },
+      'SSE session stream connected',
+    )
 
     reply.sseInit()
 
@@ -32,6 +41,7 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
       closed = true
       clearInterval(pingInterval)
       app.streamHub.unregisterUserSession(sessionId)
+      request.log.info({ userId, sessionId }, 'SSE session stream disconnected')
       unsubscribe()
       reply.sseEnd()
     }

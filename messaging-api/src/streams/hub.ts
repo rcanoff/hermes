@@ -110,6 +110,20 @@ export class StreamHub {
     return false
   }
 
+  countUserSessions(userId: string): number {
+    return this.userSessions.get(userId)?.size ?? 0
+  }
+
+  countUserSessionsWithListeners(userId: string): number {
+    const sessions = this.userSessions.get(userId)
+    if (!sessions) return 0
+    let count = 0
+    for (const sessionId of sessions) {
+      if (this.sessionListeners.has(sessionId)) count++
+    }
+    return count
+  }
+
   publishToUser(userId: string, event: SessionStreamEvent): void {
     const sessions = this.userSessions.get(userId)
     if (!sessions) return

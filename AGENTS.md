@@ -2,16 +2,16 @@
 
 ## Grok agent (this project)
 
-This workspace is implemented by **Grok** (headless), invoked by the orchestrator through the **`grok-hermes` MCP server** (`grok-hermes__grok` / `grok-hermes__grok-reply`).
+This workspace is implemented by **Grok** subagents, invoked by the orchestrator through the built-in **`Task`** tool (`subagent_type: generalPurpose`).
 
-When Grok runs here it must:
+When a subagent runs here it must:
 
 - Treat this file as the source of truth for backend conventions, OpenAPI rules, and operator workflows.
 - Keep the working directory at the Hermes repo root (`hermes/`).
 - Update `docs/superpowers/specs/messaging-api.openapi.yaml` in the same change set as any contract change.
 - Run verification per the rules below before reporting completion.
 
-The orchestrator invokes this repo via **`grok-hermes` MCP** (`grok-hermes__grok` / `grok-hermes__grok-reply`), not in-process subagents. Do not implement iOS/SwiftUI — hand off to Codex via the orchestrator when client work is needed.
+The orchestrator invokes this repo via **internal subagents**, not MCP delegate servers. Do not implement iOS/SwiftUI — hand off to the iOS subagent via the orchestrator when client work is needed.
 
 ### Task execution (one task per invocation)
 
@@ -21,7 +21,7 @@ The orchestrator sends **one numbered task** from a plan at a time (e.g. “Exec
 - Work on the named **feature branch**; commit before returning.
 - Run tests for that task (`cd messaging-api && node node_modules/vitest/vitest.mjs run` or scoped path from the plan).
 
-### Task status report (end of every MCP response)
+### Task status report (end of every subagent response)
 
 Return this block so the orchestrator can relay progress to the user:
 
@@ -36,6 +36,25 @@ Return this block so the orchestrator can relay progress to the user:
 - **Blockers:** none | description
 - **Next:** what Task N+1 needs, if known
 ```
+
+## Runtime (local Mac)
+
+Hermes and `messaging-api` run on **this Mac** via Docker Compose — **not on the Raspberry Pi**.
+
+Clients (iPhone, Mac app, Simulator) connect via the **Mac's Tailscale IP**. Do **not** use `localhost` in the iOS app or `MESSAGING_API_HOST` — physical iPhone cannot reach `localhost` on the dev machine.
+
+| Item | Value |
+|------|-------|
+| Start | `make up` (from `hermes/`) |
+| Stop | `make down` |
+| Client API URL | `http://100.72.138.31:3000` |
+| Health | `curl http://100.72.138.31:3000/health` → `{"ok":true}` |
+| `MESSAGING_API_HOST` | `100.72.138.31:3000` in `.env` |
+| Logs | `make messaging-api-logs` or `make logs` |
+
+**Do not** SSH to the Pi or inspect Pi containers — the `ansible/` deploy path is **archived**. The Tailscale IP `100.72.138.31` is **this Mac**, not the Pi.
+
+If send/delete/API calls fail, verify the stack is running (`make ps`, health curl on the Tailscale IP) before investigating application code.
 
 ## Purpose
 
