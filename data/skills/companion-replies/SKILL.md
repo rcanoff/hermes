@@ -1,7 +1,7 @@
 ---
 name: companion-replies
 description: Reply composition model for Companion App and related channels. Loaded via companion-app on iOS; delegate to block skills for maps, markdown, and links.
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent
 metadata:
   hermes:
@@ -104,6 +104,8 @@ When returning multiple URLs from a site search (rentals, products):
 2. For each item: **URL alone on one line**, then **one line** with price(s), size, and title separated by ` · `.
    - ImmoScout rentals: include **Kalt** and **Warm** when available, e.g. `Kalt 1.400 € · Warm 1.675 € · 92 m² · 3 Zi. · Title`.
 3. Do **not** wrap these in a `markdown` table — the user prefers tappable links and a single scannable detail line per listing.
+
+**Minimal mode:** when the user asks for **no extra data** / **just links** / the same shape as a prior daily ImmoScout ping, skip long intros and meta (filters, sort order, queue status, job_id). At most one count line, then URL + detail lines only — reuse the comma or middot pattern already established in **this** conversation.
 
 See `web-search-result-extraction` for filter-and-extract workflow.
 

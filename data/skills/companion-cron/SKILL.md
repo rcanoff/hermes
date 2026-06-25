@@ -1,7 +1,7 @@
 ---
 name: companion-cron
 description: Companion App scheduled jobs (Hermes cron). Create job conversations, link Hermes cron jobs, and manage schedules from chat.
-version: 1.17.0
+version: 1.18.0
 author: Hermes Agent
 metadata:
   hermes:
@@ -96,6 +96,14 @@ Recurring checks (HA digest, inbox watch): describe task + sources + output form
 2. `run` only **queues** the job (next tick, up to ~60s).
 3. Reply with one short queue ack only — e.g. "Queued — the reminder will appear here shortly."
 4. Actual output arrives later as a separate assistant message via the output bridge.
+
+### Re-run monitoring search in the **regular** chat
+
+When the user says *run it again* / *run the daily search now* from a **non-job** conversation and wants results **here** (especially *no extra data, just links*):
+
+- **Do not** rely on `cronjob` `run` alone — that posts to the linked Jobs chat and the operator may still archive prompt wrappers under `cron/output/`.
+- Load `immoscout-apartment-search` (or the task’s umbrella skill), run the same baked criteria, reply in **this** thread with **minimal** listing format per `companion-replies` + the job’s output rules.
+- If they only wanted the Jobs thread updated, use `run` and a one-line queue ack — not a second full listing dump in both places unless they ask.
 
 ## Silent monitoring
 

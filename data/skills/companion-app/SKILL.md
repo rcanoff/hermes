@@ -1,12 +1,12 @@
 ---
 name: companion-app
 description: REQUIRED entry point for Companion App replies. iOS bootstrap tells Hermes to load this skill first. Routes intents to reply, block, and data skills. Does not own fence syntax.
-version: 1.2.1
+version: 1.2.3
 author: Hermes Agent
 metadata:
   hermes:
     tags: [companion, index, routing, mobile]
-    related_skills: [companion-replies, companion-cron, companion-user-location, companion-user-health, companion-map-preview, companion-links, companion-markdown-blocks, web-search-result-extraction]
+    related_skills: [companion-replies, companion-cron, companion-user-location, companion-user-health, companion-map-preview, companion-links, companion-markdown-blocks, web-search-result-extraction, obsidian]
 ---
 
 # Companion App
@@ -19,9 +19,13 @@ This skill routes by intent. It does **not** define block syntax — delegate to
 
 Operator tasks (invites, password resets) use `companion-account-management` directly; do not route them from here.
 
+## Language
+
+**Always reply in English** on the Companion App channel — even if the user writes in German. Do not switch to German for now.
+
 ## Reply composition
 
-Before writing any Companion App reply, load `companion-replies` and follow its reply model.
+Before writing any Companion App reply, load `companion-replies` and follow its reply model. All user-facing text must be English (see **Language** above).
 
 ## Intent routing
 
@@ -46,6 +50,13 @@ Before writing any Companion App reply, load `companion-replies` and follow its 
 | Remind me / run every day / cron / job | `companion-cron` (load first, follow exactly) | MCP create/link + `cronjob` with `deliver: local` — never `origin` |
 | Site search / listing links (ImmoScout, Kleinanzeigen, etc.) | `web-search-result-extraction` → `companion-replies` → `companion-links` | ImmoScout: `immoscout-apartment-search`. Kleinanzeigen/Nachmieter: same reply shape; see `references/kleinanzeigen-rental-extraction.md` |
 | Where to buy X locally (shops, butchers, no named site) | `web-search-result-extraction` → `companion-replies` → `companion-links` | See `references/local-retail-product-hunt.md`; verify on each merchant site |
+| Create / save / write / append a note | `obsidian` → `companion-replies` | "create a note with…", "save this to a note", "write a note", append to vault, etc. Vault writes use `/opt/data/vault` only (`OBSIDIAN_VAULT_PATH` in container) — never host macOS iCloud paths, never `/opt/data/notes/` |
+
+## Note saving
+
+When the user asks to create, save, write, or append a note, load `obsidian` first and follow its vault workflow. Confirm with `companion-replies` after the write succeeds. All vault paths must resolve to `/opt/data/vault` inside the container — do not use the host iCloud path or `/opt/data/notes/`.
+
+If the user says **“fix it”** immediately after vault/Obsidian access failed, treat that as **fix the vault mount** (`/opt/data/vault` symlink, `OBSIDIAN_VAULT_PATH`, iCloud sync) — not flight search, fares, or unrelated browser tasks. Load `hermes-obsidian-vault` with `obsidian`.
 
 ## Data → present pipeline (required)
 
@@ -77,3 +88,5 @@ For any vault data intent (location, health):
 - Duplicate fence syntax from `companion-map-preview`, `companion-links`, or `companion-markdown-blocks`
 - Call Home Assistant for companion user location
 - Route account invites from this skill
+- Save notes outside the Obsidian vault path (`/opt/data/vault`) — never host iCloud paths or `/opt/data/notes/`
+- Reply in German — English only on this channel for now
