@@ -1,12 +1,12 @@
 ---
 name: companion-app
 description: REQUIRED entry point for Companion App replies. iOS bootstrap tells Hermes to load this skill first. Routes intents to reply, block, and data skills. Does not own fence syntax.
-version: 1.2.3
+version: 1.2.4
 author: Hermes Agent
 metadata:
   hermes:
     tags: [companion, index, routing, mobile]
-    related_skills: [companion-replies, companion-cron, companion-user-location, companion-user-health, companion-map-preview, companion-links, companion-markdown-blocks, web-search-result-extraction, obsidian]
+    related_skills: [companion-replies, companion-reminders, companion-cron, companion-user-location, companion-user-health, companion-map-preview, companion-links, companion-markdown-blocks, web-search-result-extraction, obsidian]
 ---
 
 # Companion App
@@ -47,7 +47,10 @@ Before writing any Companion App reply, load `companion-replies` and follow its 
 | Weight / body composition | `companion-user-health` → `companion-replies` | Fetch data first |
 | Nutrition / water / protein | `companion-user-health` → `companion-replies` | Fetch data first |
 | Mindfulness / meditation | `companion-user-health` → `companion-replies` | Fetch data first |
-| Remind me / run every day / cron / job | `companion-cron` (load first, follow exactly) | MCP create/link + `cronjob` with `deliver: local` — never `origin` |
+| Tasks, todos, shopping lists, reminders, what's due | `companion-reminders` → `companion-replies` | Apple Reminders via `reminders` MCP — one-shot capture/query/complete; not scheduled cron |
+| Mark done / check off / move / delete reminder | `companion-reminders` → `companion-replies` | |
+| List management (create, rename, delete lists) | `companion-reminders` → `companion-replies` | |
+| Remind me / run every day / cron / job | `companion-cron` (load first, follow exactly) | Scheduled/deferred jobs only — not one-shot Apple Reminders; MCP create/link + `cronjob` with `deliver: local` — never `origin` |
 | Site search / listing links (ImmoScout, Kleinanzeigen, etc.) | `web-search-result-extraction` → `companion-replies` → `companion-links` | ImmoScout: `immoscout-apartment-search`. Kleinanzeigen/Nachmieter: same reply shape; see `references/kleinanzeigen-rental-extraction.md` |
 | Where to buy X locally (shops, butchers, no named site) | `web-search-result-extraction` → `companion-replies` → `companion-links` | See `references/local-retail-product-hunt.md`; verify on each merchant site |
 | Create / save / write / append a note | `obsidian` → `companion-replies` | "create a note with…", "save this to a note", "write a note", append to vault, etc. Vault writes use `/opt/data/vault` only (`OBSIDIAN_VAULT_PATH` in container) — never host macOS iCloud paths, never `/opt/data/notes/` |
@@ -79,6 +82,7 @@ For any vault data intent (location, health):
 
 ## Do not
 
+- Use Todoist — Reminders is the task backend
 - Call `session_search` — disabled on the Companion App channel; use messages in **this** conversation only
 - Call `cronjob` for companion reminders without loading `companion-cron` and completing the MCP create/link flow
 - Use `deliver: origin` (or omit `deliver`) for companion cron jobs — that delivers to Telegram
