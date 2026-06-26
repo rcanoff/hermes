@@ -5,13 +5,14 @@ HOST_UID := $(shell id -u)
 HOST_GID := $(shell id -g)
 COMPOSE := HERMES_UID=$(HOST_UID) HERMES_GID=$(HOST_GID) docker compose --env-file $(ENV_FILE)
 SYNC_APPLE_CALENDAR_MCP_TOKEN := ./scripts/sync-apple-calendar-mcp-token.sh "$(ENV_FILE)" data/config.yaml
+SYNC_REMINDERS_MCP_TOKEN := ./scripts/sync-reminders-mcp-token.sh "$(ENV_FILE)" data/config.yaml
 IS_WSL := $(if $(WSL_DISTRO_NAME),1,)
 WINDOWS_CWD := $(shell wslpath -w "$(CURDIR)" 2>/dev/null)
 POWERSHELL_HERMES := powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location '$(WINDOWS_CWD)'; & '.\\scripts\\hermes.ps1'"
 ANSIBLE_DIR := ansible
 ANSIBLE := cd $(ANSIBLE_DIR) && ansible-playbook
 
-.PHONY: help env config up down ps logs restart sync-apple-calendar-mcp-token deploy hermes-config hermes-config-edit hermes-setup hermes-model hermes-mcp-list hermes-gateway hermes-gateway-nosupervise hermes-shell messaging-api-logs messaging-api-shell browser-daemon-install browser-daemon-dev browser-daemon-start browser-daemon-stop browser-daemon-login-install browser-daemon-login-uninstall browser-daemon-login-status brave-google-start brave-google-sync brave-google-url brave-google-stop
+.PHONY: help env config up down ps logs restart sync-apple-calendar-mcp-token sync-reminders-mcp-token deploy hermes-config hermes-config-edit hermes-setup hermes-model hermes-mcp-list hermes-gateway hermes-gateway-nosupervise hermes-shell messaging-api-logs messaging-api-shell browser-daemon-install browser-daemon-dev browser-daemon-start browser-daemon-stop browser-daemon-login-install browser-daemon-login-uninstall browser-daemon-login-status brave-google-start brave-google-sync brave-google-url brave-google-stop
 
 help:
 	@printf '%s\n' \
@@ -32,6 +33,7 @@ help:
 		'make messaging-api-shell  Open a shell inside the messaging-api container' \
 		'make deploy         Deploy this workspace to the Raspberry Pi via Ansible' \
 		'make sync-apple-calendar-mcp-token  Sync Apple Calendar MCP token into data/config.yaml' \
+		'make sync-reminders-mcp-token  Sync Reminders MCP token into data/config.yaml' \
 		'make browser-daemon-install  Install browser-daemon dependencies' \
 		'make browser-daemon-dev     Run browser-daemon on the Mac host (watch mode)' \
 		'make browser-daemon-start  Start browser-daemon on the Mac host' \
@@ -51,11 +53,15 @@ env:
 sync-apple-calendar-mcp-token:
 	@$(SYNC_APPLE_CALENDAR_MCP_TOKEN)
 
+sync-reminders-mcp-token:
+	@$(SYNC_REMINDERS_MCP_TOKEN)
+
 config:
 ifeq ($(IS_WSL),1)
 	@$(POWERSHELL_HERMES) config
 else
 	@$(SYNC_APPLE_CALENDAR_MCP_TOKEN)
+	@$(SYNC_REMINDERS_MCP_TOKEN)
 	@$(COMPOSE) config
 endif
 
@@ -64,6 +70,7 @@ ifeq ($(IS_WSL),1)
 	@$(POWERSHELL_HERMES) up
 else
 	@$(SYNC_APPLE_CALENDAR_MCP_TOKEN)
+	@$(SYNC_REMINDERS_MCP_TOKEN)
 	@$(COMPOSE) up -d
 endif
 
