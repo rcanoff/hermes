@@ -186,46 +186,56 @@ Practical effect:
 - removing or changing Telegram setup no longer requires editing `.env`
 - restarting Compose will not overwrite Telegram settings from workspace env vars
 
-## Todoist MCP setup
+## Reminders MCP setup
 
-Hermes can connect directly to Todoist's official hosted MCP server over HTTP with OAuth.
+Hermes connects to **Apple Reminders** through the native macOS `apple-reminders-mcp` app on the same machine. The app exposes a bearer-protected MCP HTTP endpoint on localhost; Hermes reaches it from Docker via `host.docker.internal`.
 
-Add the server from inside the running container:
+Full app build, permission, and token setup: [`../apple-reminders-mcp/README.md`](../apple-reminders-mcp/README.md).
+
+Add this value to `.env`:
 
 ```bash
-docker exec -it hermes hermes mcp add todoist --url https://ai.todoist.net/mcp --auth oauth
+REMINDERS_MCP_BEARER_TOKEN=replace-with-same-token-as-apple-reminders-mcp-app
 ```
 
-Then complete authentication:
+Operator flow:
+
+1. Build and run `apple-reminders-mcp` on the Mac (menu-bar agent; default port **3020**).
+2. Grant Reminders access in the app settings.
+3. Copy the bearer token from the app settings → paste into `hermes/.env` as `REMINDERS_MCP_BEARER_TOKEN`.
+4. Sync config and restart if needed:
 
 ```bash
-docker exec -it hermes hermes mcp login todoist
+make config
+make down && make up
 ```
 
 Notes:
 
-- Hermes stores Todoist OAuth tokens in its MCP token store under the persistent Hermes home directory, so the connection survives restarts.
-- If the browser callback cannot reach Hermes directly, complete the OAuth flow using Hermes' paste-back redirect flow.
-- Todoist's tools load through Hermes as an MCP toolset for the configured server.
+- Hermes reaches the MCP at `http://host.docker.internal:3020/mcp` — not `127.0.0.1` from inside the container.
+- `make up` and `make config` automatically sync the `reminders` bearer token in `data/config.yaml` from the selected env file (`.env` if present, otherwise `.env.example`) without printing it.
+- If you need to sync the token without starting or rendering Compose, run `make sync-reminders-mcp-token`.
+- Regenerating the token in the macOS app invalidates the old value — update `.env` and run `make config` again.
+- Task/list intents route through the `companion-reminders` skill (see `data/skills/companion-reminders/SKILL.md`).
 
-Verification:
+`data/config.yaml` is the runtime config Hermes reads, but its `reminders` bearer header is operator-synced from `REMINDERS_MCP_BEARER_TOKEN` — update the env file, not that header by hand.
+
+Operator verification:
 
 ```bash
+# On the Mac host (app must be running)
+curl http://127.0.0.1:3020/health -H "Authorization: Bearer $REMINDERS_MCP_BEARER_TOKEN"
+
+make down
+make up
 docker exec -it hermes hermes mcp list
-docker exec -it hermes hermes mcp test todoist
+docker exec -it hermes hermes mcp test reminders
 ```
 
-If you need to re-authenticate later:
+Safe read-first verification:
 
-```bash
-docker exec -it hermes hermes mcp login todoist
-```
-
-If you need to remove the integration:
-
-```bash
-docker exec -it hermes hermes mcp remove todoist
-```
+- Run `docker exec -it hermes hermes mcp test reminders` to confirm transport and auth.
+- In a fresh Hermes session or after `/reload-mcp`, ask read-only questions first, such as listing reminder lists, before attempting creates or updates.
 
 ## Apple Calendar MCP setup
 

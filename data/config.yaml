@@ -684,7 +684,6 @@ platform_toolsets:
   - skills
   - terminal
   - todo
-  - todoist
   - vision
   - x_search
 plugins:
@@ -704,10 +703,6 @@ mcp_servers:
     url: http://messaging-api:3000/mcp
     headers:
       Authorization: Bearer kKmaZ62rHIgze37BteLnqr9TkW9nrgoYNMY6SMUhE5U=
-    enabled: true
-  todoist:
-    url: https://ai.todoist.net/mcp
-    auth: oauth
     enabled: true
   ha:
     url: http://192.168.4.108:9583/mcp
