@@ -220,22 +220,74 @@ Notes:
 
 `data/config.yaml` is the runtime config Hermes reads, but its `reminders` bearer header is operator-synced from `REMINDERS_MCP_BEARER_TOKEN` — update the env file, not that header by hand.
 
-Operator verification:
+### End-to-end verification
+
+Prerequisites (all must pass before Hermes MCP tests):
+
+| Check | Command / action | Expected |
+|-------|------------------|----------|
+| macOS app running | Menu-bar icon **green** in `apple-reminders-mcp` | Settings shows **Listening on 127.0.0.1:3020** |
+| Reminders access | App **Settings → Reminders Access** | Status **Granted** (not Denied / Not Determined) |
+| Bearer token in `.env` | `REMINDERS_MCP_BEARER_TOKEN` set (same value as app settings) | `make sync-reminders-mcp-token` exits 0 |
+| Config synced | `make config` | `data/config.yaml` `reminders.headers.Authorization` is not `REPLACE_ME` |
+| Hermes stack up | `make ps` | `hermes` container **Up** |
+
+**1. Host health (Mac)**
+
+Export the token from `.env` (do not commit it):
 
 ```bash
-# On the Mac host (app must be running)
-curl http://127.0.0.1:3020/health -H "Authorization: Bearer $REMINDERS_MCP_BEARER_TOKEN"
+set -a; source .env; set +a
+curl -sS http://127.0.0.1:3020/health -H "Authorization: Bearer $REMINDERS_MCP_BEARER_TOKEN"
+```
 
-make down
-make up
+Expected when Reminders access is granted:
+
+```json
+{"ok":true}
+```
+
+If `ok` is `false`, open app settings and grant Reminders access, then retry.
+
+**2. Sync token and reload Hermes**
+
+```bash
+make config
+make down && make up
+```
+
+Or reload MCPs in an active Hermes session: `/reload-mcp`
+
+**3. Hermes MCP transport**
+
+```bash
 docker exec -it hermes hermes mcp list
 docker exec -it hermes hermes mcp test reminders
 ```
 
-Safe read-first verification:
+Expected: `✓` connection success (not `Connection failed` / `All connection attempts failed`).
 
-- Run `docker exec -it hermes hermes mcp test reminders` to confirm transport and auth.
-- In a fresh Hermes session or after `/reload-mcp`, ask read-only questions first, such as listing reminder lists, before attempting creates or updates.
+**4. Companion chat smoke test**
+
+In the iOS companion app (or any client on the Companion App channel):
+
+1. Send: `list my reminder lists` — should return list **names** (via `companion-reminders` skill).
+2. Send: `add test item to Hermes list` — confirm the item appears in Reminders.app on Mac/iPhone within normal iCloud sync latency.
+
+Use a dedicated test list (e.g. **Hermes**) if you do not want clutter on personal lists.
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `curl` connection refused on `:3020` | App not running or MCP not started | Launch from Xcode (⌘R) or `open` the built `.app`; confirm menu-bar status is green |
+| `REMINDERS_MCP_BEARER_TOKEN is empty` on `make config` | Token missing from `.env` | Copy token from app settings → `hermes/.env` → `make config` |
+| Hermes shows `Bear***E_ME` / auth fails | Config not synced | `make sync-reminders-mcp-token` then `/reload-mcp` or `make down && make up` |
+| `docker … mcp test reminders` connection failed | App down, wrong port, or `host.docker.internal` unreachable | Fix host health first; confirm port **3020** in app settings |
+| `{"ok":false,"error":"Reminders access not granted"}` | macOS TCC | App settings → **Request Access**; enable app in **System Settings → Privacy & Security → Reminders** |
+| Chat uses wrong backend | Stale session | New conversation or `/reload-mcp`; confirm `companion-app` routes tasks to `companion-reminders` |
+
+Safe read-first order: host `curl` health → `hermes mcp test reminders` → read-only list query in chat → create test reminder.
 
 ## Apple Calendar MCP setup
 
