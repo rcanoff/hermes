@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { insertMessage, listMessages } from '../db/repos/messages.js'
+import { getMessage, insertMessage, listMessages } from '../db/repos/messages.js'
 import { insertMessageProcess, type ToolingLine } from '../db/repos/process.js'
 import { createRun, markRunCompleted, markRunFailed } from '../db/repos/runs.js'
 import type { StreamHub } from '../streams/hub.js'
@@ -14,7 +14,15 @@ import {
   type RunEventContext,
 } from '../streams/run-event-publisher.js'
 import { listAttachmentsForMessages } from '../db/repos/message-attachments.js'
+import {
+  botSummariesForMessages,
+  enrichMessageWithAttachments,
+} from '../lib/attachment-serializer.js'
+import { listBotsForRoster } from '../db/repos/bots.js'
+import { getConversationBotSlug, getConversationForUser } from '../db/repos/conversations.js'
+import { buildBotRosterPrompt } from '../lib/bot-roster.js'
 import { DEFAULT_COMPANION_MODELS, type CuratedModelEntry } from '../lib/companion-models.js'
+import { DEFAULT_BOT_SLUG } from '../lib/hermes-profile.js'
 import { buildHermesMessages } from './prompt-builder.js'
 import type { HermesClient } from './hermes-client.js'
 import {
@@ -65,9 +73,12 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     input.db,
     history.map((message) => message.id),
   )
+  const bots = botSummariesForMessages(input.db, history)
   const historyWithAttachments = history.map((message) => ({
     ...message,
     attachments: attachmentMap.get(message.id),
+    from_bot: message.from_bot_id ? bots.get(message.from_bot_id) ?? null : null,
+    to_bot: message.to_bot_id ? bots.get(message.to_bot_id) ?? null : null,
   }))
 
   const streamCtx: RunEventContext = {
@@ -124,17 +135,33 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
   }
 
   try {
+    const botSlug = getConversationBotSlug(input.db, input.conversationId)
+    const rosterPrompt = botSlug
+      ? buildBotRosterPrompt(listBotsForRoster(input.db), botSlug)
+      : undefined
+    const currentBotId = getConversationForUser(
+      input.db,
+      input.userId,
+      input.conversationId,
+    )?.bot_id
+
     const hermesMessages = await buildHermesMessages(historyWithAttachments, {
       bootstrapPrompt: input.bootstrapPrompt,
       companionUsername: input.companionUsername,
+      rosterPrompt,
       attachmentsDir: input.attachmentsDir,
       userId: input.userId,
       visionHistoryMaxBytes: input.visionHistoryMaxBytes,
+      currentBotId,
     })
+
+    const profileSlug = botSlug && botSlug !== DEFAULT_BOT_SLUG ? botSlug : undefined
 
     for await (const event of input.hermesClient.streamChat({
       hermesSessionId: input.hermesSessionId,
       messages: hermesMessages,
+      companionUserId: input.userId,
+      ...(profileSlug ? { profileSlug } : {}),
     })) {
       if (event.type === 'reasoning' && event.text) {
         reasoningBuffer += event.text
@@ -198,6 +225,10 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
     if (!sawDone) {
       throw new Error('Hermes stream ended without a done event')
+    }
+
+    if (!assistantText.trim()) {
+      throw new Error('Hermes stream completed without assistant text')
     }
 
     const assistantMessageId = persistCompletedRun(
@@ -282,22 +313,13 @@ function persistCompletedRun(
       throw new Error('run_not_running')
     }
 
-    const message = db
-      .prepare(`
-        SELECT id, conversation_id, role, content, created_at
-        FROM messages
-        WHERE conversation_id = ? AND id = ?
-      `)
-      .get(conversationId, assistantMessageId) as {
-      id: string
-      conversation_id: string
-      role: 'user' | 'assistant'
-      content: string
-      created_at: string
+    const message = getMessage(db, conversationId, assistantMessageId)
+    if (!message) {
+      throw new Error('message_not_found')
     }
 
     const enrichedMessage = {
-      ...message,
+      ...enrichMessageWithAttachments(db, message),
       ...(process ? { process } : {}),
     }
 

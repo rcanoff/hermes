@@ -1,9 +1,14 @@
 import type Database from 'better-sqlite3'
 import {
+  DEFAULT_BOT_COLOR,
+  DEFAULT_BOT_ICON,
+} from '../lib/bot-appearance.js'
+import {
   COMPANION_DEFAULT_MODEL,
   COMPANION_DEFAULT_PROVIDER,
 } from '../lib/companion-models.js'
 import { backfillAccountSyncEvents } from './repos/chat-sync-events.js'
+import { ensureDefaultBotRow, seedKnownBotResponsibilities } from './repos/bots.js'
 
 export function initSchema(db: Database.Database): void {
   db.pragma('foreign_keys = ON')
@@ -141,12 +146,157 @@ export function initSchema(db: Database.Database): void {
   ensureLegacyConversationColumns(db)
   ensureConversationModelColumns(db)
   ensureJobConversationColumns(db)
+  ensureBots(db)
+  ensureUserBotPreferences(db)
+  ensureConversationBotId(db)
+  ensureConversationPeerBotId(db)
+  ensureMessageDelegationColumns(db)
   ensureCronOutputDeliveries(db)
   ensureLegacyHealthDailySummaries(db)
   ensureMessageRunsOriginSessionId(db)
   ensureChatSyncEvents(db)
   ensurePushDevices(db)
   ensureDeviceSyncState(db)
+  ensureCompanionSettings(db)
+}
+
+function ensureConversationBotId(db: Database.Database): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(conversations)`)
+    .all() as Array<{ name: string }>
+
+  if (!columns.some((column) => column.name === 'bot_id')) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN bot_id TEXT REFERENCES bots(id)`)
+  }
+
+  ensureDefaultBotRow(db)
+
+  db.exec(`
+    UPDATE conversations
+    SET bot_id = (SELECT id FROM bots WHERE slug = 'default')
+    WHERE bot_id IS NULL
+      AND kind = 'regular'
+  `)
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS conversations_user_bot_updated_idx
+      ON conversations (user_id, bot_id, updated_at DESC, id DESC)
+  `)
+}
+
+function ensureConversationPeerBotId(db: Database.Database): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(conversations)`)
+    .all() as Array<{ name: string }>
+
+  if (!columns.some((column) => column.name === 'peer_bot_id')) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN peer_bot_id TEXT REFERENCES bots(id)`)
+  }
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS conversations_user_bot_peer_idx
+      ON conversations (user_id, bot_id, peer_bot_id)
+      WHERE kind = 'regular' AND peer_bot_id IS NOT NULL
+  `)
+}
+
+function ensureMessageDelegationColumns(db: Database.Database): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(messages)`)
+    .all() as Array<{ name: string }>
+  const names = new Set(columns.map((column) => column.name))
+
+  if (!names.has('kind')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat'`)
+  }
+
+  if (!names.has('from_bot_id')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN from_bot_id TEXT REFERENCES bots(id)`)
+  }
+
+  if (!names.has('to_bot_id')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN to_bot_id TEXT REFERENCES bots(id)`)
+  }
+
+  if (!names.has('delegation_id')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN delegation_id TEXT`)
+  }
+
+  db.exec(`UPDATE messages SET kind = 'chat' WHERE kind IS NULL OR kind = ''`)
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS messages_delegation_id_idx
+      ON messages (delegation_id)
+      WHERE delegation_id IS NOT NULL
+  `)
+}
+
+function ensureBots(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bots (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL,
+      soul TEXT NOT NULL,
+      responsibilities TEXT NOT NULL DEFAULT '',
+      icon TEXT NOT NULL DEFAULT '${DEFAULT_BOT_ICON}',
+      color TEXT NOT NULL DEFAULT '${DEFAULT_BOT_COLOR}',
+      is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS bots_one_default_idx
+      ON bots (is_default)
+      WHERE is_default = 1;
+
+    CREATE INDEX IF NOT EXISTS bots_list_idx
+      ON bots (is_default DESC, created_at DESC, id DESC);
+  `)
+
+  const columns = db
+    .prepare(`PRAGMA table_info(bots)`)
+    .all() as Array<{ name: string }>
+
+  if (!columns.some((column) => column.name === 'icon')) {
+    db.exec(`ALTER TABLE bots ADD COLUMN icon TEXT NOT NULL DEFAULT '${DEFAULT_BOT_ICON}'`)
+  }
+
+  if (!columns.some((column) => column.name === 'color')) {
+    db.exec(`ALTER TABLE bots ADD COLUMN color TEXT NOT NULL DEFAULT '${DEFAULT_BOT_COLOR}'`)
+  }
+
+  if (!columns.some((column) => column.name === 'responsibilities')) {
+    db.exec(`ALTER TABLE bots ADD COLUMN responsibilities TEXT NOT NULL DEFAULT ''`)
+  }
+
+  seedKnownBotResponsibilities(db)
+}
+
+function ensureUserBotPreferences(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_bot_preferences (
+      user_id TEXT NOT NULL,
+      bot_id TEXT NOT NULL,
+      notifications_enabled INTEGER NOT NULL DEFAULT 1 CHECK (notifications_enabled IN (0, 1)),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, bot_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (bot_id) REFERENCES bots(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS user_bot_preferences_user_idx
+      ON user_bot_preferences (user_id);
+  `)
+}
+
+function ensureCompanionSettings(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS companion_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `)
 }
 
 function ensureDeviceSyncState(db: Database.Database): void {

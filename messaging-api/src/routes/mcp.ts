@@ -34,6 +34,11 @@ const mcpRoutes: FastifyPluginAsync = async (app) => {
 
     const toolHandlers = buildMcpToolHandlers(app.db, {
       inviteExpiryHours: app.inviteExpiryHours,
+      hermesClient: app.hermesClient,
+      hub: app.streamHub,
+      companionModels: app.companionModels,
+      attachmentsDir: app.attachmentsDir,
+      visionHistoryMaxBytes: app.visionHistoryMaxBytes,
     })
     const mcpServer = createMcpServer(toolHandlers)
     const transport = new StreamableHTTPServerTransport({
@@ -96,6 +101,18 @@ function createMcpServer(toolHandlers: McpToolHandlers): McpServer {
       },
     },
     async (input) => executeToolCall(() => toolHandlers.get_user_location(input)),
+  )
+
+  server.registerTool(
+    'get_user_location_for_user_id',
+    {
+      description:
+        'Return the latest location event for a companion user by user id, or unavailability',
+      inputSchema: {
+        user_id: z.string().describe('Companion user id (UUID)'),
+      },
+    },
+    async (input) => executeToolCall(() => toolHandlers.get_user_location_for_user_id(input)),
   )
 
   server.registerTool(
@@ -243,6 +260,33 @@ function createMcpServer(toolHandlers: McpToolHandlers): McpServer {
       },
     },
     async (input) => executeToolCall(() => toolHandlers.link_job_conversation(input)),
+  )
+
+  server.registerTool(
+    'message_teammate',
+    {
+      description:
+        'Ask a teammate bot to handle a request. Only the main assistant may call this. The user already sees the send and reply in this chat.',
+      inputSchema: {
+        username: z.string().describe('Companion account username'),
+        name: z.string().describe('Teammate display name or slug'),
+        text: z.string().describe('Request to send the teammate'),
+      },
+    },
+    async (input) => executeToolCall(() => toolHandlers.message_teammate(input)),
+  )
+
+  server.registerTool(
+    'set_my_responsibilities',
+    {
+      description:
+        "Set this bot's jobs line after onboarding. Writes the caller bot only. Short string: 1–3 clauses, no first-person, max 200 characters.",
+      inputSchema: {
+        username: z.string().describe('Companion account username'),
+        text: z.string().describe('Jobs string to store as this bot’s responsibilities'),
+      },
+    },
+    async (input) => executeToolCall(() => toolHandlers.set_my_responsibilities(input)),
   )
 
   return server

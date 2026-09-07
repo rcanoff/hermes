@@ -39,14 +39,46 @@ export function createRun(
   return id
 }
 
+const RUN_COLUMNS = `
+  id, conversation_id, user_message_id, assistant_message_id, origin_session_id,
+  status, error_code, error_detail, started_at, finished_at
+`
+
 export function getActiveRun(db: Database.Database, conversationId: string): RunRow | undefined {
   return db
     .prepare(`
-      SELECT id, conversation_id, user_message_id, assistant_message_id, origin_session_id, status, error_code, error_detail, started_at, finished_at
+      SELECT ${RUN_COLUMNS}
       FROM message_runs
       WHERE conversation_id = ? AND status = 'running'
     `)
     .get(conversationId) as RunRow | undefined
+}
+
+export function getLatestRunningRunForUser(
+  db: Database.Database,
+  userId: string,
+): RunRow | undefined {
+  return db
+    .prepare(`
+      SELECT
+        message_runs.id,
+        message_runs.conversation_id,
+        message_runs.user_message_id,
+        message_runs.assistant_message_id,
+        message_runs.origin_session_id,
+        message_runs.status,
+        message_runs.error_code,
+        message_runs.error_detail,
+        message_runs.started_at,
+        message_runs.finished_at
+      FROM message_runs
+      JOIN conversations ON conversations.id = message_runs.conversation_id
+      WHERE conversations.user_id = ?
+        AND message_runs.status = 'running'
+      ORDER BY message_runs.started_at DESC, message_runs.id DESC
+      LIMIT 1
+    `)
+    .get(userId) as RunRow | undefined
 }
 
 export function markRunCompleted(

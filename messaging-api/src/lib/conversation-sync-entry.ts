@@ -30,6 +30,8 @@ export function buildConversationSyncEntry(
     updated_at: conversation.updated_at,
     latest_message_id: latest?.id ?? null,
     latest_message_created_at: latest?.created_at ?? null,
+    bot_id: conversation.bot_id,
+    peer_bot_id: conversation.peer_bot_id,
   }
 
   if (conversation.kind === 'job') {

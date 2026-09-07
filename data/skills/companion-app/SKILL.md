@@ -1,12 +1,12 @@
 ---
 name: companion-app
 description: REQUIRED entry point for Companion App replies. iOS bootstrap tells Hermes to load this skill first. Routes intents to reply, block, and data skills. Does not own fence syntax.
-version: 1.2.4
+version: 1.2.6
 author: Hermes Agent
 metadata:
   hermes:
     tags: [companion, index, routing, mobile]
-    related_skills: [companion-replies, companion-reminders, companion-cron, companion-user-location, companion-user-health, companion-map-preview, companion-links, companion-markdown-blocks, web-search-result-extraction, obsidian]
+    related_skills: [companion-replies, companion-reminders, companion-maps, companion-cron, companion-user-location, companion-user-health, companion-map-preview, companion-links, companion-markdown-blocks, web-search-result-extraction, obsidian]
 ---
 
 # Companion App
@@ -23,6 +23,14 @@ Operator tasks (invites, password resets) use `companion-account-management` dir
 
 **Always reply in English** on the Companion App channel — even if the user writes in German. Do not switch to German for now.
 
+## Team jobs
+
+The roster lists each bot’s **jobs** (`responsibilities`), never soul.
+
+If a teammate’s jobs match the user’s request, the **main** assistant MUST call companion MCP `message_teammate` with their name and the request. Do not do that job yourself. Only main may call `message_teammate`.
+
+If your own jobs are not set yet, ask 2–3 short questions, then call `set_my_responsibilities`. Do not do specialist work until jobs are set.
+
 ## Reply composition
 
 Before writing any Companion App reply, load `companion-replies` and follow its reply model. All user-facing text must be English (see **Language** above).
@@ -33,11 +41,17 @@ Before writing any Companion App reply, load `companion-replies` and follow its 
 |-------------|-----------------|-------|
 | Short text answer | `companion-replies` | Plain text only |
 | Rich layout (list, table, headings) | `companion-replies` → `companion-markdown-blocks` | |
-| Show a place on map | `companion-replies` → `companion-map-preview` | Known coordinates required |
+| Show a place on map (coordinates known) | `companion-replies` → `companion-map-preview` | Coordinates already in context |
+| Show a place on map (search / geocode) | `companion-maps` → `companion-replies` → `companion-map-preview` | Resolve place via `maps_*` first |
 | Share tappable URL | `companion-replies` → `companion-links` | URLs outside `map` fences |
-| "Where am I?" / current position | `companion-user-location` → `companion-replies` → `companion-map-preview` | Fetch data first |
-| Route / directions | `companion-user-location` (if origin is "here") → `companion-replies` → `companion-map-preview` (+ optional `companion-links`) | |
-| Location history | `companion-user-location` → `companion-replies` → plain text or `companion-markdown-blocks` | Map only if user asks to see a place |
+| "Where am I?" / current position | `companion-maps` → `companion-replies` → `companion-map-preview` | iPhone vault via **apple** MCP — not Mac GPS |
+| Navigate / directions / route to X | `companion-maps` → `companion-replies` → `companion-map-preview` (+ optional `companion-links`) | Omit origin for "here" / "me" |
+| ETA / travel time / distance | `companion-maps` → `companion-replies` | `maps_travel_time`, `maps_distance`, or route tools |
+| Nearby POI (pharmacy, coffee, gas, …) | `companion-maps` → `companion-replies` → `companion-map-preview` or `companion-markdown-blocks` | "Near me" uses iPhone location |
+| Search or geocode a place by name / address | `companion-maps` → `companion-replies` | Fixed address — header optional |
+| Open in Apple Maps (handoff) | `companion-maps` → `companion-replies` → `companion-links` | iPhone URL via `companion-links` only — not `maps_open_*` unless user explicitly wants Mac Maps |
+| Geofence / alert when I arrive or leave | `companion-replies` | **Out of scope** — deferred to Companion iOS |
+| Location history | `companion-user-location` → `companion-replies` → plain text or `companion-markdown-blocks` | Vault history — not live MapKit routing |
 | Steps / activity today | `companion-user-health` → `companion-replies` | Fetch data first |
 | Steps to goal / ring progress | `companion-user-health` → `companion-replies` (optional `companion-markdown-blocks`) | Note `partial` + `synced_at` staleness |
 | Health history ("steps last Tuesday") | `companion-user-health` → plain text or `companion-markdown-blocks` | Use `get_user_health_daily` or history |
@@ -47,7 +61,7 @@ Before writing any Companion App reply, load `companion-replies` and follow its 
 | Weight / body composition | `companion-user-health` → `companion-replies` | Fetch data first |
 | Nutrition / water / protein | `companion-user-health` → `companion-replies` | Fetch data first |
 | Mindfulness / meditation | `companion-user-health` → `companion-replies` | Fetch data first |
-| Tasks, todos, shopping lists, reminders, what's due | `companion-reminders` → `companion-replies` | Apple Reminders via `reminders` MCP — one-shot capture/query/complete; not scheduled cron |
+| Tasks, todos, shopping lists, reminders, what's due | `companion-reminders` → `companion-replies` | Apple Reminders via **apple** MCP (`reminders_*` tools) — one-shot capture/query/complete; not scheduled cron |
 | Mark done / check off / move / delete reminder | `companion-reminders` → `companion-replies` | |
 | List management (create, rename, delete lists) | `companion-reminders` → `companion-replies` | |
 | Remind me / run every day / cron / job | `companion-cron` (load first, follow exactly) | Scheduled/deferred jobs only — not one-shot Apple Reminders; MCP create/link + `cronjob` with `deliver: local` — never `origin` |
@@ -63,11 +77,11 @@ If the user says **“fix it”** immediately after vault/Obsidian access failed
 
 ## Data → present pipeline (required)
 
-For any vault data intent (location, health):
+For any vault data intent (live maps, location history, health):
 
 | Phase | What to do | Skills |
 |-------|------------|--------|
-| **GET** | Call MCP, normalize to a record | `companion-user-location`, `companion-user-health`, … |
+| **GET** | Call MCP, normalize to a record | `companion-maps` (live position, search, route, ETA), `companion-user-location` (history), `companion-user-health`, … |
 | **PRESENT** | Load reply + block skills | `companion-replies` → `companion-map-preview` / `companion-markdown-blocks` / `companion-links` |
 | **REPLY** | Compose user-facing text from the record | per child skills |
 
@@ -90,6 +104,7 @@ For any vault data intent (location, health):
 - Send a reply after a data skill without loading `companion-replies`
 - Format location or health answers inside data skills
 - Duplicate fence syntax from `companion-map-preview`, `companion-links`, or `companion-markdown-blocks`
+- Use `companion-user-location` for MapKit search, routing, ETA, or "where am I?" — use `companion-maps` (`maps_*` on **apple** MCP)
 - Call Home Assistant for companion user location
 - Route account invites from this skill
 - Save notes outside the Obsidian vault path (`/opt/data/vault`) — never host iCloud paths or `/opt/data/notes/`

@@ -65,14 +65,28 @@ export function parseCompanionModelsJson(raw: string | undefined): CuratedModelE
   return parsed
 }
 
+export function findCuratedModel(
+  catalog: CuratedModelEntry[],
+  model: string,
+  provider: string,
+): CuratedModelEntry | undefined {
+  return catalog.find((entry) => entry.model === model && entry.provider === provider)
+}
+
+export function curatedModelOrFallback(
+  catalog: CuratedModelEntry[],
+  model: string,
+  provider: string,
+): CuratedModelEntry {
+  return findCuratedModel(catalog, model, provider) ?? { model, provider, display: model }
+}
+
 export function modelDisplayName(
   catalog: CuratedModelEntry[],
   model: string,
   provider: string,
 ): string {
-  return (
-    catalog.find((entry) => entry.model === model && entry.provider === provider)?.display ?? model
-  )
+  return findCuratedModel(catalog, model, provider)?.display ?? model
 }
 
 export function assertCuratedModel(

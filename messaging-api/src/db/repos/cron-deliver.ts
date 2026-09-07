@@ -2,7 +2,8 @@ import type Database from 'better-sqlite3'
 import { isCronSilentContent } from '../../lib/job-conversation.js'
 import { emitConversationMessageUpsert } from '../../services/chat-sync-emitter.js'
 import { findConversationByHermesJobId, touchConversationUpdatedAt } from './conversations.js'
-import { insertMessage } from './messages.js'
+import { enrichMessageWithAttachments } from '../../lib/attachment-serializer.js'
+import { getMessageById, insertMessage } from './messages.js'
 import { insertMessageProcess, type ToolingLine } from './process.js'
 
 export interface DeliverCronRunInput {
@@ -71,21 +72,18 @@ export function deliverCronRun(
     })
   }
 
-  const message = db
-    .prepare(`
-      SELECT id, conversation_id, role, content, created_at
-      FROM messages
-      WHERE id = ?
-    `)
-    .get(messageId) as {
-    id: string
-    conversation_id: string
-    role: 'user' | 'assistant'
-    content: string
-    created_at: string
+  const message = getMessageById(db, messageId)
+  if (!message) {
+    throw new Error('message_not_found')
   }
 
-  emitConversationMessageUpsert(db, conversation.user_id, conversation.id, message, process)
+  emitConversationMessageUpsert(
+    db,
+    conversation.user_id,
+    conversation.id,
+    enrichMessageWithAttachments(db, message),
+    process,
+  )
 
   return {
     kind: 'delivered',

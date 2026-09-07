@@ -5,7 +5,13 @@ import {
   revokeInvite,
   type AccountInviteRow,
 } from '../db/repos/account-invites.js'
-import { findUserByUsername } from '../db/repos/users.js'
+import {
+  getBotById,
+  MAX_BOT_RESPONSIBILITIES_CHARS,
+  updateBot,
+} from '../db/repos/bots.js'
+import { getLatestRunningRunForUser } from '../db/repos/runs.js'
+import { findUserById, findUserByUsername } from '../db/repos/users.js'
 import {
   getHealthDailySummaryByDate,
   getLatestHealthDailySummary,
@@ -22,12 +28,17 @@ import { parseHealthDate, type HealthMetrics } from '../lib/health-metrics.js'
 import { buildHalLinks } from '../lib/pagination.js'
 import {
   createJobConversation,
+  getConversationForUser,
   linkJobConversation,
   type ConversationRow,
 } from '../db/repos/conversations.js'
 import { emitAccountConversationUpsert } from './chat-sync-emitter.js'
 import { createInviteRecord } from './invites.js'
 import { formatFreshness } from './freshness.js'
+import { messageTeammate, type MessageTeammateResult } from './bot-delegate.js'
+import type { CuratedModelEntry } from '../lib/companion-models.js'
+import type { HermesClient } from './hermes-client.js'
+import type { StreamHub } from '../streams/hub.js'
 
 export interface UserLocationUnavailable {
   available: false
@@ -46,6 +57,25 @@ export interface UserLocationAvailable {
 }
 
 export type UserLocationResult = UserLocationUnavailable | UserLocationAvailable
+
+export interface UserLocationForUserIdUnavailable {
+  available: false
+  user_id: string
+}
+
+export interface UserLocationForUserIdAvailable {
+  available: true
+  user_id: string
+  latitude: number
+  longitude: number
+  accuracy_meters: number
+  synced_at: string
+  address: string | null
+}
+
+export type UserLocationForUserIdResult =
+  | UserLocationForUserIdUnavailable
+  | UserLocationForUserIdAvailable
 
 export interface LocationHistoryEvent {
   id: string
@@ -139,6 +169,7 @@ export interface LinkJobConversationResult {
 
 export interface McpToolHandlers {
   get_user_location(input: { username: string }): Promise<UserLocationResult>
+  get_user_location_for_user_id(input: { user_id: string }): Promise<UserLocationForUserIdResult>
   get_location_history(input: {
     username: string
     limit?: number
@@ -169,12 +200,33 @@ export interface McpToolHandlers {
     schedule_display?: string
     job_enabled?: boolean
   }): Promise<LinkJobConversationResult>
+  message_teammate(input: {
+    username: string
+    name: string
+    text: string
+  }): Promise<MessageTeammateResult>
+  set_my_responsibilities(input: {
+    username: string
+    text: string
+  }): Promise<SetMyResponsibilitiesResult>
+}
+
+export interface SetMyResponsibilitiesResult {
+  ok: true
+  name: string
+  slug: string
+  responsibilities: string
 }
 
 export function buildMcpToolHandlers(
   db: Database.Database,
   options: {
     inviteExpiryHours: number
+    hermesClient: HermesClient
+    hub: StreamHub
+    companionModels?: CuratedModelEntry[]
+    attachmentsDir?: string
+    visionHistoryMaxBytes?: number
   },
 ): McpToolHandlers {
   return {
@@ -186,6 +238,16 @@ export function buildMcpToolHandlers(
       }
 
       return serializeAvailableLocation(event)
+    },
+
+    async get_user_location_for_user_id(input) {
+      const user = resolveUserById(db, input.user_id)
+      const event = getLatestLocationEvent(db, user.id)
+      if (!event) {
+        return { available: false, user_id: user.id }
+      }
+
+      return serializeLocationForUserId(user.id, event)
     },
 
     async get_user_health_today(input) {
@@ -365,6 +427,65 @@ export function buildMcpToolHandlers(
       emitAccountConversationUpsert(db, user.id, linked.id)
       return serializeLinkedJobConversation(linked)
     },
+
+    async message_teammate(input) {
+      return messageTeammate({
+        db,
+        hermesClient: options.hermesClient,
+        hub: options.hub,
+        username: input.username,
+        name: input.name,
+        text: input.text,
+        companionModels: options.companionModels,
+        attachmentsDir: options.attachmentsDir,
+        visionHistoryMaxBytes: options.visionHistoryMaxBytes,
+      })
+    },
+
+    async set_my_responsibilities(input) {
+      return setMyResponsibilities(db, input)
+    },
+  }
+}
+
+function setMyResponsibilities(
+  db: Database.Database,
+  input: { username: string; text: string },
+): SetMyResponsibilitiesResult {
+  const text = input.text.trim()
+  if (!text) {
+    throw new Error('responsibilities must be a non-empty string')
+  }
+  if (text.length > MAX_BOT_RESPONSIBILITIES_CHARS) {
+    throw new Error(`responsibilities must be at most ${MAX_BOT_RESPONSIBILITIES_CHARS} characters`)
+  }
+
+  const user = resolveUserByUsername(db, input.username)
+  const callerRun = getLatestRunningRunForUser(db, user.id)
+  if (!callerRun) {
+    throw new Error('No running turn to set responsibilities from')
+  }
+
+  const callerConversation = getConversationForUser(db, user.id, callerRun.conversation_id)
+  if (!callerConversation?.bot_id) {
+    throw new Error('No caller bot for this turn')
+  }
+
+  const callerBot = getBotById(db, callerConversation.bot_id)
+  if (!callerBot) {
+    throw new Error('No caller bot for this turn')
+  }
+
+  const updated = updateBot(db, callerBot.id, { responsibilities: text })
+  if (!updated) {
+    throw new Error('No caller bot for this turn')
+  }
+
+  return {
+    ok: true,
+    name: updated.name,
+    slug: updated.slug,
+    responsibilities: updated.responsibilities,
   }
 }
 
@@ -383,6 +504,15 @@ function resolveUserByUsername(db: Database.Database, username: string) {
   const user = findUserByUsername(db, username)
   if (!user) {
     throw new Error(`User "${username}" not found`)
+  }
+
+  return user
+}
+
+function resolveUserById(db: Database.Database, userId: string) {
+  const user = findUserById(db, userId)
+  if (!user) {
+    throw new Error(`User "${userId}" not found`)
   }
 
   return user
@@ -409,6 +539,21 @@ function serializeAvailableLocation(event: LocationEventRow): UserLocationAvaila
     timestamp: event.timestamp,
     trigger: event.trigger,
     freshness: formatFreshness(event.timestamp),
+  }
+}
+
+function serializeLocationForUserId(
+  userId: string,
+  event: LocationEventRow,
+): UserLocationForUserIdAvailable {
+  return {
+    available: true,
+    user_id: userId,
+    latitude: event.lat,
+    longitude: event.lon,
+    accuracy_meters: event.accuracy_m,
+    synced_at: event.timestamp,
+    address: event.address,
   }
 }
 

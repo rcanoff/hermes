@@ -49,6 +49,24 @@ describe('parseHermesSsePayload', () => {
     expect(parseHermesSsePayload('data: [DONE]\n\n')).toEqual([{ type: 'done' }])
   })
 
+  it('emits error for finish_reason error with Hermes error payload', () => {
+    const events = parseHermesSsePayload(
+      'data: {"choices":[{"index":0,"delta":{},"finish_reason":"error"}],"error":{"message":"No LLM provider configured. Run `hermes model` to select a provider, or run `hermes setup` for first-time configuration.","type":"RuntimeError"},"hermes":{"completed":true,"partial":false,"failed":true,"error":"No LLM provider configured. Run `hermes model` to select a provider, or run `hermes setup` for first-time configuration.","error_code":"agent_error"}}\n\n',
+    )
+    expect(events).toEqual([
+      {
+        type: 'error',
+        text: 'No LLM provider configured. Run `hermes model` to select a provider, or run `hermes setup` for first-time configuration.',
+      },
+    ])
+  })
+
+  it('emits a generic error when finish_reason is error without a message', () => {
+    expect(
+      parseHermesSsePayload('data: {"choices":[{"delta":{},"finish_reason":"error"}]}\n\n'),
+    ).toEqual([{ type: 'error', text: 'Hermes stream failed' }])
+  })
+
   it('emits tool events from hermes.tool.progress running frames', () => {
     const tracker = new HermesToolProgressTracker()
     const events = parseHermesSsePayload(

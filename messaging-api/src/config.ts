@@ -147,5 +147,6 @@ export function readConfig(env: NodeJS.ProcessEnv): AppOptions {
       env.COMPANION_MODELS_JSON,
       env.PROVIDER_MODELS_CACHE_PATH?.trim() || DEFAULT_PROVIDER_MODELS_CACHE_PATH,
     ),
+    hermesHome: env.HERMES_HOME?.trim() || env.HERMES_DATA_DIR?.trim() || '/opt/data',
   }
 }

@@ -1,0 +1,252 @@
+import Database from 'better-sqlite3'
+import { describe, expect, it } from 'vitest'
+import { insertBot, getBotBySlug } from '../src/db/repos/bots.js'
+import {
+  createConversation,
+  createJobConversation,
+  findPeerConversation,
+} from '../src/db/repos/conversations.js'
+import { insertMessage, listMessages } from '../src/db/repos/messages.js'
+import { createRun } from '../src/db/repos/runs.js'
+import { initSchema } from '../src/db/schema.js'
+import { messageTeammate } from '../src/services/bot-delegate.js'
+import { StreamHub, type SessionStreamEvent } from '../src/streams/hub.js'
+import { FakeHermesClient } from './helpers/hermes.js'
+
+function seedUser(db: Database.Database) {
+  db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash')`).run()
+}
+
+function seedTravel(db: Database.Database) {
+  return insertBot(db, {
+    slug: 'travel',
+    name: 'Travel',
+    role: 'Flights',
+    soul: 'You book trips.',
+    icon: 'map',
+    color: 'green',
+  })
+}
+
+function seedCallerTurn(db: Database.Database, botId?: string) {
+  const conversationId = createConversation(db, 'u1', 'hs-caller', null, undefined, botId)
+  const userMessageId = insertMessage(db, {
+    conversationId,
+    role: 'user',
+    content: 'Plan a trip to Lisbon',
+  })
+  createRun(db, conversationId, userMessageId, 'sess-1')
+  return conversationId
+}
+
+describe('messageTeammate', () => {
+  it('lets the default bot message Travel; copies appear on both threads', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedUser(db)
+    const hermes = getBotBySlug(db, 'default')!
+    const travel = seedTravel(db)
+    const callerId = seedCallerTurn(db)
+
+    const hermesClient = new FakeHermesClient()
+    hermesClient.pushAnswerToken('Lisbon is lovely in June.')
+    hermesClient.pushDone()
+    hermesClient.closeWithoutDone()
+
+    const hub = new StreamHub()
+    hub.registerUserSession('u1', 'sess-1')
+    const events: SessionStreamEvent[] = []
+    hub.subscribeSession('sess-1', (event) => events.push(event))
+
+    const result = await messageTeammate({
+      db,
+      hermesClient,
+      hub,
+      username: 'operator',
+      name: 'Travel',
+      text: 'Plan a trip to Lisbon',
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      from: 'Hermes',
+      to: 'Travel',
+      reply: 'Lisbon is lovely in June.',
+    })
+
+    const callerMessages = listMessages(db, callerId)
+    expect(callerMessages.map((message) => message.kind)).toEqual(['chat', 'bot_sent', 'bot_reply'])
+    expect(callerMessages[1]).toMatchObject({
+      role: 'assistant',
+      kind: 'bot_sent',
+      content: 'Plan a trip to Lisbon',
+      from_bot_id: hermes.id,
+      to_bot_id: travel.id,
+    })
+    expect(callerMessages[2]).toMatchObject({
+      role: 'assistant',
+      kind: 'bot_reply',
+      content: 'Lisbon is lovely in June.',
+      from_bot_id: travel.id,
+      to_bot_id: hermes.id,
+      delegation_id: callerMessages[1]!.delegation_id,
+    })
+
+    const pair = findPeerConversation(db, 'u1', travel.id, hermes.id)
+    expect(pair).toMatchObject({
+      bot_id: travel.id,
+      peer_bot_id: hermes.id,
+      title: 'From Hermes',
+    })
+    const targetMessages = listMessages(db, pair!.id)
+    expect(targetMessages.map((message) => ({ kind: message.kind, role: message.role }))).toEqual([
+      { kind: 'bot_sent', role: 'assistant' },
+      { kind: 'chat', role: 'assistant' },
+    ])
+    expect(targetMessages[0]).toMatchObject({
+      content: 'Plan a trip to Lisbon',
+      from_bot_id: hermes.id,
+      to_bot_id: travel.id,
+      delegation_id: callerMessages[1]!.delegation_id,
+    })
+    expect(targetMessages[1]).toMatchObject({
+      content: 'Lisbon is lovely in June.',
+    })
+
+    const promptUser = hermesClient.requests[0]?.messages.find((message) => message.role === 'user')
+    expect(promptUser?.content).toBe('Hermes (teammate) asks: Plan a trip to Lisbon')
+    expect(hermesClient.requests[0]?.profileSlug).toBe('travel')
+
+    const callerUpserts = events.filter(
+      (event) =>
+        event.event === 'message_upsert' && event.data.conversationId === callerId,
+    )
+    expect(callerUpserts.map((event) => event.data.message.kind)).toEqual(['bot_sent', 'bot_reply'])
+    expect(events.some((event) => event.event === 'tooling' && event.data.tool === 'message_teammate')).toBe(
+      true,
+    )
+  })
+
+  it('resolves a teammate by slug', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedUser(db)
+    seedTravel(db)
+    seedCallerTurn(db)
+
+    const hermesClient = new FakeHermesClient()
+    hermesClient.pushAnswerToken('ok')
+    hermesClient.pushDone()
+    hermesClient.closeWithoutDone()
+
+    const result = await messageTeammate({
+      db,
+      hermesClient,
+      hub: new StreamHub(),
+      username: 'operator',
+      name: 'travel',
+      text: 'Go',
+    })
+
+    expect(result.to).toBe('Travel')
+  })
+
+  it('rejects a non-default caller', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedUser(db)
+    const travel = seedTravel(db)
+    seedCallerTurn(db, travel.id)
+
+    await expect(
+      messageTeammate({
+        db,
+        hermesClient: new FakeHermesClient(),
+        hub: new StreamHub(),
+        username: 'operator',
+        name: 'Hermes',
+        text: 'Help',
+      }),
+    ).rejects.toThrow('only the main assistant can message teammates')
+  })
+
+  it('rejects an unknown teammate', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedUser(db)
+    seedCallerTurn(db)
+
+    await expect(
+      messageTeammate({
+        db,
+        hermesClient: new FakeHermesClient(),
+        hub: new StreamHub(),
+        username: 'operator',
+        name: 'Unknown',
+        text: 'Help',
+      }),
+    ).rejects.toThrow('Unknown teammate "Unknown"')
+  })
+
+  it('rejects a job conversation', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedUser(db)
+    seedTravel(db)
+    const conversationId = createJobConversation(db, 'u1', 'operator', { name: 'Daily check' })
+    const userMessageId = insertMessage(db, {
+      conversationId,
+      role: 'user',
+      content: 'run',
+    })
+    createRun(db, conversationId, userMessageId, 'sess-1')
+
+    await expect(
+      messageTeammate({
+        db,
+        hermesClient: new FakeHermesClient(),
+        hub: new StreamHub(),
+        username: 'operator',
+        name: 'Travel',
+        text: 'Help',
+      }),
+    ).rejects.toThrow('Job conversations cannot message teammates')
+  })
+
+  it('rejects when no run is in progress', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedUser(db)
+    seedTravel(db)
+    createConversation(db, 'u1', 'hs-caller')
+
+    await expect(
+      messageTeammate({
+        db,
+        hermesClient: new FakeHermesClient(),
+        hub: new StreamHub(),
+        username: 'operator',
+        name: 'Travel',
+        text: 'Help',
+      }),
+    ).rejects.toThrow('No running turn to delegate from')
+  })
+
+  it('rejects messaging self', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedUser(db)
+    seedCallerTurn(db)
+
+    await expect(
+      messageTeammate({
+        db,
+        hermesClient: new FakeHermesClient(),
+        hub: new StreamHub(),
+        username: 'operator',
+        name: 'Hermes',
+        text: 'Help',
+      }),
+    ).rejects.toThrow('Cannot message yourself')
+  })
+})

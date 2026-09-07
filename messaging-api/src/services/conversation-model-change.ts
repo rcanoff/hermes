@@ -1,10 +1,15 @@
 import type Database from 'better-sqlite3'
+import { listBotsForRoster } from '../db/repos/bots.js'
 import { listAttachmentsForMessages } from '../db/repos/message-attachments.js'
+import { botSummariesForMessages } from '../lib/attachment-serializer.js'
 import {
+  getConversationBotSlug,
   rotateHermesSessionId,
   updateConversationModel,
   type ConversationRow,
 } from '../db/repos/conversations.js'
+import { buildBotRosterPrompt } from '../lib/bot-roster.js'
+import { DEFAULT_BOT_SLUG } from '../lib/hermes-profile.js'
 import { listMessages } from '../db/repos/messages.js'
 import { getActiveRun } from '../db/repos/runs.js'
 import { assertCuratedModel, type CuratedModelEntry } from '../lib/companion-models.js'
@@ -49,21 +54,32 @@ export async function rewarmSessionTranscript(input: {
     input.db,
     history.map((message) => message.id),
   )
+  const bots = botSummariesForMessages(input.db, history)
   const historyWithAttachments = history.map((message) => ({
     ...message,
     attachments: attachmentMap.get(message.id),
+    from_bot: message.from_bot_id ? bots.get(message.from_bot_id) ?? null : null,
+    to_bot: message.to_bot_id ? bots.get(message.to_bot_id) ?? null : null,
   }))
 
   const bootstrapPrompt = input.companionUsername
     ? resolveJobConversationBootstrap(input.conversation, input.companionUsername)
     : input.conversation.bootstrap_prompt
 
+  const botSlug = getConversationBotSlug(input.db, input.conversation.id)
+  const rosterPrompt =
+    input.conversation.kind !== 'job' && botSlug
+      ? buildBotRosterPrompt(listBotsForRoster(input.db), botSlug)
+      : undefined
+
   const messages = await buildHermesMessages(historyWithAttachments, {
     bootstrapPrompt,
     companionUsername: input.companionUsername,
+    rosterPrompt,
     attachmentsDir: input.attachmentsDir,
     userId: input.conversation.user_id,
     visionHistoryMaxBytes: input.visionHistoryMaxBytes,
+    currentBotId: input.conversation.bot_id,
   })
 
   messages.push({
@@ -71,9 +87,12 @@ export async function rewarmSessionTranscript(input: {
     content: input.rebuildUserMessage ?? CONTEXT_REBUILD_PROVIDER_CHANGE_USER_MESSAGE,
   })
 
+  const profileSlug = botSlug && botSlug !== DEFAULT_BOT_SLUG ? botSlug : undefined
+
   await input.hermesClient.completeChat({
     hermesSessionId: input.conversation.hermes_session_id,
     messages,
+    ...(profileSlug ? { profileSlug } : {}),
   })
 }
 
@@ -145,6 +164,7 @@ export async function applyConversationModelChange(input: {
   scheduleConversationSessionWarmup({
     hermesClient: input.hermesClient,
     conversation: updated,
+    db: input.db,
     companionUsername: input.companionUsername,
   })
 

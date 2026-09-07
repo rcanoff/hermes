@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { initSchema } from '../src/db/schema.js'
 import { insertMessage } from '../src/db/repos/messages.js'
 import { getProcessByAssistantMessageIds } from '../src/db/repos/process.js'
+import { insertBot, getBotBySlug } from '../src/db/repos/bots.js'
+import { createJobConversation } from '../src/db/repos/conversations.js'
 import { executeAssistantRun } from '../src/services/run-executor.js'
 import type { SessionStreamEvent } from '../src/streams/hub.js'
 import { StreamHub } from '../src/streams/hub.js'
@@ -53,6 +55,8 @@ describe('executeAssistantRun process stream', () => {
     hermes.closeWithoutDone()
 
     const assistantMessageId = await runPromise
+
+    expect(hermes.requests[0]?.companionUserId).toBe('u1')
 
     expect(events.map((e) => e.event)).toEqual([
       'tooling',
@@ -253,6 +257,185 @@ describe('executeAssistantRun process stream', () => {
         phase: 'complete',
       },
     })
+  })
+
+  it('fails the run instead of persisting an empty assistant message', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedConversation(db)
+
+    const hermes = new FakeHermesClient()
+    const hub = new StreamHub()
+    const events: SessionStreamEvent[] = []
+    hub.subscribeSession('sess-1', (event) => events.push(event))
+    hub.registerUserSession('u1', 'sess-1')
+
+    const runPromise = executeAssistantRun({
+      db,
+      hermesClient: hermes,
+      hub,
+      conversationId: 'c1',
+      hermesSessionId: 'sess-1',
+      userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
+      runId: 'run-1',
+      userId: 'u1',
+      originSessionId: 'sess-1',
+    })
+
+    hermes.pushDone()
+    hermes.closeWithoutDone()
+
+    await expect(runPromise).rejects.toThrow('Hermes stream completed without assistant text')
+
+    expect(
+      db.prepare(`SELECT role, content FROM messages WHERE conversation_id = 'c1' ORDER BY created_at`).all(),
+    ).toEqual([{ role: 'user', content: 'Where am I?' }])
+    expect(
+      db.prepare(`SELECT status, error_code, assistant_message_id FROM message_runs WHERE id = 'run-1'`).get(),
+    ).toEqual({
+      status: 'failed',
+      error_code: 'hermes_stream_failed',
+      assistant_message_id: null,
+    })
+    expect(events).toContainEqual({
+      event: 'error',
+      data: expect.objectContaining({ code: 'hermes_stream_failed' }),
+    })
+  })
+
+  it('passes a non-default bot slug to streamChat', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedConversation(db)
+    const travel = insertBot(db, {
+      slug: 'travel',
+      name: 'Travel',
+      role: 'Flights',
+      soul: 'You book trips.',
+    })
+    db.prepare(`UPDATE conversations SET bot_id = ? WHERE id = 'c1'`).run(travel.id)
+
+    const hermes = new FakeHermesClient()
+    const hub = new StreamHub()
+    const runPromise = executeAssistantRun({
+      db,
+      hermesClient: hermes,
+      hub,
+      conversationId: 'c1',
+      hermesSessionId: 'sess-1',
+      userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
+      runId: 'run-1',
+      userId: 'u1',
+      originSessionId: 'sess-1',
+    })
+
+    hermes.pushAnswerToken('ok')
+    hermes.pushDone()
+    hermes.closeWithoutDone()
+    await runPromise
+
+    expect(hermes.requests[0]?.profileSlug).toBe('travel')
+    const system = hermes.requests[0]?.messages[0]
+    expect(system).toMatchObject({ role: 'system' })
+    expect(system?.content).toContain('You are Travel. Specialty: Flights')
+    expect(system?.content).toContain('set_my_responsibilities')
+    expect(system?.content).toContain(
+      '- Hermes (main): Default Companion assistant; routes matching work to specialist teammates.',
+    )
+    expect(system?.content).not.toContain('- Travel:')
+  })
+
+  it('includes other bots on the roster after a teammate is created', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedConversation(db)
+    insertBot(db, {
+      slug: 'travel',
+      name: 'Travel',
+      role: 'Finds flights, bookings, and tickets.',
+      soul: 'You book trips.',
+    })
+    const hermesBot = getBotBySlug(db, 'default')!
+    db.prepare(`UPDATE conversations SET bot_id = ? WHERE id = 'c1'`).run(hermesBot.id)
+
+    const hermes = new FakeHermesClient()
+    const runPromise = executeAssistantRun({
+      db,
+      hermesClient: hermes,
+      hub: new StreamHub(),
+      conversationId: 'c1',
+      hermesSessionId: 'sess-1',
+      userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
+      runId: 'run-1',
+      userId: 'u1',
+      originSessionId: 'sess-1',
+    })
+
+    hermes.pushAnswerToken('ok')
+    hermes.pushDone()
+    hermes.closeWithoutDone()
+    await runPromise
+
+    const system = hermes.requests[0]?.messages[0]
+    expect(system).toMatchObject({ role: 'system' })
+    expect(system?.content).toContain(
+      'You are Hermes (main). Specialty: Default Companion assistant; routes matching work to specialist teammates.',
+    )
+    expect(system?.content).not.toContain('set_my_responsibilities')
+    expect(system?.content).toContain('- Travel: (onboarding — jobs not set yet)')
+    expect(system?.content).not.toContain('- Hermes (main):')
+    expect(system?.content).not.toContain('You book trips.')
+  })
+
+  it('omits roster text for job conversations', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'op', 'hash')`).run()
+    insertBot(db, {
+      slug: 'travel',
+      name: 'Travel',
+      role: 'Finds flights, bookings, and tickets.',
+      soul: 'You book trips.',
+    })
+    const conversationId = createJobConversation(db, 'u1', 'op', { name: 'Daily check' })
+    const conversation = db
+      .prepare(`SELECT hermes_session_id FROM conversations WHERE id = ?`)
+      .get(conversationId) as { hermes_session_id: string }
+    const userMessageId = insertMessage(db, {
+      conversationId,
+      role: 'user',
+      content: 'run it',
+    })
+    db.prepare(`
+      INSERT INTO message_runs (id, conversation_id, user_message_id, origin_session_id, status)
+      VALUES ('run-1', ?, ?, 'sess-1', 'running')
+    `).run(conversationId, userMessageId)
+
+    const hermes = new FakeHermesClient()
+    const runPromise = executeAssistantRun({
+      db,
+      hermesClient: hermes,
+      hub: new StreamHub(),
+      conversationId,
+      hermesSessionId: conversation.hermes_session_id,
+      userMessageId,
+      runId: 'run-1',
+      userId: 'u1',
+      originSessionId: 'sess-1',
+      bootstrapPrompt: 'You are in a Companion App **job conversation**.',
+    })
+
+    hermes.pushAnswerToken('ok')
+    hermes.pushDone()
+    hermes.closeWithoutDone()
+    await runPromise
+
+    const system = hermes.requests[0]?.messages[0]
+    expect(system).toMatchObject({ role: 'system' })
+    expect(system?.content).toContain('job conversation')
+    expect(system?.content).not.toContain('Specialty:')
+    expect(system?.content).not.toContain('Teammates on this Companion instance')
+    expect(system?.content).not.toContain('Finds flights, bookings, and tickets.')
   })
 
 })

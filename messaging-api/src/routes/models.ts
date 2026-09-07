@@ -1,17 +1,31 @@
 import type { FastifyPluginAsync } from 'fastify'
 import {
-  COMPANION_DEFAULT_MODEL,
-  COMPANION_DEFAULT_PROVIDER,
-} from '../lib/companion-models.js'
+  DEFAULT_RECENT_MODELS_LIMIT,
+  listRecentModelsForUser,
+} from '../db/repos/conversations.js'
+import { resolveDefaultModel } from '../db/repos/settings.js'
+import { curatedModelOrFallback } from '../lib/companion-models.js'
 
 const modelsRoutes: FastifyPluginAsync = async (app) => {
-  app.get('/models', { preHandler: app.authenticate }, async () => ({
-    models: app.companionModels,
-    default: {
-      model: COMPANION_DEFAULT_MODEL,
-      provider: COMPANION_DEFAULT_PROVIDER,
-    },
-  }))
+  app.get('/models', { preHandler: app.authenticate }, async (request) => {
+    const defaults = resolveDefaultModel(app.db, app.hermesHome)
+    const recents = listRecentModelsForUser(
+      app.db,
+      request.userId,
+      DEFAULT_RECENT_MODELS_LIMIT,
+    )
+
+    return {
+      models: app.companionModels,
+      recents: recents.map((entry) =>
+        curatedModelOrFallback(app.companionModels, entry.model, entry.provider),
+      ),
+      default: {
+        model: defaults.model,
+        provider: defaults.provider,
+      },
+    }
+  })
 }
 
 export default modelsRoutes

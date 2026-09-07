@@ -84,7 +84,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       app.db,
       page.messages.map((message) => message.id),
     )
-    const messages = enrichMessagesWithAttachments(page.messages, attachmentMap).map((message) => {
+    const messages = enrichMessagesWithAttachments(app.db, page.messages, attachmentMap).map((message) => {
       if (message.role !== 'assistant') {
         return message
       }
@@ -422,6 +422,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
           scheduleConversationSessionWarmup({
             hermesClient: app.hermesClient,
             conversation: refreshed,
+            db: app.db,
             companionUsername: request.username,
             log: (message, meta) => {
               app.log.info(meta ?? {}, message)

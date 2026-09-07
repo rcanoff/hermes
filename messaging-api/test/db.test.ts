@@ -5,9 +5,14 @@ import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   createConversation,
+  createJobConversation,
+  findOrCreatePeerConversation,
   getConversationForUser,
+  listRecentModelsForUser,
   updateConversationModel,
 } from '../src/db/repos/conversations.js'
+import { insertBot, getBotBySlug } from '../src/db/repos/bots.js'
+import { insertMessage, listMessages } from '../src/db/repos/messages.js'
 import { denyToken, isTokenDenied } from '../src/db/repos/sessions.js'
 import { markRunCompleted, markRunFailed } from '../src/db/repos/runs.js'
 import { initSchema, reconcileRunningRuns } from '../src/db/schema.js'
@@ -72,6 +77,107 @@ describe('schema', () => {
     expect(row).toBeTruthy()
   })
 
+  it('includes icon and color on bots', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const columns = db
+      .prepare(`PRAGMA table_info(bots)`)
+      .all() as Array<{ name: string }>
+    const names = columns.map((c) => c.name)
+    expect(names).toContain('icon')
+    expect(names).toContain('color')
+    expect(names).toContain('responsibilities')
+  })
+
+  it('seeds default responsibilities; new bots start with empty jobs', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const defaultBot = getBotBySlug(db, 'default')
+    expect(defaultBot?.responsibilities).toBe(
+      'Default Companion assistant; routes matching work to specialist teammates.',
+    )
+
+    insertBot(db, {
+      slug: 'patrik',
+      name: 'Patrik',
+      role: 'Personal agent',
+      soul: 'You are Patrik.',
+    })
+    expect(getBotBySlug(db, 'patrik')?.responsibilities).toBe('')
+  })
+
+  it('adds icon and color to legacy bots', () => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(`
+      CREATE TABLE bots (
+        id TEXT PRIMARY KEY,
+        slug TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        soul TEXT NOT NULL,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO bots (id, slug, name, role, soul, is_default)
+      VALUES ('b1', 'default', 'Hermes', 'Default', 'You are Hermes', 1);
+    `)
+
+    initSchema(db)
+
+    const row = db
+      .prepare('SELECT icon, color FROM bots WHERE id = ?')
+      .get('b1') as { icon: string; color: string }
+    expect(row).toEqual({ icon: 'person', color: 'blue' })
+  })
+
+  it('adds responsibilities to legacy bots and seeds default plus Patrik', () => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(`
+      CREATE TABLE bots (
+        id TEXT PRIMARY KEY,
+        slug TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        soul TEXT NOT NULL,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO bots (id, slug, name, role, soul, is_default)
+      VALUES
+        ('b1', 'default', 'Hermes', 'Default', 'You are Hermes', 1),
+        ('b2', 'patrik', 'Patrik', 'Personal agent', 'You are Patrik.', 0);
+    `)
+
+    initSchema(db)
+
+    const rows = db
+      .prepare('SELECT slug, responsibilities FROM bots ORDER BY slug')
+      .all() as Array<{ slug: string; responsibilities: string }>
+    expect(rows).toEqual([
+      {
+        slug: 'default',
+        responsibilities:
+          'Default Companion assistant; routes matching work to specialist teammates.',
+      },
+      {
+        slug: 'patrik',
+        responsibilities:
+          'Personal data: addresses, phone numbers, and things the user owns.',
+      },
+    ])
+  })
+
+  it('includes user_bot_preferences table', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const row = db
+      .prepare(`SELECT name FROM sqlite_master WHERE name = 'user_bot_preferences'`)
+      .get()
+    expect(row).toBeTruthy()
+  })
+
   it('includes device_sync_state table', () => {
     const db = new Database(':memory:')
     initSchema(db)
@@ -97,6 +203,64 @@ describe('schema', () => {
       .prepare(`PRAGMA table_info(conversations)`)
       .all() as Array<{ name: string }>
     expect(columns.map((c) => c.name)).toContain('bootstrap_prompt')
+  })
+
+  it('creates companion_settings table', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const tables = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
+      .all() as Array<{ name: string }>
+    expect(tables.map((t) => t.name)).toContain('companion_settings')
+  })
+
+  it('lists recent models for a user by updated_at, de-duped, excluding jobs', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    db.exec(`
+      INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash');
+      INSERT INTO users (id, username, password_hash) VALUES ('u2', 'other', 'hash');
+    `)
+
+    const oldest = createConversation(db, 'u1', 'hs1', null, {
+      model: 'gpt-5.4-mini',
+      provider: 'openai-codex',
+    })
+    const middle = createConversation(db, 'u1', 'hs2', null, {
+      model: 'grok-4.3',
+      provider: 'xai-oauth',
+    })
+    const newestSameAsOldest = createConversation(db, 'u1', 'hs3', null, {
+      model: 'gpt-5.4-mini',
+      provider: 'openai-codex',
+    })
+    const otherUser = createConversation(db, 'u2', 'hs4', null, {
+      model: COMPANION_DEFAULT_MODEL,
+      provider: COMPANION_DEFAULT_PROVIDER,
+    })
+    const jobId = createJobConversation(db, 'u1', 'operator', { name: 'nightly' })
+    db.prepare(`UPDATE conversations SET model = ?, provider = ? WHERE id = ?`).run(
+      'job-model',
+      'job-provider',
+      jobId,
+    )
+
+    db.prepare(`UPDATE conversations SET updated_at = datetime('now', '-3 hours') WHERE id = ?`).run(
+      oldest,
+    )
+    db.prepare(`UPDATE conversations SET updated_at = datetime('now', '-2 hours') WHERE id = ?`).run(
+      middle,
+    )
+    db.prepare(`UPDATE conversations SET updated_at = datetime('now', '-1 hour') WHERE id = ?`).run(
+      newestSameAsOldest,
+    )
+    db.prepare(`UPDATE conversations SET updated_at = datetime('now') WHERE id = ?`).run(otherUser)
+    db.prepare(`UPDATE conversations SET updated_at = datetime('now') WHERE id = ?`).run(jobId)
+
+    expect(listRecentModelsForUser(db, 'u1', 8)).toEqual([
+      { model: 'gpt-5.4-mini', provider: 'openai-codex' },
+      { model: 'grok-4.3', provider: 'xai-oauth' },
+    ])
   })
 
   it('includes model and provider on conversations', () => {
@@ -184,6 +348,132 @@ describe('schema', () => {
     const conversation = getConversationForUser(db, 'u1', conversationId)
     expect(conversation?.model).toBe('grok-4.3')
     expect(conversation?.provider).toBe('xai-oauth')
+  })
+
+  it('includes peer_bot_id on conversations', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const columns = db
+      .prepare(`PRAGMA table_info(conversations)`)
+      .all() as Array<{ name: string }>
+    expect(columns.map((c) => c.name)).toContain('peer_bot_id')
+  })
+
+  it('includes delegation columns on messages', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const columns = db
+      .prepare(`PRAGMA table_info(messages)`)
+      .all() as Array<{ name: string }>
+    const names = columns.map((c) => c.name)
+    expect(names).toContain('kind')
+    expect(names).toContain('from_bot_id')
+    expect(names).toContain('to_bot_id')
+    expect(names).toContain('delegation_id')
+  })
+
+  it('backfills kind=chat on legacy messages', () => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE conversations (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        hermes_session_id TEXT NOT NULL,
+        title TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      );
+      CREATE TABLE messages (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+      );
+      INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash');
+      INSERT INTO conversations (id, user_id, hermes_session_id) VALUES ('c1', 'u1', 'hs1');
+      INSERT INTO messages (id, conversation_id, role, content) VALUES ('m1', 'c1', 'user', 'hello');
+    `)
+
+    initSchema(db)
+
+    const row = db
+      .prepare(`SELECT kind, from_bot_id, to_bot_id, delegation_id FROM messages WHERE id = 'm1'`)
+      .get() as {
+      kind: string
+      from_bot_id: string | null
+      to_bot_id: string | null
+      delegation_id: string | null
+    }
+    expect(row).toEqual({
+      kind: 'chat',
+      from_bot_id: null,
+      to_bot_id: null,
+      delegation_id: null,
+    })
+  })
+
+  it('defaults new messages to kind=chat', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    db.exec(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash');`)
+    const conversationId = createConversation(db, 'u1', 'hs1')
+    insertMessage(db, { conversationId, role: 'user', content: 'hi' })
+
+    expect(listMessages(db, conversationId)).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: 'hi',
+        kind: 'chat',
+        from_bot_id: null,
+        to_bot_id: null,
+        delegation_id: null,
+      }),
+    ])
+  })
+
+  it('finds or creates a pair thread titled From sender', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    db.exec(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash');`)
+    const hermes = getBotBySlug(db, 'default')!
+    const travel = insertBot(db, {
+      slug: 'travel',
+      name: 'Travel',
+      role: 'Flights',
+      soul: 'You book trips.',
+    })
+
+    const created = findOrCreatePeerConversation(db, {
+      userId: 'u1',
+      targetBotId: travel.id,
+      senderBotId: hermes.id,
+      senderName: 'Hermes',
+    })
+    const again = findOrCreatePeerConversation(db, {
+      userId: 'u1',
+      targetBotId: travel.id,
+      senderBotId: hermes.id,
+      senderName: 'Hermes',
+    })
+
+    expect(again.id).toBe(created.id)
+    expect(created).toMatchObject({
+      user_id: 'u1',
+      bot_id: travel.id,
+      peer_bot_id: hermes.id,
+      kind: 'regular',
+      title: 'From Hermes',
+    })
   })
 
   it('includes job conversation columns on conversations', () => {

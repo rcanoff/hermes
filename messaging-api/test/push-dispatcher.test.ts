@@ -1,5 +1,14 @@
+import { randomUUID } from 'node:crypto'
 import Database from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
+import {
+  getBotBySlug,
+  upsertBotNotificationsEnabled,
+} from '../src/db/repos/bots.js'
+import {
+  createConversation,
+  createJobConversation,
+} from '../src/db/repos/conversations.js'
 import { upsertPushDevice } from '../src/db/repos/push-devices.js'
 import { createUser } from '../src/db/repos/users.js'
 import { initSchema } from '../src/db/schema.js'
@@ -99,6 +108,66 @@ describe('push dispatcher', () => {
     }
     expect(payload.companion).toMatchObject({ destination: 'jobs', kind: 'cron_run' })
     expect(payload.aps.alert.title).toMatch(/^Job · /)
+  })
+
+  it('skips assistant push when the user muted the conversation bot', async () => {
+    const db = openTestDb()
+    const userId = seedUser(db)
+    const conversationId = createConversation(db, userId, randomUUID())
+    const bot = getBotBySlug(db, 'default')
+    expect(bot).toBeDefined()
+    upsertBotNotificationsEnabled(db, userId, bot!.id, false)
+    upsertPushDevice(db, {
+      userId,
+      deviceToken: '55'.repeat(32),
+      environment: 'development',
+      sessionId: 'sess-1',
+    })
+
+    const sends: ApnsSendInput[] = []
+    await notifyCommittedAssistantMessage({
+      db,
+      hub: new StreamHub(),
+      apns: createRecordingApnsClient(sends),
+      config: enabledApnsConfig(),
+      userId,
+      conversationId,
+      messageId: 'msg-muted',
+      content: 'Hello',
+      conversationTitle: 'Chat',
+    })
+
+    expect(sends).toHaveLength(0)
+  })
+
+  it('sends assistant push for job conversations even when a bot is muted', async () => {
+    const db = openTestDb()
+    const userId = seedUser(db)
+    const jobConversationId = createJobConversation(db, userId, 'alice', { name: 'Gate' })
+    const bot = getBotBySlug(db, 'default')
+    expect(bot).toBeDefined()
+    upsertBotNotificationsEnabled(db, userId, bot!.id, false)
+    upsertPushDevice(db, {
+      userId,
+      deviceToken: '66'.repeat(32),
+      environment: 'development',
+      sessionId: 'sess-1',
+    })
+
+    const sends: ApnsSendInput[] = []
+    await notifyCommittedAssistantMessage({
+      db,
+      hub: new StreamHub(),
+      apns: createRecordingApnsClient(sends),
+      config: enabledApnsConfig(),
+      userId,
+      conversationId: jobConversationId,
+      messageId: 'msg-job',
+      content: 'Hello',
+      conversationTitle: 'Gate',
+    })
+
+    expect(sends).toHaveLength(1)
   })
 
   it('no-ops when APNS_ENABLED false', async () => {

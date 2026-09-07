@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { AddressInfo } from 'node:net'
 import type { FastifyInstance } from 'fastify'
 import { linkAttachmentsToMessage } from '../src/db/repos/message-attachments.js'
-import { listMessages } from '../src/db/repos/messages.js'
+import { insertBot, getBotBySlug } from '../src/db/repos/bots.js'
+import { insertMessage, listMessages } from '../src/db/repos/messages.js'
 import { attachmentRoot } from '../src/lib/attachment-storage.js'
 import { buildMultipartImagePayload, createTinyJpegBuffer } from './helpers/attachments.js'
 import { getActiveRun } from '../src/db/repos/runs.js'
@@ -65,13 +66,69 @@ describe('message routes', () => {
     expect(response.statusCode).toBe(200)
     expect(response.json()).toEqual({
       messages: [
-        expect.objectContaining({ id: 'm1', role: 'user', content: 'hello' }),
-        expect.objectContaining({ id: 'm2', role: 'assistant', content: 'hi' }),
+        expect.objectContaining({ id: 'm1', role: 'user', content: 'hello', kind: 'chat' }),
+        expect.objectContaining({ id: 'm2', role: 'assistant', content: 'hi', kind: 'chat' }),
       ],
       _links: {
         self: { href: `/conversations/${conversationId}/messages?limit=20` },
       },
     })
+    expect(response.json().messages[0].from_bot).toBeUndefined()
+    expect(response.json().messages[0].to_bot).toBeUndefined()
+    expect(response.json().messages[0].delegation_id).toBeUndefined()
+  })
+
+  it('includes from_bot and to_bot summaries on bot_sent messages', async () => {
+    const hermes = getBotBySlug(app!.db, 'default')!
+    const travel = insertBot(app!.db, {
+      slug: 'travel',
+      name: 'Travel',
+      role: 'Flights',
+      soul: 'You book trips.',
+      icon: 'map',
+      color: 'green',
+    })
+    const delegationId = randomUUID()
+    const messageId = insertMessage(app!.db, {
+      conversationId,
+      role: 'assistant',
+      content: 'Plan a trip to Lisbon',
+      kind: 'bot_sent',
+      fromBotId: hermes.id,
+      toBotId: travel.id,
+      delegationId,
+    })
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json().messages).toEqual([
+      expect.objectContaining({
+        id: messageId,
+        role: 'assistant',
+        kind: 'bot_sent',
+        content: 'Plan a trip to Lisbon',
+        delegation_id: delegationId,
+        from_bot: {
+          id: hermes.id,
+          name: 'Hermes',
+          icon: hermes.icon,
+          color: hermes.color,
+        },
+        to_bot: {
+          id: travel.id,
+          name: 'Travel',
+          icon: 'map',
+          color: 'green',
+        },
+      }),
+    ])
+    expect(response.json().messages[0].from_bot_id).toBeUndefined()
+    expect(response.json().messages[0].to_bot_id).toBeUndefined()
   })
 
   it('paginates messages from the tail with HAL link navigation', async () => {
@@ -177,6 +234,7 @@ describe('message routes', () => {
     expect(hermesClient.requests).toHaveLength(1)
     expect(hermesClient.requests[0]).toEqual({
       hermesSessionId: expect.any(String),
+      companionUserId: expect.any(String),
       messages: [
         {
           role: 'system',
@@ -214,6 +272,7 @@ describe('message routes', () => {
     ])
 
     prepareTitleResponse(hermesClient)
+    hermesClient.pushAnswerToken('ok', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
     await completeTitleAfterReply(hermesClient)
@@ -234,6 +293,7 @@ describe('message routes', () => {
     })
 
     prepareTitleResponse(hermesClient)
+    hermesClient.pushAnswerToken('ok', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
     await completeTitleAfterReply(hermesClient)
@@ -481,6 +541,7 @@ describe('message routes', () => {
     })
     expect(postResponse.statusCode).toBe(202)
 
+    hermesClient.pushAnswerToken('ok', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
@@ -498,6 +559,7 @@ describe('message routes', () => {
     expect(postResponse.statusCode).toBe(202)
 
     prepareTitleResponse(hermesClient, 'Generated title')
+    hermesClient.pushAnswerToken('ok', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
     await waitFor(() => hermesClient.completeRequests.length >= 1)
@@ -813,6 +875,7 @@ describe('message routes', () => {
     expect(response.json()).toEqual({ error: 'run_conflict' })
 
     prepareTitleResponse(hermesClient)
+    hermesClient.pushAnswerToken('ok', 0)
     hermesClient.pushDone(0)
     hermesClient.closeWithoutDone(0)
     await completeTitleAfterReply(hermesClient)

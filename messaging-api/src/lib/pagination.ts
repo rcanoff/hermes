@@ -67,53 +67,63 @@ export interface BuildHalLinksInput {
   firstId?: string
   lastId?: string
   linkStyle?: HalLinkStyle
+  extraQuery?: Record<string, string>
 }
 
 export function buildHalLinks(input: BuildHalLinksInput): HalLinks {
-  const params = new URLSearchParams()
-  params.set('limit', String(input.limit))
-  if (input.before) {
-    params.set('before', input.before)
-  }
-  if (input.after) {
-    params.set('after', input.after)
-  }
-
   const links: HalLinks = {
-    self: { href: `${input.basePath}?${params.toString()}` },
+    self: {
+      href: `${input.basePath}?${pagingParams(input, { before: input.before, after: input.after }).toString()}`,
+    },
   }
 
   const linkStyle = input.linkStyle ?? 'newest-first'
 
   if (linkStyle === 'newest-first') {
     if (input.hasOlder && input.lastId) {
-      const nextParams = new URLSearchParams()
-      nextParams.set('limit', String(input.limit))
-      nextParams.set('before', input.lastId)
-      links.next = { href: `${input.basePath}?${nextParams.toString()}` }
+      links.next = {
+        href: `${input.basePath}?${pagingParams(input, { before: input.lastId }).toString()}`,
+      }
     }
 
     if (input.hasNewer && input.firstId) {
-      const prevParams = new URLSearchParams()
-      prevParams.set('limit', String(input.limit))
-      prevParams.set('after', input.firstId)
-      links.prev = { href: `${input.basePath}?${prevParams.toString()}` }
+      links.prev = {
+        href: `${input.basePath}?${pagingParams(input, { after: input.firstId }).toString()}`,
+      }
     }
   } else {
     if (input.hasOlder && input.firstId) {
-      const prevParams = new URLSearchParams()
-      prevParams.set('limit', String(input.limit))
-      prevParams.set('before', input.firstId)
-      links.prev = { href: `${input.basePath}?${prevParams.toString()}` }
+      links.prev = {
+        href: `${input.basePath}?${pagingParams(input, { before: input.firstId }).toString()}`,
+      }
     }
 
     if (input.hasNewer && input.lastId) {
-      const nextParams = new URLSearchParams()
-      nextParams.set('limit', String(input.limit))
-      nextParams.set('after', input.lastId)
-      links.next = { href: `${input.basePath}?${nextParams.toString()}` }
+      links.next = {
+        href: `${input.basePath}?${pagingParams(input, { after: input.lastId }).toString()}`,
+      }
     }
   }
 
   return links
+}
+
+function pagingParams(
+  input: BuildHalLinksInput,
+  extra: { before?: string; after?: string },
+): URLSearchParams {
+  const params = new URLSearchParams()
+  params.set('limit', String(input.limit))
+  if (input.extraQuery) {
+    for (const [key, value] of Object.entries(input.extraQuery)) {
+      params.set(key, value)
+    }
+  }
+  if (extra.before) {
+    params.set('before', extra.before)
+  }
+  if (extra.after) {
+    params.set('after', extra.after)
+  }
+  return params
 }

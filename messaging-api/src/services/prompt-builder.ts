@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import type { AttachmentRow } from '../db/repos/message-attachments.js'
+import type { MessageKind } from '../db/repos/messages.js'
 import { resolveAttachmentFile } from '../lib/attachment-storage.js'
 
 export interface TranscriptMessage {
@@ -7,8 +8,18 @@ export interface TranscriptMessage {
   content: string
 }
 
+export interface HistoryBotRef {
+  id: string
+  name: string
+}
+
 export interface HistoryMessage extends TranscriptMessage {
   attachments?: AttachmentRow[]
+  kind?: MessageKind
+  from_bot_id?: string | null
+  to_bot_id?: string | null
+  from_bot?: HistoryBotRef | null
+  to_bot?: HistoryBotRef | null
 }
 
 export interface HermesTextPart {
@@ -31,9 +42,11 @@ export interface HermesPromptMessage {
 export interface BuildHermesMessagesOptions {
   bootstrapPrompt?: string | null
   companionUsername?: string
+  rosterPrompt?: string | null
   attachmentsDir?: string
   userId?: string
   visionHistoryMaxBytes?: number
+  currentBotId?: string | null
 }
 
 const USERNAME_SAFETY_TEMPLATE =
@@ -59,7 +72,13 @@ export function buildHermesSystemPrompt(options?: BuildHermesMessagesOptions): s
     parts.push(USERNAME_SAFETY_TEMPLATE.replace('{username}', username))
   }
 
-  return parts.join(' ')
+  const head = parts.join(' ')
+  const roster = options?.rosterPrompt?.trim()
+  if (!roster) {
+    return head
+  }
+
+  return head ? `${head}\n\n${roster}` : roster
 }
 
 export async function buildHermesMessages(
@@ -76,15 +95,13 @@ export async function buildHermesMessages(
   const includedVisionKeys = await selectVisionImages(history, options)
   const transcript = await Promise.all(
     history.map(async (message, messageIndex) => {
-      if (message.role !== 'user' || !message.attachments || message.attachments.length === 0) {
-        return {
-          role: message.role,
-          content: message.content,
-        } satisfies HermesPromptMessage
+      const mapped = mapDelegationForHermes(message, options?.currentBotId)
+      if (mapped.role !== 'user' || !message.attachments || message.attachments.length === 0) {
+        return mapped satisfies HermesPromptMessage
       }
 
       const parts: HermesContentPart[] = []
-      const caption = message.content.trim()
+      const caption = mapped.content.trim()
       if (caption) {
         parts.push({ type: 'text', text: caption })
       }
@@ -105,14 +122,11 @@ export async function buildHermesMessages(
       }
 
       if (parts.length === 0) {
-        return {
-          role: message.role,
-          content: message.content,
-        } satisfies HermesPromptMessage
+        return mapped satisfies HermesPromptMessage
       }
 
       return {
-        role: message.role,
+        role: mapped.role,
         content: parts,
       } satisfies HermesPromptMessage
     }),
@@ -167,6 +181,43 @@ async function selectVisionImages(
   }
 
   return included
+}
+
+export function mapDelegationForHermes(
+  message: HistoryMessage,
+  currentBotId?: string | null,
+): TranscriptMessage {
+  const kind = message.kind ?? 'chat'
+  if (kind === 'chat') {
+    return { role: message.role, content: message.content }
+  }
+
+  const fromId = message.from_bot?.id ?? message.from_bot_id ?? null
+  const fromName = message.from_bot?.name?.trim() || 'Teammate'
+  const toName = message.to_bot?.name?.trim() || 'teammate'
+
+  if (kind === 'bot_sent') {
+    if (fromId && currentBotId && fromId !== currentBotId) {
+      return {
+        role: 'user',
+        content: `${fromName} (teammate) asks: ${message.content}`,
+      }
+    }
+
+    return {
+      role: 'assistant',
+      content: `You messaged ${toName}: ${message.content}`,
+    }
+  }
+
+  if (kind === 'bot_reply') {
+    return {
+      role: 'assistant',
+      content: `${fromName} replied: ${message.content}`,
+    }
+  }
+
+  return { role: message.role, content: message.content }
 }
 
 function visionKey(messageIndex: number, attachmentIndex: number): string {

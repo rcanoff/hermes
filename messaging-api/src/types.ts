@@ -34,6 +34,7 @@ export interface AppOptions {
   thumbMaxEdgePx: number
   visionHistoryMaxBytes: number
   companionModels: CuratedModelEntry[]
+  hermesHome: string
   apnsClient?: ApnsClient
   cronOutputBridge?: CronOutputBridge
   hermesClient?: HermesClient

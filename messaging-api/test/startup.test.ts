@@ -70,6 +70,104 @@ describe('prompt builder', () => {
 
     expect(system).toBe(bootstrap)
   })
+
+  it('appends roster after bootstrap and username', () => {
+    const roster = 'You are Hermes (main). Specialty: Default Companion assistant.'
+    const system = buildHermesSystemPrompt({
+      bootstrapPrompt: sampleBootstrap,
+      companionUsername: 'roberto',
+      rosterPrompt: roster,
+    })
+
+    expect(system).toContain(sampleBootstrap)
+    expect(system).toContain('authenticated companion user for this conversation is "roberto"')
+    expect(system).toContain(roster)
+    expect(system.indexOf(sampleBootstrap)).toBeLessThan(system.indexOf(roster))
+  })
+
+  it('uses roster as the system prompt when bootstrap and username are absent', async () => {
+    const roster = 'You are Travel. Specialty: Finds flights, bookings, and tickets.'
+    const messages = await buildHermesMessages([{ role: 'user', content: 'Hi' }], {
+      rosterPrompt: roster,
+    })
+
+    expect(messages).toEqual([
+      { role: 'system', content: roster },
+      { role: 'user', content: 'Hi' },
+    ])
+  })
+
+  it('maps other-bot bot_sent to a user turn for the specialist', async () => {
+    const messages = await buildHermesMessages(
+      [
+        {
+          role: 'assistant',
+          content: 'Plan a trip to Lisbon',
+          kind: 'bot_sent',
+          from_bot: { id: 'hermes', name: 'Hermes' },
+          to_bot: { id: 'travel', name: 'Travel' },
+        },
+      ],
+      { currentBotId: 'travel' },
+    )
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'Hermes (teammate) asks: Plan a trip to Lisbon' },
+    ])
+  })
+
+  it('maps own bot_sent to an assistant You messaged turn', async () => {
+    const messages = await buildHermesMessages(
+      [
+        {
+          role: 'assistant',
+          content: 'Plan a trip to Lisbon',
+          kind: 'bot_sent',
+          from_bot: { id: 'hermes', name: 'Hermes' },
+          to_bot: { id: 'travel', name: 'Travel' },
+        },
+      ],
+      { currentBotId: 'hermes' },
+    )
+
+    expect(messages).toEqual([
+      { role: 'assistant', content: 'You messaged Travel: Plan a trip to Lisbon' },
+    ])
+  })
+
+  it('maps bot_reply to an assistant {from} replied turn', async () => {
+    const messages = await buildHermesMessages(
+      [
+        {
+          role: 'assistant',
+          content: 'Lisbon is lovely in June.',
+          kind: 'bot_reply',
+          from_bot: { id: 'travel', name: 'Travel' },
+          to_bot: { id: 'hermes', name: 'Hermes' },
+        },
+      ],
+      { currentBotId: 'hermes' },
+    )
+
+    expect(messages).toEqual([
+      { role: 'assistant', content: 'Travel replied: Lisbon is lovely in June.' },
+    ])
+  })
+
+  it('leaves ordinary chat messages unchanged', async () => {
+    const messages = await buildHermesMessages(
+      [
+        { role: 'user', content: 'Hi', kind: 'chat' },
+        { role: 'assistant', content: 'Hello', kind: 'chat' },
+      ],
+      { currentBotId: 'hermes' },
+    )
+
+    expect(messages).toEqual([
+      { role: 'user', content: 'Hi' },
+      { role: 'assistant', content: 'Hello' },
+    ])
+  })
 })
 
 describe('durable run execution', () => {
@@ -144,6 +242,7 @@ describe('durable run execution', () => {
       {
         hermesSessionId: 'hs1',
         messages: [{ role: 'user', content: 'hello' }],
+        companionUserId: 'u1',
       },
     ])
   })
@@ -349,6 +448,46 @@ describe('OpenAiHermesClient', () => {
         { type: 'answer_token', text: 'Hello' },
         { type: 'done' },
       ])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('throws when Hermes finishes the SSE stream with finish_reason error', async () => {
+    const originalFetch = globalThis.fetch
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\r\n\r\n' +
+              'data: {"choices":[{"index":0,"delta":{},"finish_reason":"error"}],"error":{"message":"No LLM provider configured. Run `hermes model` to select a provider, or run `hermes setup` for first-time configuration."}}\r\n\r\n' +
+              'data: [DONE]\r\n\r\n',
+          ),
+        )
+        controller.close()
+      },
+    })
+
+    globalThis.fetch = async () =>
+      new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })
+
+    try {
+      const client = new OpenAiHermesClient('http://hermes.test')
+      const iterator = client.streamChat({
+        hermesSessionId: 'hs1',
+        messages: [{ role: 'user', content: 'hello' }],
+      })
+
+      await expect(async () => {
+        for await (const _event of iterator) {
+          // Consume the stream until it fails.
+        }
+      }).rejects.toThrow(
+        'No LLM provider configured. Run `hermes model` to select a provider, or run `hermes setup` for first-time configuration.',
+      )
     } finally {
       globalThis.fetch = originalFetch
     }

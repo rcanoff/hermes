@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import { rotateHermesSessionId, touchConversationUpdatedAt } from '../db/repos/conversations.js'
-import { type MessageRow } from '../db/repos/messages.js'
+import { MESSAGE_COLUMNS, type MessageRow } from '../db/repos/messages.js'
 import { getActiveRun } from '../db/repos/runs.js'
 import { emitConversationMessagesRewound } from './chat-sync-emitter.js'
 
@@ -28,7 +28,7 @@ export function listMessagesFromAnchor(
 ): MessageRow[] {
   const anchor = db
     .prepare(`
-      SELECT rowid, id, conversation_id, role, content, created_at
+      SELECT rowid, ${MESSAGE_COLUMNS}
       FROM messages
       WHERE conversation_id = ? AND id = ?
     `)
@@ -40,7 +40,7 @@ export function listMessagesFromAnchor(
 
   return db
     .prepare(`
-      SELECT id, conversation_id, role, content, created_at
+      SELECT ${MESSAGE_COLUMNS}
       FROM messages
       WHERE conversation_id = ?
         AND (created_at > ? OR (created_at = ? AND rowid >= ?))

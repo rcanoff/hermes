@@ -1,4 +1,7 @@
+import Database from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
+import { insertBot } from '../src/db/repos/bots.js'
+import { initSchema } from '../src/db/schema.js'
 import {
   COMPANION_DEFAULT_MODEL,
   COMPANION_DEFAULT_PROVIDER,
@@ -52,6 +55,75 @@ describe('scheduleConversationSessionWarmup', () => {
       model: 'grok-4.3',
       provider: 'xai-oauth',
     })
+    expect(hermesClient.ensureSessionRequests[0]?.profileSlug).toBeUndefined()
+  })
+
+  it('passes a non-default bot slug to ensureSession', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const travel = insertBot(db, {
+      slug: 'travel',
+      name: 'Travel',
+      role: 'Flights',
+      soul: 'You book trips.',
+    })
+    const hermesClient = new FakeHermesClient()
+
+    scheduleConversationSessionWarmup({
+      hermesClient,
+      db,
+      conversation: {
+        hermes_session_id: 'sess-warm-3',
+        bootstrap_prompt: null,
+        model: COMPANION_DEFAULT_MODEL,
+        provider: COMPANION_DEFAULT_PROVIDER,
+        bot_id: travel.id,
+      },
+    })
+
+    await waitFor(() => hermesClient.ensureSessionRequests.length === 1)
+    expect(hermesClient.ensureSessionRequests[0]?.profileSlug).toBe('travel')
+    expect(hermesClient.ensureSessionRequests[0]?.systemPrompt).toContain('You are Travel. Specialty: Flights')
+    expect(hermesClient.ensureSessionRequests[0]?.systemPrompt).toContain('set_my_responsibilities')
+    expect(hermesClient.ensureSessionRequests[0]?.systemPrompt).toContain(
+      '- Hermes (main): Default Companion assistant; routes matching work to specialist teammates.',
+    )
+  })
+
+  it('omits roster text for job conversations', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    insertBot(db, {
+      slug: 'travel',
+      name: 'Travel',
+      role: 'Finds flights, bookings, and tickets.',
+      soul: 'You book trips.',
+    })
+    const hermesClient = new FakeHermesClient()
+
+    scheduleConversationSessionWarmup({
+      hermesClient,
+      db,
+      companionUsername: 'operator',
+      conversation: {
+        hermes_session_id: 'sess-warm-job',
+        bootstrap_prompt: 'You are in a Companion App **job conversation**.',
+        kind: 'job',
+        hermes_job_id: 'job-1',
+        title: 'Daily check',
+        schedule_display: 'every day',
+        model: COMPANION_DEFAULT_MODEL,
+        provider: COMPANION_DEFAULT_PROVIDER,
+        bot_id: null,
+      },
+    })
+
+    await waitFor(() => hermesClient.ensureSessionRequests.length === 1)
+    expect(hermesClient.ensureSessionRequests[0]?.systemPrompt).toContain('job conversation')
+    expect(hermesClient.ensureSessionRequests[0]?.systemPrompt).not.toContain('Specialty:')
+    expect(hermesClient.ensureSessionRequests[0]?.systemPrompt).not.toContain(
+      'Teammates on this Companion instance',
+    )
   })
 })
 

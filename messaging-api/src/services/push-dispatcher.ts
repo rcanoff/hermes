@@ -1,5 +1,7 @@
 import type Database from 'better-sqlite3'
 import type { ApnsConfig } from '../config.js'
+import { getBotNotificationsEnabled } from '../db/repos/bots.js'
+import { getConversationForUser } from '../db/repos/conversations.js'
 import {
   deletePushDeviceById,
   listPushDevicesByUserId,
@@ -90,6 +92,14 @@ export async function notifyCommittedAssistantMessage(input: {
   conversationTitle: string | null
   log?: (message: string, meta?: Record<string, unknown>) => void
 }): Promise<void> {
+  const conversation = getConversationForUser(input.db, input.userId, input.conversationId)
+  if (
+    conversation?.bot_id &&
+    !getBotNotificationsEnabled(input.db, input.userId, conversation.bot_id)
+  ) {
+    return
+  }
+
   await dispatchToDevices({
     db: input.db,
     hub: input.hub,

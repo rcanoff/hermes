@@ -131,4 +131,4 @@ DST: there is no built-in `Europe/Berlin` cron TZ in the job record — pick the
 
 ### Browser / site monitoring (Companion)
 
-Recurring ImmoScout (or other browser) checks: **omit `skills`** on the job; bake criteria + canonical URL + output format into the prompt from **this chat**. Set `enabled_toolsets: ["browser", "web", "search", "skills"]`. See `immoscout-apartment-search` → `references/daily-companion-cron.md` for the prompt **shape** only — district/URL must match the search you just ran here, not a worked example.
+Recurring ImmoScout (or other browser) checks: **omit `skills`** on the job; bake criteria + canonical URL + output format into the prompt from **this chat**. Set `enabled_toolsets` to include **`browser`, `web`, `search`, `skills`**, and **`file`** when the prompt persists **`seen_ids`** under `.hermes/cron-state/` or an Obsidian note (browser-only runs cannot `read_file`/`write_file` host state). See `immoscout-apartment-search` → `references/daily-companion-cron.md` and `references/cron-state-persistence.md` for prompt shape — district/URL must match the search you just ran here, not a worked example.

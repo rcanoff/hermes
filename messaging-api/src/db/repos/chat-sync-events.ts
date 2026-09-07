@@ -19,6 +19,8 @@ export interface ConversationSyncEntryPayload {
   updated_at: string
   latest_message_id: string | null
   latest_message_created_at: string | null
+  bot_id: string | null
+  peer_bot_id?: string | null
   hermes_job_id?: string | null
   schedule_display?: string | null
   job_enabled?: boolean

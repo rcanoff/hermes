@@ -54,6 +54,7 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
     thumbMaxEdgePx: 200,
     visionHistoryMaxBytes: 8_388_608,
     companionModels: DEFAULT_COMPANION_MODELS,
+    hermesHome: '/tmp/hermes-home-test',
     ...overrides,
   })
 }

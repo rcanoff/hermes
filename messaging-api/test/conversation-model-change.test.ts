@@ -179,6 +179,11 @@ describe('applyConversationModelChange', () => {
       role: 'user',
       content: expect.stringContaining('provider changed'),
     })
+    expect(hermesClient.completeRequests[0]?.messages[0]).toEqual({
+      role: 'system',
+      content: expect.stringContaining('You are Hermes (main)'),
+    })
+    expect(hermesClient.ensureSessionRequests[0]?.systemPrompt).toContain('You are Hermes (main)')
   })
 
   it('rejects invalid model pairs', async () => {

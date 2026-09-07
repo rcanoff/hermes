@@ -186,7 +186,7 @@ function enrichSyncEvents(
       return event
     }
 
-    const [enriched] = enrichMessagesWithAttachments([event.message], attachmentMap)
+    const [enriched] = enrichMessagesWithAttachments(db, [event.message], attachmentMap)
     let message = enriched
 
     if (event.message.role === 'assistant') {

@@ -1,9 +1,19 @@
+import { DEFAULT_BOT_SLUG } from '../lib/hermes-profile.js'
 import type { HermesPromptMessage } from './prompt-builder.js'
 import {
   openHermesStateDbRw,
   updateSessionModel,
   upsertCompanionSession,
 } from './hermes-session-store.js'
+
+/** Prefix `/p/<slug>` for non-default Hermes profiles; default stays unprefixed. */
+export function hermesProfilePath(path: string, profileSlug?: string | null): string {
+  const normalized = path.startsWith('/') ? path : `/${path}`
+  if (!profileSlug || profileSlug === DEFAULT_BOT_SLUG) {
+    return normalized
+  }
+  return `/p/${profileSlug}${normalized}`
+}
 
 /** Stable Hermes gateway session key — identifies messaging-api traffic as Companion App. */
 export const COMPANION_APP_SESSION_KEY = 'companion-app'
@@ -21,11 +31,19 @@ export const COMPANION_CRON_PROMPT_SYNTHESIS_SESSION_KEY = 'companion-cron-promp
 export interface StreamChatInput {
   hermesSessionId: string
   messages: HermesPromptMessage[]
+  /** Companion conversation owner; forwarded as X-Companion-User-Id to Hermes. */
+  companionUserId?: string
+  /** Hermes profile slug. Non-default values prefix `/p/<slug>` on gateway URLs. */
+  profileSlug?: string
 }
 
 export interface CompleteChatInput {
   hermesSessionId: string
   messages: HermesPromptMessage[]
+  /** Companion conversation owner; forwarded as X-Companion-User-Id to Hermes. */
+  companionUserId?: string
+  /** Hermes profile slug. Non-default values prefix `/p/<slug>` on gateway URLs. */
+  profileSlug?: string
 }
 
 export interface EnsureSessionInput {
@@ -33,6 +51,8 @@ export interface EnsureSessionInput {
   systemPrompt?: string | null
   model?: string
   provider?: string
+  /** Hermes profile slug. Non-default values prefix `/p/<slug>` on gateway URLs. */
+  profileSlug?: string
 }
 
 export interface PatchSessionModelInput {
@@ -42,7 +62,7 @@ export interface PatchSessionModelInput {
 }
 
 export interface HermesStreamEvent {
-  type: 'reasoning' | 'tool' | 'tool_complete' | 'answer_token' | 'done'
+  type: 'reasoning' | 'tool' | 'tool_complete' | 'answer_token' | 'done' | 'error'
   text?: string
   name?: string
   arguments?: string
@@ -65,7 +85,16 @@ interface OpenAiChatCompletion {
 }
 
 interface OpenAiChatChunk {
+  error?: {
+    message?: string
+    type?: string
+  }
+  hermes?: {
+    failed?: boolean
+    error?: string | null
+  }
   choices?: Array<{
+    finish_reason?: string | null
     delta?: {
       reasoning_content?: string
       content?: string | Array<{ type?: string; text?: string }>
@@ -227,7 +256,7 @@ export class OpenAiHermesClient implements HermesClient {
       body.provider = input.provider
     }
 
-    const response = await fetch(new URL('/api/sessions', this.baseUrl), {
+    const response = await fetch(new URL(hermesProfilePath('/api/sessions', input.profileSlug), this.baseUrl), {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -279,11 +308,17 @@ export class OpenAiHermesClient implements HermesClient {
       'x-hermes-session-key': COMPANION_APP_SESSION_KEY,
     }
 
+    if (input.companionUserId) {
+      headers['x-companion-user-id'] = input.companionUserId
+    }
+
     if (this.apiKey) {
       headers.authorization = `Bearer ${this.apiKey}`
     }
 
-    const response = await fetch(new URL('/v1/chat/completions', this.baseUrl), {
+    const response = await fetch(
+      new URL(hermesProfilePath('/v1/chat/completions', input.profileSlug), this.baseUrl),
+      {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -291,7 +326,8 @@ export class OpenAiHermesClient implements HermesClient {
         messages: input.messages,
         stream: false,
       }),
-    })
+    },
+    )
 
     if (!response.ok) {
       throw new Error(`Hermes request failed with status ${response.status}`)
@@ -310,11 +346,17 @@ export class OpenAiHermesClient implements HermesClient {
       'x-hermes-session-key': COMPANION_APP_SESSION_KEY,
     }
 
+    if (input.companionUserId) {
+      headers['x-companion-user-id'] = input.companionUserId
+    }
+
     if (this.apiKey) {
       headers.authorization = `Bearer ${this.apiKey}`
     }
 
-    const response = await fetch(new URL('/v1/chat/completions', this.baseUrl), {
+    const response = await fetch(
+      new URL(hermesProfilePath('/v1/chat/completions', input.profileSlug), this.baseUrl),
+      {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -322,7 +364,8 @@ export class OpenAiHermesClient implements HermesClient {
         messages: input.messages,
         stream: true,
       }),
-    })
+    },
+    )
 
     if (!response.ok || !response.body) {
       throw new Error(`Hermes request failed with status ${response.status}`)
@@ -346,6 +389,9 @@ export class OpenAiHermesClient implements HermesClient {
         buffer = extraction.rest
 
         for (const event of parseSseEvent(extraction.frame, toolCallAccumulator, toolProgressTracker)) {
+          if (event.type === 'error') {
+            throw new Error(event.text?.trim() || 'Hermes stream failed')
+          }
           if (event.type === 'done') {
             sawDone = true
           }
@@ -399,6 +445,12 @@ function* parseSseEvent(
   }
 
   const parsed = JSON.parse(payload) as OpenAiChatChunk
+  const streamError = hermesStreamErrorMessage(parsed)
+  if (streamError) {
+    yield { type: 'error', text: streamError }
+    return
+  }
+
   for (const choice of parsed.choices ?? []) {
     const delta = choice.delta
     if (!delta) {
@@ -440,6 +492,20 @@ function* parseContentDelta(
       yield { type: 'answer_token', text: part.text }
     }
   }
+}
+
+function hermesStreamErrorMessage(parsed: OpenAiChatChunk): string | null {
+  const finishReason = parsed.choices?.[0]?.finish_reason
+  const failed = parsed.hermes?.failed === true || finishReason === 'error' || parsed.error != null
+  if (!failed) {
+    return null
+  }
+
+  const message =
+    (typeof parsed.error?.message === 'string' && parsed.error.message.trim()) ||
+    (typeof parsed.hermes?.error === 'string' && parsed.hermes.error.trim()) ||
+    ''
+  return message || 'Hermes stream failed'
 }
 
 function extractCompletionText(

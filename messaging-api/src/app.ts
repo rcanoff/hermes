@@ -21,7 +21,9 @@ import dataLocationRoutes from './routes/data-location.js'
 import dataHealthRoutes from './routes/data-health.js'
 import mcpRoutes from './routes/mcp.js'
 import jobRoutes from './routes/jobs.js'
+import botRoutes from './routes/bots.js'
 import modelsRoutes from './routes/models.js'
+import settingsRoutes from './routes/settings.js'
 import cronInternalRoutes from './routes/cron-internal.js'
 import pushRoutes from './routes/push.js'
 import { AddressEnrichmentQueue } from './services/address-enrichment.js'
@@ -63,6 +65,7 @@ declare module 'fastify' {
     titleGeneration: import('./config.js').TitleGenerationConfig
     cronPromptSynthesis: import('./services/auxiliary-llm-client.js').AuxiliaryLlmConfig
     companionModels: import('./lib/companion-models.js').CuratedModelEntry[]
+    hermesHome: string
   }
 }
 
@@ -127,6 +130,7 @@ export function buildApp(options: AppOptions) {
   app.decorate('titleGeneration', options.titleGeneration)
   app.decorate('cronPromptSynthesis', options.cronPromptSynthesis)
   app.decorate('companionModels', options.companionModels)
+  app.decorate('hermesHome', options.hermesHome)
   app.decorate(
     'addressEnrichmentQueue',
     options.addressEnrichmentQueue ??
@@ -150,7 +154,9 @@ export function buildApp(options: AppOptions) {
   app.register(syncInboxRoutes)
   app.register(conversationRoutes)
   app.register(modelsRoutes)
+  app.register(settingsRoutes)
   app.register(jobRoutes)
+  app.register(botRoutes)
   app.register(cronInternalRoutes)
   app.register(attachmentRoutes)
   app.register(messageRoutes)

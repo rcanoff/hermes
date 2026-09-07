@@ -2,8 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { getBotBySlug, insertBot } from '../src/db/repos/bots.js'
+import { createConversation } from '../src/db/repos/conversations.js'
+import { insertMessage, listMessages } from '../src/db/repos/messages.js'
+import { createRun } from '../src/db/repos/runs.js'
 import { createInviteRecord } from '../src/services/invites.js'
 import { createTestApp } from './helpers/app.js'
+import { FakeHermesClient } from './helpers/hermes.js'
 import { seedTestUser } from './helpers/users.js'
 
 async function createMcpClient(app: FastifyInstance, bearerToken: string) {
@@ -339,6 +344,188 @@ describe('companion MCP routes', () => {
     const result = await client.callTool({ name: 'list_companion_accounts', arguments: {} })
     const payload = parseToolResult(result) as { pending_invites: unknown[]; users: unknown[] }
     expect(payload.pending_invites.length).toBe(1)
+    await transport.close()
+    await client.close()
+  })
+
+  it('returns a tool error for an unknown teammate', async () => {
+    const { client, transport } = await createMcpClient(app!, 'test-mcp-token')
+    const result = await client.callTool({
+      name: 'message_teammate',
+      arguments: { username: 'operator', name: 'Unknown', text: 'Help' },
+    })
+
+    expect(result.isError).toBe(true)
+    const text = result.content.find((part) => part.type === 'text')?.text
+    expect(text).toContain('Unknown teammate "Unknown"')
+
+    await transport.close()
+    await client.close()
+  })
+
+  it('messages a teammate through MCP during a default-bot turn', async () => {
+    const hermesClient = new FakeHermesClient()
+    hermesClient.pushAnswerToken('Pack sunscreen.')
+    hermesClient.pushDone()
+    hermesClient.closeWithoutDone()
+
+    await app?.close()
+    app = await createTestApp({ hermesClient })
+    await app.ready()
+    const seeded = await seedTestUser(app, 'operator', 'password123')
+
+    insertBot(app.db, {
+      slug: 'travel',
+      name: 'Travel',
+      role: 'Flights',
+      soul: 'You book trips.',
+    })
+    const conversationId = createConversation(app.db, seeded.id, 'hs-caller')
+    const userMessageId = insertMessage(app.db, {
+      conversationId,
+      role: 'user',
+      content: 'Plan a trip',
+    })
+    createRun(app.db, conversationId, userMessageId, seeded.sessionId)
+
+    const { client, transport } = await createMcpClient(app, 'test-mcp-token')
+    const result = await client.callTool({
+      name: 'message_teammate',
+      arguments: { username: 'operator', name: 'Travel', text: 'Plan a trip' },
+    })
+    const payload = parseToolResult(result)
+
+    expect(result.isError).toBeFalsy()
+    expect(payload).toMatchObject({
+      ok: true,
+      from: 'Hermes',
+      to: 'Travel',
+      reply: 'Pack sunscreen.',
+    })
+    expect(listMessages(app.db, conversationId).map((message) => message.kind)).toEqual([
+      'chat',
+      'bot_sent',
+      'bot_reply',
+    ])
+
+    await transport.close()
+    await client.close()
+  })
+
+  it('lists set_my_responsibilities and message_teammate', async () => {
+    const { client, transport } = await createMcpClient(app!, 'test-mcp-token')
+    const listed = await client.listTools()
+    const names = listed.tools.map((tool) => tool.name)
+    expect(names).toEqual(expect.arrayContaining(['set_my_responsibilities', 'message_teammate']))
+
+    await transport.close()
+    await client.close()
+  })
+
+  it('set_my_responsibilities updates the caller bot only', async () => {
+    const seeded = await seedTestUser(app!, 'operator2', 'password123')
+    const travel = insertBot(app!.db, {
+      slug: 'travel',
+      name: 'Travel',
+      role: 'Flights',
+      soul: 'You book trips.',
+    })
+    const other = insertBot(app!.db, {
+      slug: 'notes',
+      name: 'Notes',
+      role: 'Takes notes',
+      soul: 'You take notes.',
+    })
+    const conversationId = createConversation(
+      app!.db,
+      seeded.id,
+      'hs-jobs',
+      null,
+      undefined,
+      travel.id,
+    )
+    const userMessageId = insertMessage(app!.db, {
+      conversationId,
+      role: 'user',
+      content: 'You handle flights',
+    })
+    createRun(app!.db, conversationId, userMessageId, seeded.sessionId)
+
+    const { client, transport } = await createMcpClient(app!, 'test-mcp-token')
+    const result = await client.callTool({
+      name: 'set_my_responsibilities',
+      arguments: {
+        username: 'operator2',
+        text: 'Flights, bookings, and tickets.',
+      },
+    })
+    const payload = parseToolResult(result)
+
+    expect(result.isError).toBeFalsy()
+    expect(payload).toEqual({
+      ok: true,
+      name: 'Travel',
+      slug: 'travel',
+      responsibilities: 'Flights, bookings, and tickets.',
+    })
+    expect(getBotBySlug(app!.db, 'travel')?.responsibilities).toBe(
+      'Flights, bookings, and tickets.',
+    )
+    expect(getBotBySlug(app!.db, 'notes')?.responsibilities).toBe('')
+    expect(getBotBySlug(app!.db, 'default')?.responsibilities).toBe(
+      'Default Companion assistant; routes matching work to specialist teammates.',
+    )
+    expect(other.slug).toBe('notes')
+
+    await transport.close()
+    await client.close()
+  })
+
+  it('set_my_responsibilities rejects empty or overlong jobs', async () => {
+    const seeded = await seedTestUser(app!, 'operator3', 'password123')
+    const travel = insertBot(app!.db, {
+      slug: 'travel',
+      name: 'Travel',
+      role: 'Flights',
+      soul: 'You book trips.',
+    })
+    const conversationId = createConversation(
+      app!.db,
+      seeded.id,
+      'hs-jobs-2',
+      null,
+      undefined,
+      travel.id,
+    )
+    const userMessageId = insertMessage(app!.db, {
+      conversationId,
+      role: 'user',
+      content: 'Set jobs',
+    })
+    createRun(app!.db, conversationId, userMessageId, seeded.sessionId)
+
+    const { client, transport } = await createMcpClient(app!, 'test-mcp-token')
+
+    const empty = await client.callTool({
+      name: 'set_my_responsibilities',
+      arguments: { username: 'operator3', text: '   ' },
+    })
+    expect(empty.isError).toBe(true)
+    expect(empty.content.find((part) => part.type === 'text')?.text).toContain(
+      'responsibilities must be a non-empty string',
+    )
+
+    const tooLong = await client.callTool({
+      name: 'set_my_responsibilities',
+      arguments: { username: 'operator3', text: 'x'.repeat(201) },
+    })
+    expect(tooLong.isError).toBe(true)
+    expect(tooLong.content.find((part) => part.type === 'text')?.text).toContain(
+      'at most 200 characters',
+    )
+
+    expect(getBotBySlug(app!.db, 'travel')?.responsibilities).toBe('')
+
     await transport.close()
     await client.close()
   })

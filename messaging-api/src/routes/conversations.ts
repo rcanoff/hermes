@@ -9,10 +9,12 @@ import {
   updateConversationTitle,
   type ConversationRow,
 } from '../db/repos/conversations.js'
+import { resolveDefaultModel } from '../db/repos/settings.js'
+import { getBotById } from '../db/repos/bots.js'
 import { assertCuratedModel } from '../lib/companion-models.js'
 import { validateBootstrap } from '../lib/bootstrap.js'
 import { getActiveRun } from '../db/repos/runs.js'
-import { buildHalLinks, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
+import { buildHalLinks, isValidAnchor, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
 import { toConversationResponse } from '../lib/conversation-response.js'
 import {
   emitAccountConversationUpsert,
@@ -31,7 +33,7 @@ import { scheduleConversationSessionWarmup } from '../services/session-warmup.js
 
 const conversationRoutes: FastifyPluginAsync = async (app) => {
   app.get('/conversations', { preHandler: app.authenticate }, async (request, reply) => {
-    const query = request.query as { limit?: string; before?: string; after?: string }
+    const query = request.query as { limit?: string; before?: string; after?: string; bot_id?: string }
     const limit = parsePageLimit(query.limit)
     if (limit === null) {
       return reply.code(400).send({ error: 'invalid_request' })
@@ -42,7 +44,21 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    const page = listConversationsPage(app.db, request.userId, limit, anchors)
+    let botId: string | undefined
+    if (query.bot_id !== undefined) {
+      if (!isValidAnchor(query.bot_id)) {
+        return reply.code(400).send({ error: 'invalid_request' })
+      }
+      if (!getBotById(app.db, query.bot_id)) {
+        return reply.code(404).send({ error: 'not_found' })
+      }
+      botId = query.bot_id
+    }
+
+    const page = listConversationsPage(app.db, request.userId, limit, anchors, {
+      kind: 'regular',
+      botId,
+    })
     if (!page) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
@@ -63,6 +79,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
         hasNewer: page.hasNewer,
         firstId,
         lastId,
+        extraQuery: botId ? { bot_id: botId } : undefined,
       }),
     }
   })
@@ -70,6 +87,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
   app.post('/conversations', { preHandler: app.authenticate }, async (request, reply) => {
     let bootstrapPrompt: string | null = null
     let modelProvider: { model: string; provider: string } | undefined
+    let botId: string | undefined
 
     if (isCreateConversationBody(request.body)) {
       const bootstrap = validateBootstrap(request.body.bootstrap)
@@ -99,6 +117,16 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
 
         modelProvider = { model, provider }
       }
+
+      if (request.body.bot_id !== undefined && request.body.bot_id !== null) {
+        if (!isValidAnchor(request.body.bot_id)) {
+          return reply.code(400).send({ error: 'invalid_request' })
+        }
+        if (!getBotById(app.db, request.body.bot_id)) {
+          return reply.code(404).send({ error: 'not_found' })
+        }
+        botId = request.body.bot_id
+      }
     }
 
     const conversationId = createConversation(
@@ -106,7 +134,8 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
       request.userId,
       randomUUID(),
       bootstrapPrompt,
-      modelProvider,
+      modelProvider ?? resolveDefaultModel(app.db, app.hermesHome),
+      botId,
     )
     emitAccountConversationUpsert(app.db, request.userId, conversationId, app.companionModels)
     publishAccountConversationUpsert(
@@ -121,6 +150,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
     scheduleConversationSessionWarmup({
       hermesClient: app.hermesClient,
       conversation: conversation!,
+      db: app.db,
       companionUsername: request.username,
       log: (message, meta) => {
         app.log.info(meta ?? {}, message)
@@ -273,7 +303,7 @@ export default conversationRoutes
 
 function isCreateConversationBody(
   value: unknown,
-): value is { bootstrap?: string; model?: string; provider?: string } {
+): value is { bootstrap?: string; model?: string; provider?: string; bot_id?: string | null } {
   return typeof value === 'object' && value !== null
 }
 

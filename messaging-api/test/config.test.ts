@@ -75,7 +75,37 @@ describe('readConfig', () => {
       thumbMaxEdgePx: 200,
       visionHistoryMaxBytes: 8_388_608,
       companionModels: DEFAULT_COMPANION_MODELS,
+      hermesHome: '/opt/data',
     })
+  })
+
+  it('defaults HERMES_HOME to /opt/data and prefers HERMES_HOME over HERMES_DATA_DIR', () => {
+    expect(
+      readConfig({
+        JWT_SECRET: 'test-secret',
+        HERMES_BASE_URL: 'http://hermes:8642',
+        MESSAGING_API_HOST: '100.64.0.1:3000',
+      }).hermesHome,
+    ).toBe('/opt/data')
+
+    expect(
+      readConfig({
+        JWT_SECRET: 'test-secret',
+        HERMES_BASE_URL: 'http://hermes:8642',
+        MESSAGING_API_HOST: '100.64.0.1:3000',
+        HERMES_DATA_DIR: '/var/lib/hermes',
+      }).hermesHome,
+    ).toBe('/var/lib/hermes')
+
+    expect(
+      readConfig({
+        JWT_SECRET: 'test-secret',
+        HERMES_BASE_URL: 'http://hermes:8642',
+        MESSAGING_API_HOST: '100.64.0.1:3000',
+        HERMES_DATA_DIR: '/var/lib/hermes',
+        HERMES_HOME: '/opt/custom-home',
+      }).hermesHome,
+    ).toBe('/opt/custom-home')
   })
 
   it('parses SYNC_INBOX_MAX_GAP with default 500', () => {

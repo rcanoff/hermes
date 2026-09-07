@@ -15,17 +15,22 @@ services:
     image: ${HERMES_IMAGE}
     container_name: hermes
     restart: unless-stopped
+    depends_on:
+      honcho-api:
+        condition: service_healthy
     volumes:
       - ${HERMES_DATA_DIR}:/opt/data
       - ${OBSIDIAN_VAULT_HOST_PATH:-${HERMES_DATA_DIR}/vault}:/opt/data/vault:cached
       - ./scripts/patches/api_server.py:/opt/hermes/gateway/platforms/api_server.py:ro
+      - ./scripts/patches/mcp_tool.py:/opt/hermes/tools/mcp_tool.py:ro
     environment:
       HERMES_UID: ${HERMES_UID:-10000}
       HERMES_GID: ${HERMES_GID:-10000}
       HERMES_DASHBOARD: "true"
       HERMES_DASHBOARD_HOST: 0.0.0.0
       HERMES_DASHBOARD_PORT: ${HERMES_DASHBOARD_PORT:-9119}
-      HERMES_DASHBOARD_INSECURE: "true"
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-}
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-}
       API_SERVER_ENABLED: "true"
       API_SERVER_HOST: 0.0.0.0
       API_SERVER_PORT: 8642
@@ -40,13 +45,18 @@ services:
   hermes-auxiliary-bridge:
     image: ${HERMES_IMAGE}
     restart: unless-stopped
+    # Skip s6 /init. The v0.21 image always starts a supervised gateway from
+    # shared /opt/data, which double-polls Telegram against hermes-gateway.
+    entrypoint: ["/opt/hermes/.venv/bin/python3"]
     volumes:
       - ${HERMES_DATA_DIR}:/opt/data
       - ./scripts/auxiliary-bridge.py:/opt/auxiliary-bridge.py:ro
     environment:
+      HERMES_HOME: /opt/data
+      HOME: /opt/data
       HERMES_API_SERVER_KEY: ${HERMES_API_SERVER_KEY:-change-me}
       PORT: 8750
-    command: ["python3", "/opt/auxiliary-bridge.py"]
+    command: ["/opt/auxiliary-bridge.py"]
 
   messaging-api:
     build:
@@ -62,6 +72,7 @@ services:
       HERMES_API_KEY: ${HERMES_API_SERVER_KEY:-change-me}
       HERMES_AUXILIARY_BRIDGE_URL: http://hermes-auxiliary-bridge:8750
       DB_PATH: /opt/data/messaging-api.sqlite
+      HERMES_HOME: ${HERMES_HOME:-/opt/data}
       MESSAGING_API_HOST: ${MESSAGING_API_HOST:-}
       INVITE_EXPIRY_HOURS: ${INVITE_EXPIRY_HOURS:-48}
       MIN_PASSWORD_LENGTH: ${MIN_PASSWORD_LENGTH:-12}
@@ -76,3 +87,93 @@ services:
       - ${HERMES_DATA_DIR}:/opt/data
     ports:
       - ${MESSAGING_API_PORT:-3000}:3000
+
+  honcho-db:
+    image: pgvector/pgvector:pg15
+    restart: unless-stopped
+    command: ["postgres", "-c", "max_connections=200"]
+    environment:
+      POSTGRES_DB: honcho
+      POSTGRES_USER: honcho
+      POSTGRES_PASSWORD: honcho
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - ./docker/honcho/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - honcho-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U honcho -d honcho"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  honcho-redis:
+    image: redis:8.2
+    restart: unless-stopped
+    volumes:
+      - honcho-redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  honcho-api:
+    image: ${HONCHO_IMAGE:-ghcr.io/plastic-labs/honcho:latest}
+    restart: unless-stopped
+    entrypoint: ["sh", "docker/entrypoint.sh"]
+    depends_on:
+      honcho-db:
+        condition: service_healthy
+      honcho-redis:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:${HONCHO_API_PORT:-8000}:8000
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_CONNECTION_URI: postgresql+psycopg://honcho:honcho@honcho-db:5432/honcho
+      CACHE_URL: redis://honcho-redis:6379/0?suppress=true
+      CACHE_ENABLED: "true"
+      AUTH_USE_AUTH: "false"
+      VECTOR_STORE_TYPE: pgvector
+      LLM_OPENAI_API_KEY: ${LLM_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/.venv/bin/python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  honcho-deriver:
+    image: ${HONCHO_IMAGE:-ghcr.io/plastic-labs/honcho:latest}
+    restart: unless-stopped
+    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+    depends_on:
+      honcho-api:
+        condition: service_healthy
+      honcho-db:
+        condition: service_healthy
+      honcho-redis:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_CONNECTION_URI: postgresql+psycopg://honcho:honcho@honcho-db:5432/honcho
+      CACHE_URL: redis://honcho-redis:6379/0?suppress=true
+      CACHE_ENABLED: "true"
+      AUTH_USE_AUTH: "false"
+      VECTOR_STORE_TYPE: pgvector
+      LLM_OPENAI_API_KEY: ${LLM_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}
+
+volumes:
+  honcho-pgdata:
+  honcho-redis:

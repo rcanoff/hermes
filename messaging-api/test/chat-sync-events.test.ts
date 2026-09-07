@@ -28,6 +28,7 @@ describe('chat-sync-events repo', () => {
       updated_at: '2026-06-17 10:00:00',
       latest_message_id: null,
       latest_message_created_at: null,
+      bot_id: null,
     })
     const second = appendAccountConversationDeleted(db, userId, conversationId)
 

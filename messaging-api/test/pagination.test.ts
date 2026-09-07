@@ -50,6 +50,28 @@ describe('pagination helpers', () => {
     )
   })
 
+  it('includes extraQuery on self next and prev', () => {
+    const links = buildHalLinks({
+      basePath: '/conversations',
+      limit: 20,
+      hasOlder: true,
+      hasNewer: true,
+      firstId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      lastId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      extraQuery: { bot_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+    })
+
+    expect(links.self.href).toBe(
+      '/conversations?limit=20&bot_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    )
+    expect(links.next?.href).toBe(
+      '/conversations?limit=20&bot_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&before=dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    )
+    expect(links.prev?.href).toBe(
+      '/conversations?limit=20&bot_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&after=cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    )
+  })
+
   it('omits next and prev when no further pages exist', () => {
     const links = buildHalLinks({
       basePath: '/conversations',

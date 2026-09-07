@@ -76,11 +76,11 @@ The PowerShell wrapper mirrors the Makefile behavior, including syncing the Appl
 If you run `make` from WSL, the operational targets `up`, `down`, `ps`, `logs`, `config`, and `restart` automatically delegate to the Windows PowerShell wrapper so they use the Windows Docker Desktop integration instead of the WSL `docker compose` path.
 
 The dashboard is enabled inside the same container and published on the host at `${HERMES_DASHBOARD_PORT}` on all interfaces, so it is reachable from other machines on the same network at `http://<host-ip>:${HERMES_DASHBOARD_PORT}`.
-Inside the container it binds to `0.0.0.0` so Docker can forward the port, and `HERMES_DASHBOARD_INSECURE=true` is required because this setup does not configure Hermes dashboard OAuth providers.
+Inside the container it binds to `0.0.0.0` so Docker can forward the port. Hermes v0.21+ requires dashboard auth on non-loopback binds (`HERMES_DASHBOARD_INSECURE` no longer disables that gate). Set `HERMES_DASHBOARD_BASIC_AUTH_USERNAME` and `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD` in `.env`.
 
 Security note:
 
-- anyone who can reach `http://<host-ip>:${HERMES_DASHBOARD_PORT}` can access the dashboard
+- anyone who can reach `http://<host-ip>:${HERMES_DASHBOARD_PORT}` still needs those dashboard credentials
 - if you only want selected remote access, put Hermes behind a VPN, SSH tunnel, or a trusted reverse proxy instead of exposing the port broadly on your LAN
 
 ## Raspberry Pi deployment with Ansible
@@ -137,6 +137,41 @@ Stop or remove the Login Item:
 make browser-daemon-stop
 make browser-daemon-login-uninstall
 ```
+
+## Honcho (self-hosted memory)
+
+Honcho runs on the **same Docker Compose** as Hermes. This workspace does **not** use Honcho Cloud.
+
+| Service | Role | Host ports |
+|---------|------|------------|
+| `honcho-api` | FastAPI memory API | `127.0.0.1:${HONCHO_API_PORT:-8000}` only |
+| `honcho-deriver` | extract / dream / summary | none |
+| `honcho-db` | Postgres + pgvector | none (compose network) |
+| `honcho-redis` | cache | none (compose network) |
+
+There is **no** Honcho MCP container (port 3000 is `messaging-api`).
+
+`make up` starts Honcho with Hermes. `hermes-gateway` waits until `honcho-api` is healthy. Hermes reads `data/honcho.json` (`baseUrl: http://honcho-api:8000`, workspace `hermes`, peers `roberto` / `hermes`). Built-in `USER.md` / `MEMORY.md` stay on disk as backup.
+
+```bash
+make honcho-health          # curl 127.0.0.1:8000/health
+make honcho-logs            # honcho-api + honcho-deriver
+make migrate-honcho-memory  # one-shot USER.md/MEMORY.md → session file-memory-migration
+```
+
+Migrate copies originals to `data/memories/backup/` first, then posts `§` records (user peer `roberto`, AI peer `hermes`). Idempotent via `data/memories/.honcho-migrated`. Live files stay in place.
+
+### LLM env (deriver / dialectic / embeddings)
+
+Honcho will not start without an LLM. Set `LLM_OPENAI_API_KEY` in `.env` (never commit it). Defaults expect OpenAI-compatible chat **and** embeddings (`text-embedding-3-small`, 1536-d).
+
+This Mac: OpenAI `OPENAI_API_KEY` is out of credits, so Honcho uses **OpenRouter** (`OPENROUTER_API_KEY` from `data/.env`) at `https://openrouter.ai/api/v1` with `openai/gpt-5.4-mini` and `openai/text-embedding-3-small`. Per-feature `*_MODEL_CONFIG__OVERRIDES__BASE_URL` and `*_MODEL` live in `.env` / `.env.example`. Recreate Honcho after changing them:
+
+```bash
+docker compose --env-file .env up -d --force-recreate honcho-api honcho-deriver
+```
+
+Do not point Honcho at xAI OAuth refresh tokens.
 
 ## OpenAI setup
 
@@ -195,14 +230,16 @@ Full app build, permission, and token setup: [`../apple-reminders-mcp/README.md`
 Add this value to `.env`:
 
 ```bash
-REMINDERS_MCP_BEARER_TOKEN=replace-with-same-token-as-apple-reminders-mcp-app
+APPLE_MCP_BEARER_TOKEN=replace-with-same-token-as-apple-mcp-app
 ```
+
+`REMINDERS_MCP_BEARER_TOKEN` is still accepted as a **fallback for one release** if you have not renamed the env var yet.
 
 Operator flow:
 
-1. Build and run `apple-reminders-mcp` on the Mac (menu-bar agent; default port **3020**).
+1. Build and run `apple-reminders-mcp` (or `apple-mcp`) on the Mac (menu-bar agent; default port **3020**).
 2. Grant Reminders access in the app settings.
-3. Copy the bearer token from the app settings → paste into `hermes/.env` as `REMINDERS_MCP_BEARER_TOKEN`.
+3. Copy the bearer token from the app settings → paste into `hermes/.env` as `APPLE_MCP_BEARER_TOKEN`.
 4. Sync config and restart if needed:
 
 ```bash
@@ -213,12 +250,33 @@ make down && make up
 Notes:
 
 - Hermes reaches the MCP at `http://host.docker.internal:3020/mcp` — not `127.0.0.1` from inside the container.
-- `make up` and `make config` automatically sync the `reminders` bearer token in `data/config.yaml` from the selected env file (`.env` if present, otherwise `.env.example`) without printing it.
-- If you need to sync the token without starting or rendering Compose, run `make sync-reminders-mcp-token`.
+- `make up` and `make config` automatically sync the `apple` bearer token in `data/config.yaml` from the selected env file (`.env` if present, otherwise `.env.example`) without printing it.
+- If you need to sync the token without starting or rendering Compose, run `make sync-apple-mcp-token` (`make sync-reminders-mcp-token` is a deprecated alias).
 - Regenerating the token in the macOS app invalidates the old value — update `.env` and run `make config` again.
 - Task/list intents route through the `companion-reminders` skill (see `data/skills/companion-reminders/SKILL.md`).
 
-`data/config.yaml` is the runtime config Hermes reads, but its `reminders` bearer header is operator-synced from `REMINDERS_MCP_BEARER_TOKEN` — update the env file, not that header by hand.
+`data/config.yaml` is the runtime config Hermes reads, but its `apple` bearer header is operator-synced from `APPLE_MCP_BEARER_TOKEN` (or `REMINDERS_MCP_BEARER_TOKEN` fallback) — update the env file, not that header by hand.
+
+### Companion user header (`X-Companion-User-Id`)
+
+Maps tools in **apple-mcp** resolve iPhone location by companion **user UUID** (`users.id`), not `username`. Hermes injects that identity automatically on companion conversation turns:
+
+| Layer | Role |
+|-------|------|
+| `messaging-api` | Sends `X-Companion-User-Id: <conversation.user_id>` on `/v1/chat/completions` for assistant runs (`run-executor`) |
+| `scripts/patches/api_server.py` | Parses the header → `HERMES_SESSION_USER_ID` session context for the agent turn |
+| `scripts/patches/mcp_tool.py` | Adds `X-Companion-User-Id` to each HTTP request to the `apple` MCP server when session context has a user id |
+
+Cron jobs, title generation, and other non-conversation Hermes calls **omit** the header — Maps location tools error with `companion_user_required`; Reminders tools are unaffected.
+
+Patches are mounted in `docker-compose.yml` over the Hermes image paths `/opt/hermes/gateway/platforms/api_server.py` and `/opt/hermes/tools/mcp_tool.py`. Restart the stack after editing them (`make down && make up`).
+
+Manual check (companion chat that calls an `apple` MCP tool):
+
+```bash
+# apple-mcp logs or proxy should show X-Companion-User-Id on POST /mcp
+docker logs --tail=50 <apple-mcp-container-or-host-app-logs>
+```
 
 ### End-to-end verification
 
@@ -228,8 +286,8 @@ Prerequisites (all must pass before Hermes MCP tests):
 |-------|------------------|----------|
 | macOS app running | Menu-bar icon **green** in `apple-reminders-mcp` | Settings shows **Listening on 127.0.0.1:3020** |
 | Reminders access | App **Settings → Reminders Access** | Status **Granted** (not Denied / Not Determined) |
-| Bearer token in `.env` | `REMINDERS_MCP_BEARER_TOKEN` set (same value as app settings) | `make sync-reminders-mcp-token` exits 0 |
-| Config synced | `make config` | `data/config.yaml` `reminders.headers.Authorization` is not `REPLACE_ME` |
+| Bearer token in `.env` | `APPLE_MCP_BEARER_TOKEN` set (same value as app settings) | `make sync-apple-mcp-token` exits 0 |
+| Config synced | `make config` | `data/config.yaml` `apple.headers.Authorization` is not `REPLACE_ME` |
 | Hermes stack up | `make ps` | `hermes` container **Up** |
 
 **1. Host health (Mac)**
@@ -238,13 +296,13 @@ Export the token from `.env` (do not commit it):
 
 ```bash
 set -a; source .env; set +a
-curl -sS http://127.0.0.1:3020/health -H "Authorization: Bearer $REMINDERS_MCP_BEARER_TOKEN"
+curl -sS http://127.0.0.1:3020/health -H "Authorization: Bearer ${APPLE_MCP_BEARER_TOKEN:-$REMINDERS_MCP_BEARER_TOKEN}"
 ```
 
-Expected when Reminders access is granted:
+Expected when Reminders and Maps modules are healthy:
 
 ```json
-{"ok":true}
+{"ok":true,"modules":[{"id":"reminders","enabled":true,"healthy":true,"permission":"granted"},{"id":"maps","enabled":true,"healthy":true,"permission":"not_applicable"}]}
 ```
 
 If `ok` is `false`, open app settings and grant Reminders access, then retry.
@@ -262,17 +320,92 @@ Or reload MCPs in an active Hermes session: `/reload-mcp`
 
 ```bash
 docker exec -it hermes hermes mcp list
-docker exec -it hermes hermes mcp test reminders
+docker exec -it hermes hermes mcp test apple
 ```
 
-Expected: `✓` connection success (not `Connection failed` / `All connection attempts failed`).
+Expected: `✓` connection success and **23 tools** — 12 `reminders_*` + 11 `maps_*` (not `Connection failed` / `All connection attempts failed`).
 
-**4. Companion chat smoke test**
+**4. Direct `maps_*` tool calls (host curl)**
+
+Resolve a companion `user_id` (UUID from `GET /auth/me` or `list_companion_accounts`). Export tokens from `.env`:
+
+```bash
+set -a; source .env; set +a
+USER_ID="<companion-user-uuid>"   # e.g. from GET /auth/me
+APPLE_TOKEN="${APPLE_MCP_BEARER_TOKEN:-$REMINDERS_MCP_BEARER_TOKEN}"
+```
+
+Geocode (no user header required):
+
+```bash
+curl -sS http://127.0.0.1:3020/mcp \
+  -H "Authorization: Bearer $APPLE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"maps_geocode","arguments":{"address":"Golden Gate Bridge, San Francisco"}}}'
+```
+
+Route with explicit coordinates (`transport_type` is `driving`, `walking`, or `transit` — not `automobile`):
+
+```bash
+curl -sS http://127.0.0.1:3020/mcp \
+  -H "Authorization: Bearer $APPLE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "X-Companion-User-Id: $USER_ID" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"maps_calculate_route","arguments":{"origin_latitude":37.7749,"origin_longitude":-122.4194,"destination_latitude":37.8197245,"destination_longitude":-122.4785568,"transport_type":"driving"}}}'
+```
+
+Expected: `isError` false; `distanceMeters` and `expectedTravelTimeSeconds` in the result text.
+
+iPhone vault location (`maps_phone_location` — **requires** `X-Companion-User-Id`):
+
+```bash
+curl -sS http://127.0.0.1:3020/mcp \
+  -H "Authorization: Bearer $APPLE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "X-Companion-User-Id: $USER_ID" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"maps_phone_location","arguments":{}}}'
+```
+
+Route with omitted origin (uses iPhone vault as origin — same header required):
+
+```bash
+curl -sS http://127.0.0.1:3020/mcp \
+  -H "Authorization: Bearer $APPLE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "X-Companion-User-Id: $USER_ID" \
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"maps_calculate_route","arguments":{"destination_latitude":52.516275,"destination_longitude":13.377704,"transport_type":"driving"}}}'
+```
+
+**5. Companion vault MCP (apple-mcp upstream)**
+
+Confirm `messaging-api` vault read works (apple-mcp `PhoneLocationProvider` calls this):
+
+```bash
+curl -sS http://127.0.0.1:3000/mcp \
+  -H "Authorization: Bearer $COMPANION_MCP_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"get_user_location_for_user_id\",\"arguments\":{\"user_id\":\"$USER_ID\"}}}"
+```
+
+Expected: SSE `event: message` with `"available": true` and Berlin/SF coordinates when the user has synced location.
+
+```bash
+docker exec hermes hermes mcp test companion   # expect 12 tools incl. get_user_location_for_user_id
+```
+
+**6. Companion chat smoke test**
 
 In the iOS companion app (or any client on the Companion App channel):
 
 1. Send: `list my reminder lists` — should return list **names** (via `companion-reminders` skill).
 2. Send: `add test item to Hermes list` — confirm the item appears in Reminders.app on Mac/iPhone within normal iCloud sync latency.
+3. Send: `where am I?` (user with location sharing) — should return vault coordinates; mention staleness if `synced_at` is old.
+4. Send: `how long to drive from downtown San Francisco to the Golden Gate Bridge?` — should return ETA/distance and an Apple Maps link.
 
 Use a dedicated test list (e.g. **Hermes**) if you do not want clutter on personal lists.
 
@@ -281,13 +414,16 @@ Use a dedicated test list (e.g. **Hermes**) if you do not want clutter on person
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | `curl` connection refused on `:3020` | App not running or MCP not started | Launch from Xcode (⌘R) or `open` the built `.app`; confirm menu-bar status is green |
-| `REMINDERS_MCP_BEARER_TOKEN is empty` on `make config` | Token missing from `.env` | Copy token from app settings → `hermes/.env` → `make config` |
-| Hermes shows `Bear***E_ME` / auth fails | Config not synced | `make sync-reminders-mcp-token` then `/reload-mcp` or `make down && make up` |
-| `docker … mcp test reminders` connection failed | App down, wrong port, or `host.docker.internal` unreachable | Fix host health first; confirm port **3020** in app settings |
+| `APPLE_MCP_BEARER_TOKEN is empty` on `make config` | Token missing from `.env` | Copy token from app settings → `hermes/.env` as `APPLE_MCP_BEARER_TOKEN` → `make config` |
+| Hermes shows `Bear***E_ME` / auth fails | Config not synced | `make sync-apple-mcp-token` then `/reload-mcp` or `make down && make up` |
+| `docker … mcp test apple` connection failed | App down, wrong port, or `host.docker.internal` unreachable | Fix host health first; confirm port **3020** in app settings |
 | `{"ok":false,"error":"Reminders access not granted"}` | macOS TCC | App settings → **Request Access**; enable app in **System Settings → Privacy & Security → Reminders** |
-| Chat uses wrong backend | Stale session | New conversation or `/reload-mcp`; confirm `companion-app` routes tasks to `companion-reminders` |
+| Chat uses wrong backend | Stale session | New conversation or `/reload-mcp`; confirm `companion-app` routes map intents to `companion-maps` and tasks to `companion-reminders` |
+| `maps_phone_location` / omitted-origin route returns `The data couldn't be read because it isn't in the correct format` | apple-mcp `CompanionMcpClient` does not parse messaging-api SSE (`event: message\ndata: …`) responses | Fix in `apple-mcp` — parse Streamable HTTP body before `JSONSerialization`; vault direct curl (step 5) should pass first |
+| `transport_type must be driving, walking, or transit` | Wrong enum in tool args | Use `driving` not `automobile` |
+| `Directions Not Available` | Unreasonable route (e.g. Berlin → Golden Gate driving) | Test with local origin/destination or explicit coordinates in the same metro area |
 
-Safe read-first order: host `curl` health → `hermes mcp test reminders` → read-only list query in chat → create test reminder.
+Safe read-first order: host `curl` health → `hermes mcp test apple` (23 tools) → `maps_geocode` curl → companion vault curl → `maps_phone_location` curl → chat smoke tests.
 
 ## Apple Calendar MCP setup
 
@@ -539,7 +675,38 @@ mcp_servers:
 
 Replace `<COMPANION_MCP_BEARER_TOKEN>` with the same value from `.env`. Reload MCPs with `/reload-mcp` in an active Hermes session, or restart the stack.
 
-The `companion-user-location` skill in `data/skills/` calls `get_user_location` and `get_location_history` on this MCP server.
+Companion MCP location tools (same bearer token):
+
+- **`get_user_location_for_user_id`** — preferred for apple-mcp Maps and other service callers; pass `user_id` (UUID from `users.id`). Returns the latest vault fix keyed by user, not username.
+- **`get_user_location`** — deprecated username variant; still used by `companion-user-location` during migration.
+- **`get_location_history`** — paginated history by `username`.
+
+`get_user_location_for_user_id` reads the latest `location_events` row for the user. When location sharing has synced at least one event:
+
+```json
+{
+  "available": true,
+  "user_id": "4e655874-72c9-4781-9944-221e487c4daa",
+  "latitude": 52.51,
+  "longitude": 13.46,
+  "accuracy_meters": 14.2,
+  "synced_at": "2026-06-23T17:02:59.074Z",
+  "address": "Simon-Dach-Straße 10, Friedrichshain, 10245 Berlin, Germany"
+}
+```
+
+When the user has no vault events: `{ "available": false, "user_id": "…" }`. Unknown `user_id` returns a tool error.
+
+Operator verification:
+
+```bash
+docker compose build messaging-api && docker compose up -d messaging-api
+docker exec hermes hermes mcp test companion
+```
+
+`hermes mcp test companion` should list **12** tools including `get_user_location_for_user_id`. To call the tool manually, resolve `user_id` from `list_companion_accounts`, then invoke `get_user_location_for_user_id` with `{ "user_id": "<uuid>" }` on `POST /mcp` (same bearer as above).
+
+The `companion-user-location` skill in `data/skills/` still calls `get_user_location` and `get_location_history`. apple-mcp Maps calls `get_user_location_for_user_id` with the active conversation's `user_id` (from `X-Companion-User-Id`).
 
 ### Companion cron (job conversations)
 
@@ -685,5 +852,5 @@ docker compose up -d
 ## Notes
 
 - The upstream Hermes example still shows split gateway and dashboard containers, but the current `v2026.6.5` image auto-restores gateway services from shared `/opt/data`. Running one container avoids the log-lock collision that appears when two containers share the same Hermes home.
-- `HERMES_DASHBOARD_INSECURE=true` is acceptable here because Docker publishes the dashboard only on `127.0.0.1`. Do not reuse that setting unchanged for a non-localhost deployment.
+- Dashboard basic auth is required because the container binds `0.0.0.0:9119` for Docker port publish. Credentials live in `.env` as `HERMES_DASHBOARD_BASIC_AUTH_*`.
 - Raspberry Pi deployment is intentionally deferred until macOS validation is complete.

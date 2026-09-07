@@ -5,6 +5,7 @@ import {
   COMPANION_DEFAULT_PROVIDER,
 } from '../../lib/companion-models.js'
 import { buildJobConversationBootstrap } from '../../lib/job-conversation.js'
+import { DEFAULT_BOT_SLUG } from '../../lib/hermes-profile.js'
 
 export type ConversationKind = 'regular' | 'job'
 
@@ -22,6 +23,8 @@ export interface ConversationRow {
   job_last_status: string | null
   model: string
   provider: string
+  bot_id: string | null
+  peer_bot_id: string | null
   created_at: string
   updated_at: string
 }
@@ -39,12 +42,13 @@ export interface ListPageAnchors {
 
 export interface ListConversationsFilter {
   kind?: ConversationKind
+  botId?: string
 }
 
 const CONVERSATION_COLUMNS = `
   id, user_id, hermes_session_id, kind, title, bootstrap_prompt,
   hermes_job_id, schedule_display, job_enabled, job_last_run_at, job_last_status,
-  model, provider, created_at, updated_at
+  model, provider, bot_id, peer_bot_id, created_at, updated_at
 `
 
 export function touchConversationUpdatedAt(db: Database.Database, conversationId: string): void {
@@ -78,17 +82,74 @@ export function createConversation(
   hermesSessionId: string,
   bootstrapPrompt?: string | null,
   modelProvider?: { model: string; provider: string },
+  botId?: string,
 ): string {
   const model = modelProvider?.model ?? COMPANION_DEFAULT_MODEL
   const provider = modelProvider?.provider ?? COMPANION_DEFAULT_PROVIDER
+  const resolvedBotId = botId ?? defaultBotId(db)
   const id = randomUUID()
   db.prepare(`
     INSERT INTO conversations (
-      id, user_id, hermes_session_id, bootstrap_prompt, model, provider, updated_at
+      id, user_id, hermes_session_id, bootstrap_prompt, model, provider, bot_id, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-  `).run(id, userId, hermesSessionId, bootstrapPrompt ?? null, model, provider)
+    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `).run(id, userId, hermesSessionId, bootstrapPrompt ?? null, model, provider, resolvedBotId)
   return id
+}
+
+export function findPeerConversation(
+  db: Database.Database,
+  userId: string,
+  targetBotId: string,
+  senderBotId: string,
+): ConversationRow | undefined {
+  return db
+    .prepare(`
+      SELECT ${CONVERSATION_COLUMNS}
+      FROM conversations
+      WHERE user_id = ?
+        AND bot_id = ?
+        AND peer_bot_id = ?
+        AND kind = 'regular'
+    `)
+    .get(userId, targetBotId, senderBotId) as ConversationRow | undefined
+}
+
+export function findOrCreatePeerConversation(
+  db: Database.Database,
+  input: {
+    userId: string
+    targetBotId: string
+    senderBotId: string
+    senderName: string
+  },
+): ConversationRow {
+  const existing = findPeerConversation(db, input.userId, input.targetBotId, input.senderBotId)
+  if (existing) {
+    return existing
+  }
+
+  const id = randomUUID()
+  const hermesSessionId = randomUUID()
+  const senderName = input.senderName.trim() || 'teammate'
+  const title = `From ${senderName}`.slice(0, MAX_CONVERSATION_TITLE_CHARS)
+
+  try {
+    db.prepare(`
+      INSERT INTO conversations (
+        id, user_id, hermes_session_id, kind, title, bot_id, peer_bot_id, updated_at
+      )
+      VALUES (?, ?, ?, 'regular', ?, ?, ?, datetime('now'))
+    `).run(id, input.userId, hermesSessionId, title, input.targetBotId, input.senderBotId)
+  } catch (error) {
+    const raced = findPeerConversation(db, input.userId, input.targetBotId, input.senderBotId)
+    if (raced) {
+      return raced
+    }
+    throw error
+  }
+
+  return getConversationForUser(db, input.userId, id)!
 }
 
 export function createJobConversation(
@@ -185,6 +246,39 @@ export function findConversationByHermesJobId(
     .get(hermesJobId.trim()) as ConversationRow | undefined
 }
 
+export const DEFAULT_RECENT_MODELS_LIMIT = 8
+
+export function listRecentModelsForUser(
+  db: Database.Database,
+  userId: string,
+  limit: number = DEFAULT_RECENT_MODELS_LIMIT,
+): Array<{ model: string; provider: string }> {
+  const rows = db
+    .prepare(`
+      SELECT model, provider
+      FROM conversations
+      WHERE user_id = ?
+        AND kind = 'regular'
+      ORDER BY updated_at DESC, id DESC
+    `)
+    .all(userId) as Array<{ model: string; provider: string }>
+
+  const recents: Array<{ model: string; provider: string }> = []
+  const seen = new Set<string>()
+  for (const row of rows) {
+    const key = `${row.model}\0${row.provider}`
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    recents.push({ model: row.model, provider: row.provider })
+    if (recents.length >= limit) {
+      break
+    }
+  }
+  return recents
+}
+
 export function listConversations(db: Database.Database, userId: string): ConversationRow[] {
   return db
     .prepare(`
@@ -203,12 +297,11 @@ export function listConversationsPage(
   anchors: ListPageAnchors = {},
   filter: ListConversationsFilter = {},
 ): ConversationPage | null {
-  const kindClause = filter.kind ? 'AND kind = ?' : ''
-  const kindParams = filter.kind ? [filter.kind] : []
+  const { clause, params } = conversationFilterSql(filter)
 
   if (anchors.before) {
     const cursor = getConversationForUser(db, userId, anchors.before)
-    if (!cursor || (filter.kind && cursor.kind !== filter.kind)) {
+    if (!cursor || !conversationMatchesFilter(cursor, filter)) {
       return null
     }
 
@@ -217,7 +310,7 @@ export function listConversationsPage(
         SELECT ${CONVERSATION_COLUMNS}
         FROM conversations
         WHERE user_id = ?
-          ${kindClause}
+          ${clause}
           AND (
             updated_at < ?
             OR (updated_at = ? AND id < ?)
@@ -225,14 +318,14 @@ export function listConversationsPage(
         ORDER BY updated_at DESC, id DESC
         LIMIT ?
       `)
-      .all(userId, ...kindParams, cursor.updated_at, cursor.updated_at, cursor.id, limit) as ConversationRow[]
+      .all(userId, ...params, cursor.updated_at, cursor.updated_at, cursor.id, limit) as ConversationRow[]
 
     return buildConversationPage(db, userId, conversations, filter)
   }
 
   if (anchors.after) {
     const cursor = getConversationForUser(db, userId, anchors.after)
-    if (!cursor || (filter.kind && cursor.kind !== filter.kind)) {
+    if (!cursor || !conversationMatchesFilter(cursor, filter)) {
       return null
     }
 
@@ -241,7 +334,7 @@ export function listConversationsPage(
         SELECT ${CONVERSATION_COLUMNS}
         FROM conversations
         WHERE user_id = ?
-          ${kindClause}
+          ${clause}
           AND (
             updated_at > ?
             OR (updated_at = ? AND id > ?)
@@ -249,7 +342,7 @@ export function listConversationsPage(
         ORDER BY updated_at ASC, id ASC
         LIMIT ?
       `)
-      .all(userId, ...kindParams, cursor.updated_at, cursor.updated_at, cursor.id, limit) as ConversationRow[]
+      .all(userId, ...params, cursor.updated_at, cursor.updated_at, cursor.id, limit) as ConversationRow[]
 
     conversations.reverse()
     return buildConversationPage(db, userId, conversations, filter)
@@ -260,13 +353,29 @@ export function listConversationsPage(
       SELECT ${CONVERSATION_COLUMNS}
       FROM conversations
       WHERE user_id = ?
-        ${kindClause}
+        ${clause}
       ORDER BY updated_at DESC, id DESC
       LIMIT ?
     `)
-    .all(userId, ...kindParams, limit) as ConversationRow[]
+    .all(userId, ...params, limit) as ConversationRow[]
 
   return buildConversationPage(db, userId, conversations, filter)
+}
+
+export function getConversationBotSlug(
+  db: Database.Database,
+  conversationId: string,
+): string | undefined {
+  const row = db
+    .prepare(`
+      SELECT bots.slug AS slug
+      FROM conversations
+      LEFT JOIN bots ON bots.id = conversations.bot_id
+      WHERE conversations.id = ?
+    `)
+    .get(conversationId) as { slug: string | null } | undefined
+
+  return row?.slug ?? undefined
 }
 
 export function getConversationForUser(
@@ -408,6 +517,46 @@ export function deleteConversationForUser(
   return true
 }
 
+function defaultBotId(db: Database.Database): string {
+  const row = db
+    .prepare(`SELECT id FROM bots WHERE slug = ?`)
+    .get(DEFAULT_BOT_SLUG) as { id: string } | undefined
+  if (!row) {
+    throw new Error('default_bot_missing')
+  }
+  return row.id
+}
+
+function conversationFilterSql(filter: ListConversationsFilter): {
+  clause: string
+  params: string[]
+} {
+  const clauses: string[] = []
+  const params: string[] = []
+  if (filter.kind) {
+    clauses.push('AND kind = ?')
+    params.push(filter.kind)
+  }
+  if (filter.botId) {
+    clauses.push('AND bot_id = ?')
+    params.push(filter.botId)
+  }
+  return { clause: clauses.join(' '), params }
+}
+
+function conversationMatchesFilter(
+  conversation: ConversationRow,
+  filter: ListConversationsFilter,
+): boolean {
+  if (filter.kind && conversation.kind !== filter.kind) {
+    return false
+  }
+  if (filter.botId && conversation.bot_id !== filter.botId) {
+    return false
+  }
+  return true
+}
+
 function buildConversationPage(
   db: Database.Database,
   userId: string,
@@ -422,8 +571,7 @@ function buildConversationPage(
     }
   }
 
-  const kindClause = filter.kind ? 'AND kind = ?' : ''
-  const kindParams = filter.kind ? [filter.kind] : []
+  const { clause, params } = conversationFilterSql(filter)
 
   const first = conversations[0]!
   const last = conversations[conversations.length - 1]!
@@ -433,28 +581,28 @@ function buildConversationPage(
       SELECT 1
       FROM conversations
       WHERE user_id = ?
-        ${kindClause}
+        ${clause}
         AND (
           updated_at > ?
           OR (updated_at = ? AND id > ?)
         )
       LIMIT 1
     `)
-    .get(userId, ...kindParams, first.updated_at, first.updated_at, first.id) as { 1: number } | undefined
+    .get(userId, ...params, first.updated_at, first.updated_at, first.id) as { 1: number } | undefined
 
   const hasOlder = db
     .prepare(`
       SELECT 1
       FROM conversations
       WHERE user_id = ?
-        ${kindClause}
+        ${clause}
         AND (
           updated_at < ?
           OR (updated_at = ? AND id < ?)
         )
       LIMIT 1
     `)
-    .get(userId, ...kindParams, last.updated_at, last.updated_at, last.id) as { 1: number } | undefined
+    .get(userId, ...params, last.updated_at, last.updated_at, last.id) as { 1: number } | undefined
 
   return {
     conversations,

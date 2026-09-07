@@ -33,6 +33,7 @@ function conversationPayload(conversationId: string) {
     updated_at: '2026-01-01T00:00:00.000Z',
     latest_message_id: null,
     latest_message_created_at: null,
+    bot_id: null,
   }
 }
 

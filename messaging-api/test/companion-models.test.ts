@@ -3,6 +3,7 @@ import {
   assertCuratedModel,
   COMPANION_DEFAULT_MODEL,
   COMPANION_DEFAULT_PROVIDER,
+  curatedModelOrFallback,
   DEFAULT_COMPANION_MODELS,
   modelDisplayName,
   parseCompanionModelsJson,
@@ -44,6 +45,21 @@ describe('companion-models', () => {
     expect(modelDisplayName(DEFAULT_COMPANION_MODELS, 'unknown-model', 'xai-oauth')).toBe(
       'unknown-model',
     )
+  })
+
+  it('curatedModelOrFallback returns catalog rows and a display fallback', () => {
+    expect(
+      curatedModelOrFallback(
+        DEFAULT_COMPANION_MODELS,
+        COMPANION_DEFAULT_MODEL,
+        COMPANION_DEFAULT_PROVIDER,
+      ),
+    ).toEqual(DEFAULT_COMPANION_MODELS[0])
+    expect(curatedModelOrFallback(DEFAULT_COMPANION_MODELS, 'grok-4.5', 'xai-oauth')).toEqual({
+      model: 'grok-4.5',
+      provider: 'xai-oauth',
+      display: 'grok-4.5',
+    })
   })
 
   it('assertCuratedModel accepts known pairs and rejects unknown pairs', () => {

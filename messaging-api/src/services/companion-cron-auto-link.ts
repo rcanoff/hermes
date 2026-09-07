@@ -5,7 +5,8 @@ import {
   getConversationForUser,
   linkJobConversation,
 } from '../db/repos/conversations.js'
-import { insertMessage } from '../db/repos/messages.js'
+import { getMessageById, insertMessage } from '../db/repos/messages.js'
+import { enrichMessageWithAttachments } from '../lib/attachment-serializer.js'
 import { companionCronModelPatch } from '../lib/companion-cron-model.js'
 import { companionCronSkillsPatch } from '../lib/companion-cron-skills.js'
 import {
@@ -128,22 +129,18 @@ function linkCompanionCronJob(
         content: seedContent,
       })
 
-      const message = input.db
-        .prepare(`
-          SELECT id, conversation_id, role, content, created_at
-          FROM messages
-          WHERE id = ?
-        `)
-        .get(messageId) as {
-        id: string
-        conversation_id: string
-        role: 'user' | 'assistant'
-        content: string
-        created_at: string
+      const message = getMessageById(input.db, messageId)
+      if (!message) {
+        throw new Error('message_not_found')
       }
 
       emitAccountConversationUpsert(input.db, input.userId, conversationId)
-      emitConversationMessageUpsert(input.db, input.userId, conversationId, message)
+      emitConversationMessageUpsert(
+        input.db,
+        input.userId,
+        conversationId,
+        enrichMessageWithAttachments(input.db, message),
+      )
 
       return conversationId
     })()

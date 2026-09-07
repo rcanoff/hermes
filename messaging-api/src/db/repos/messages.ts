@@ -2,10 +2,17 @@ import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { touchConversationUpdatedAt, type ListPageAnchors } from './conversations.js'
 
+export const MESSAGE_KINDS = ['chat', 'bot_sent', 'bot_reply'] as const
+export type MessageKind = (typeof MESSAGE_KINDS)[number]
+
 export interface InsertMessageInput {
   conversationId: string
   role: 'user' | 'assistant'
   content: string
+  kind?: MessageKind
+  fromBotId?: string | null
+  toBotId?: string | null
+  delegationId?: string | null
 }
 
 export interface MessageRow {
@@ -14,6 +21,10 @@ export interface MessageRow {
   role: 'user' | 'assistant'
   content: string
   created_at: string
+  kind: MessageKind
+  from_bot_id: string | null
+  to_bot_id: string | null
+  delegation_id: string | null
 }
 
 export interface MessagePage {
@@ -28,6 +39,10 @@ interface MessageCursorRow extends MessageRow {
 
 export const DUPLICATE_MESSAGE_WINDOW_SECONDS = 60
 
+export const MESSAGE_COLUMNS = `
+  id, conversation_id, role, content, created_at, kind, from_bot_id, to_bot_id, delegation_id
+`
+
 export function findRecentDuplicateUserMessage(
   db: Database.Database,
   conversationId: string,
@@ -36,7 +51,7 @@ export function findRecentDuplicateUserMessage(
 ): MessageRow | undefined {
   return db
     .prepare(`
-      SELECT id, conversation_id, role, content, created_at
+      SELECT ${MESSAGE_COLUMNS}
       FROM messages
       WHERE conversation_id = ?
         AND role = 'user'
@@ -51,9 +66,20 @@ export function findRecentDuplicateUserMessage(
 export function insertMessage(db: Database.Database, input: InsertMessageInput): string {
   const id = randomUUID()
   db.prepare(`
-    INSERT INTO messages (id, conversation_id, role, content)
-    VALUES (?, ?, ?, ?)
-  `).run(id, input.conversationId, input.role, input.content)
+    INSERT INTO messages (
+      id, conversation_id, role, content, kind, from_bot_id, to_bot_id, delegation_id
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    input.conversationId,
+    input.role,
+    input.content,
+    input.kind ?? 'chat',
+    input.fromBotId ?? null,
+    input.toBotId ?? null,
+    input.delegationId ?? null,
+  )
   touchConversationUpdatedAt(db, input.conversationId)
   return id
 }
@@ -61,7 +87,7 @@ export function insertMessage(db: Database.Database, input: InsertMessageInput):
 export function listMessages(db: Database.Database, conversationId: string): MessageRow[] {
   return db
     .prepare(`
-      SELECT id, conversation_id, role, content, created_at
+      SELECT ${MESSAGE_COLUMNS}
       FROM messages
       WHERE conversation_id = ?
       ORDER BY created_at ASC, rowid ASC
@@ -80,7 +106,7 @@ export function listRecentMessages(
 
   const rows = db
     .prepare(`
-      SELECT id, conversation_id, role, content, created_at
+      SELECT ${MESSAGE_COLUMNS}
       FROM messages
       WHERE conversation_id = ?
       ORDER BY created_at DESC, rowid DESC
@@ -105,7 +131,7 @@ export function listMessagesPage(
 
     const messages = db
       .prepare(`
-        SELECT id, conversation_id, role, content, created_at
+        SELECT ${MESSAGE_COLUMNS}
         FROM messages
         WHERE conversation_id = ?
           AND (
@@ -129,7 +155,7 @@ export function listMessagesPage(
 
     const messages = db
       .prepare(`
-        SELECT id, conversation_id, role, content, created_at
+        SELECT ${MESSAGE_COLUMNS}
         FROM messages
         WHERE conversation_id = ?
           AND (
@@ -146,7 +172,7 @@ export function listMessagesPage(
 
   const messages = db
     .prepare(`
-      SELECT id, conversation_id, role, content, created_at
+      SELECT ${MESSAGE_COLUMNS}
       FROM messages
       WHERE conversation_id = ?
       ORDER BY created_at DESC, rowid DESC
@@ -165,11 +191,21 @@ export function getMessage(
 ): MessageRow | undefined {
   return db
     .prepare(`
-      SELECT id, conversation_id, role, content, created_at
+      SELECT ${MESSAGE_COLUMNS}
       FROM messages
       WHERE conversation_id = ? AND id = ?
     `)
     .get(conversationId, messageId) as MessageRow | undefined
+}
+
+export function getMessageById(db: Database.Database, messageId: string): MessageRow | undefined {
+  return db
+    .prepare(`
+      SELECT ${MESSAGE_COLUMNS}
+      FROM messages
+      WHERE id = ?
+    `)
+    .get(messageId) as MessageRow | undefined
 }
 
 export function updateMessageContent(
@@ -202,7 +238,7 @@ function getMessageCursor(
 ): MessageCursorRow | undefined {
   return db
     .prepare(`
-      SELECT rowid, id, conversation_id, role, content, created_at
+      SELECT rowid, ${MESSAGE_COLUMNS}
       FROM messages
       WHERE conversation_id = ? AND id = ?
     `)
