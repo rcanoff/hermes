@@ -266,7 +266,7 @@ function createMcpServer(toolHandlers: McpToolHandlers): McpServer {
     'message_teammate',
     {
       description:
-        'Ask a teammate bot to handle a request. Only the main assistant may call this. The user already sees the send and reply in this chat.',
+        'Ask a teammate bot to handle a request. Any bot may call this (not yourself). The user already sees the send and reply in this chat.',
       inputSchema: {
         username: z.string().describe('Companion account username'),
         name: z.string().describe('Teammate display name or slug'),

@@ -17,7 +17,12 @@ export const SET_MY_RESPONSIBILITIES_ONBOARDING_INSTRUCTION = [
 export const MESSAGE_TEAMMATE_ROSTER_INSTRUCTION = [
   'To ask a teammate, call MCP tool message_teammate with their name and your request.',
   "The user already sees that send and their reply in this chat. Do not paste the teammate's full reply; one short wrap-up is enough.",
-  'Only the main assistant may call this tool.',
+  "Any bot may call this tool with a teammate's name. Do not message yourself.",
+].join('\n')
+
+export const MESSAGE_TEAMMATE_MUST_HANDOFF_INSTRUCTION = [
+  "If a teammate's jobs match the user's request, you MUST call message_teammate with their name and the request. Do not do that job yourself — no vault, notes, memory, or terminal for their jobs.",
+  'If message_teammate is not in your current tool list, call tool_search with query "message_teammate" then call it.',
 ].join('\n')
 
 export function buildBotRosterPrompt(
@@ -48,6 +53,10 @@ export function buildBotRosterPrompt(
 
   lines.push('')
   lines.push(MESSAGE_TEAMMATE_ROSTER_INSTRUCTION)
+  if (needsMustHandoff(current, teammates)) {
+    lines.push('')
+    lines.push(MESSAGE_TEAMMATE_MUST_HANDOFF_INSTRUCTION)
+  }
 
   return lines.join('\n')
 }
@@ -65,6 +74,16 @@ function jobsLine(bot: RosterBot, isSelf: boolean): string {
 
 function needsOnboarding(bot: RosterBot): boolean {
   return bot.is_default !== 1 && bot.responsibilities.trim() === ''
+}
+
+function needsMustHandoff(
+  current: RosterBot,
+  teammates: readonly RosterBot[],
+): boolean {
+  return (
+    current.is_default === 1 &&
+    teammates.some((bot) => bot.responsibilities.trim() !== '')
+  )
 }
 
 function rosterLabel(bot: RosterBot): string {

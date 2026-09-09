@@ -10,6 +10,7 @@ import {
 import { initSchema } from '../src/db/schema.js'
 import {
   buildBotRosterPrompt,
+  MESSAGE_TEAMMATE_MUST_HANDOFF_INSTRUCTION,
   MESSAGE_TEAMMATE_ROSTER_INSTRUCTION,
   ONBOARDING_JOBS_PLACEHOLDER,
   SET_MY_RESPONSIBILITIES_ONBOARDING_INSTRUCTION,
@@ -116,6 +117,8 @@ describe('buildBotRosterPrompt', () => {
         `- Travel: ${ONBOARDING_JOBS_PLACEHOLDER}`,
         '',
         MESSAGE_TEAMMATE_ROSTER_INSTRUCTION,
+        '',
+        MESSAGE_TEAMMATE_MUST_HANDOFF_INSTRUCTION,
       ].join('\n'),
     )
   })
@@ -142,6 +145,32 @@ describe('buildBotRosterPrompt', () => {
     const prompt = buildBotRosterPrompt(team, 'default')
     expect(prompt).toContain('message_teammate')
     expect(prompt).toContain(MESSAGE_TEAMMATE_ROSTER_INSTRUCTION)
+    expect(MESSAGE_TEAMMATE_ROSTER_INSTRUCTION).toContain("Any bot may call this tool")
+    expect(MESSAGE_TEAMMATE_ROSTER_INSTRUCTION).not.toContain('Only the main assistant')
+  })
+
+  it('requires the default bot to hand off when a teammate has jobs', () => {
+    const prompt = buildBotRosterPrompt(seededTeam, 'default')
+    expect(prompt).toContain(MESSAGE_TEAMMATE_ROSTER_INSTRUCTION)
+    expect(prompt).toContain(MESSAGE_TEAMMATE_MUST_HANDOFF_INSTRUCTION)
+    expect(prompt).toContain('tool_search')
+    expect(prompt).toContain('message_teammate')
+  })
+
+  it('does not require MUST handoff when teammate jobs are empty', () => {
+    const prompt = buildBotRosterPrompt(team, 'default')
+    expect(prompt).toContain(MESSAGE_TEAMMATE_ROSTER_INSTRUCTION)
+    expect(prompt).not.toContain(MESSAGE_TEAMMATE_MUST_HANDOFF_INSTRUCTION)
+    expect(prompt).not.toContain('you MUST call message_teammate')
+    expect(prompt).not.toContain('tool_search')
+  })
+
+  it('does not require MUST handoff on a specialist roster', () => {
+    const prompt = buildBotRosterPrompt(seededTeam, 'patrik')
+    expect(prompt).toContain(MESSAGE_TEAMMATE_ROSTER_INSTRUCTION)
+    expect(prompt).not.toContain(MESSAGE_TEAMMATE_MUST_HANDOFF_INSTRUCTION)
+    expect(prompt).not.toContain('you MUST call message_teammate')
+    expect(prompt).not.toContain('tool_search')
   })
 })
 

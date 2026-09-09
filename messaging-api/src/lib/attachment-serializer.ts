@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import { getBotsByIds, type BotRow } from '../db/repos/bots.js'
+import { normalizeBotIcon } from './bot-appearance.js'
 import {
   listAttachmentsForMessage,
   listAttachmentsForMessages,
@@ -55,7 +56,7 @@ export function toBotSummary(row: BotRow): BotSummary {
   return {
     id: row.id,
     name: row.name,
-    icon: row.icon,
+    icon: normalizeBotIcon(row.icon),
     color: row.color,
   }
 }

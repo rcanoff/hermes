@@ -9,7 +9,11 @@ import {
 import { insertMessage, listMessages } from '../src/db/repos/messages.js'
 import { createRun } from '../src/db/repos/runs.js'
 import { initSchema } from '../src/db/schema.js'
-import { messageTeammate } from '../src/services/bot-delegate.js'
+import {
+  MESSAGE_TEAMMATE_MAX_DEPTH,
+  messageTeammate,
+  messageTeammateDepth,
+} from '../src/services/bot-delegate.js'
 import { StreamHub, type SessionStreamEvent } from '../src/streams/hub.js'
 import { FakeHermesClient } from './helpers/hermes.js'
 
@@ -151,23 +155,91 @@ describe('messageTeammate', () => {
     expect(result.to).toBe('Travel')
   })
 
-  it('rejects a non-default caller', async () => {
+  it('lets a non-default bot message Hermes; copies appear on both threads', async () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedUser(db)
+    const hermes = getBotBySlug(db, 'default')!
     const travel = seedTravel(db)
-    seedCallerTurn(db, travel.id)
+    const callerId = seedCallerTurn(db, travel.id)
 
-    await expect(
-      messageTeammate({
-        db,
-        hermesClient: new FakeHermesClient(),
-        hub: new StreamHub(),
-        username: 'operator',
-        name: 'Hermes',
-        text: 'Help',
-      }),
-    ).rejects.toThrow('only the main assistant can message teammates')
+    const hermesClient = new FakeHermesClient()
+    hermesClient.pushAnswerToken('I can help with that.')
+    hermesClient.pushDone()
+    hermesClient.closeWithoutDone()
+
+    const hub = new StreamHub()
+    hub.registerUserSession('u1', 'sess-1')
+    const events: SessionStreamEvent[] = []
+    hub.subscribeSession('sess-1', (event) => events.push(event))
+
+    const result = await messageTeammate({
+      db,
+      hermesClient,
+      hub,
+      username: 'operator',
+      name: 'Hermes',
+      text: 'Help',
+    })
+
+    expect(result).toEqual({
+      ok: true,
+      from: 'Travel',
+      to: 'Hermes',
+      reply: 'I can help with that.',
+    })
+
+    const callerMessages = listMessages(db, callerId)
+    expect(callerMessages.map((message) => message.kind)).toEqual(['chat', 'bot_sent', 'bot_reply'])
+    expect(callerMessages[1]).toMatchObject({
+      role: 'assistant',
+      kind: 'bot_sent',
+      content: 'Help',
+      from_bot_id: travel.id,
+      to_bot_id: hermes.id,
+    })
+    expect(callerMessages[2]).toMatchObject({
+      role: 'assistant',
+      kind: 'bot_reply',
+      content: 'I can help with that.',
+      from_bot_id: hermes.id,
+      to_bot_id: travel.id,
+      delegation_id: callerMessages[1]!.delegation_id,
+    })
+
+    const pair = findPeerConversation(db, 'u1', hermes.id, travel.id)
+    expect(pair).toMatchObject({
+      bot_id: hermes.id,
+      peer_bot_id: travel.id,
+      title: 'From Travel',
+    })
+    const targetMessages = listMessages(db, pair!.id)
+    expect(targetMessages.map((message) => ({ kind: message.kind, role: message.role }))).toEqual([
+      { kind: 'bot_sent', role: 'assistant' },
+      { kind: 'chat', role: 'assistant' },
+    ])
+    expect(targetMessages[0]).toMatchObject({
+      content: 'Help',
+      from_bot_id: travel.id,
+      to_bot_id: hermes.id,
+      delegation_id: callerMessages[1]!.delegation_id,
+    })
+    expect(targetMessages[1]).toMatchObject({
+      content: 'I can help with that.',
+    })
+
+    const promptUser = hermesClient.requests[0]?.messages.find((message) => message.role === 'user')
+    expect(promptUser?.content).toBe('Travel (teammate) asks: Help')
+    expect(hermesClient.requests[0]?.profileSlug).toBeUndefined()
+
+    const callerUpserts = events.filter(
+      (event) =>
+        event.event === 'message_upsert' && event.data.conversationId === callerId,
+    )
+    expect(callerUpserts.map((event) => event.data.message.kind)).toEqual(['bot_sent', 'bot_reply'])
+    expect(events.some((event) => event.event === 'tooling' && event.data.tool === 'message_teammate')).toBe(
+      true,
+    )
   })
 
   it('rejects an unknown teammate', async () => {
@@ -230,6 +302,27 @@ describe('messageTeammate', () => {
         text: 'Help',
       }),
     ).rejects.toThrow('No running turn to delegate from')
+  })
+
+  it('rejects nested depth over 3', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedUser(db)
+    seedTravel(db)
+    seedCallerTurn(db)
+
+    await expect(
+      messageTeammateDepth.run(MESSAGE_TEAMMATE_MAX_DEPTH, () =>
+        messageTeammate({
+          db,
+          hermesClient: new FakeHermesClient(),
+          hub: new StreamHub(),
+          username: 'operator',
+          name: 'Travel',
+          text: 'Help',
+        }),
+      ),
+    ).rejects.toThrow('message_teammate nested too deep')
   })
 
   it('rejects messaging self', async () => {

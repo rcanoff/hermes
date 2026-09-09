@@ -66,7 +66,7 @@ describe('/bots', () => {
       slug: 'default',
       name: 'Hermes',
       is_default: true,
-      icon: 'person',
+      icon: 'message',
       color: 'blue',
       notifications_enabled: true,
       responsibilities: DEFAULT_BOT_RESPONSIBILITIES,
@@ -93,7 +93,7 @@ describe('/bots', () => {
       role: 'Finds flights, bookings, and tickets.',
       responsibilities: '',
       is_default: false,
-      icon: 'person',
+      icon: 'message',
       color: 'blue',
       notifications_enabled: true,
     })
@@ -208,16 +208,18 @@ describe('/bots', () => {
     expect(response.statusCode).toBe(401)
   })
 
-  it('POST with invalid icon returns 400 invalid_request', async () => {
-    const response = await app!.inject({
-      method: 'POST',
-      url: '/bots',
-      headers: authHeaders(),
-      payload: { name: 'Travel', role: 'Flights', icon: 'nope' },
-    })
+  it('POST with invalid or retired icon returns 400 invalid_request', async () => {
+    for (const icon of ['nope', 'person', 'briefcase']) {
+      const response = await app!.inject({
+        method: 'POST',
+        url: '/bots',
+        headers: authHeaders(),
+        payload: { name: 'Travel', role: 'Flights', icon },
+      })
 
-    expect(response.statusCode).toBe(400)
-    expect(response.json()).toEqual({ error: 'invalid_request' })
+      expect(response.statusCode).toBe(400)
+      expect(response.json()).toEqual({ error: 'invalid_request' })
+    }
   })
 
   it('POST with icon and color persists them', async () => {
@@ -241,7 +243,7 @@ describe('/bots', () => {
     })
   })
 
-  it('PATCH invalid icon returns 400 invalid_request', async () => {
+  it('PATCH invalid or retired icon returns 400 invalid_request', async () => {
     const created = await app!.inject({
       method: 'POST',
       url: '/bots',
@@ -250,15 +252,17 @@ describe('/bots', () => {
     })
     const bot = created.json() as BotBody
 
-    const response = await app!.inject({
-      method: 'PATCH',
-      url: `/bots/${bot.id}`,
-      headers: authHeaders(),
-      payload: { icon: 'nope' },
-    })
+    for (const icon of ['nope', 'person', 'heart']) {
+      const response = await app!.inject({
+        method: 'PATCH',
+        url: `/bots/${bot.id}`,
+        headers: authHeaders(),
+        payload: { icon },
+      })
 
-    expect(response.statusCode).toBe(400)
-    expect(response.json()).toEqual({ error: 'invalid_request' })
+      expect(response.statusCode).toBe(400)
+      expect(response.json()).toEqual({ error: 'invalid_request' })
+    }
   })
 
   it('PATCH icon and color updates appearance', async () => {
@@ -274,15 +278,50 @@ describe('/bots', () => {
       method: 'PATCH',
       url: `/bots/${bot.id}`,
       headers: authHeaders(),
-      payload: { icon: 'briefcase', color: 'orange' },
+      payload: { icon: 'bolt', color: 'orange' },
     })
 
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({
       id: bot.id,
-      icon: 'briefcase',
+      icon: 'bolt',
       color: 'orange',
     })
+  })
+
+  it('GET maps retired icons to message and keeps allowlisted icons', async () => {
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Travel', role: 'Flights' },
+    })
+    const bot = created.json() as BotBody
+
+    app!.db.prepare('UPDATE bots SET icon = ? WHERE id = ?').run('person', bot.id)
+    const retired = await app!.inject({
+      method: 'GET',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+    expect(retired.statusCode).toBe(200)
+    expect(retired.json()).toMatchObject({ id: bot.id, icon: 'message' })
+
+    const listed = await app!.inject({
+      method: 'GET',
+      url: '/bots',
+      headers: authHeaders(),
+    })
+    const listedBot = (listed.json() as { bots: BotBody[] }).bots.find((row) => row.id === bot.id)
+    expect(listedBot?.icon).toBe('message')
+
+    app!.db.prepare('UPDATE bots SET icon = ? WHERE id = ?').run('brain', bot.id)
+    const kept = await app!.inject({
+      method: 'GET',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+    expect(kept.json()).toMatchObject({ id: bot.id, icon: 'brain' })
   })
 
   it('PATCH writes SOUL.md for a non-default bot', async () => {

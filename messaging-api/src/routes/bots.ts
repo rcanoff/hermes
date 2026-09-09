@@ -19,6 +19,7 @@ import {
   DEFAULT_BOT_ICON,
   isBotColor,
   isBotIcon,
+  normalizeBotIcon,
   type BotColor,
   type BotIcon,
 } from '../lib/bot-appearance.js'
@@ -238,7 +239,7 @@ function toBotResponse(row: BotRow, hermesHome: string, notificationsEnabled: bo
     role: row.role,
     soul: soulForResponse(row, hermesHome),
     responsibilities: row.responsibilities,
-    icon: row.icon,
+    icon: normalizeBotIcon(row.icon),
     color: row.color,
     notifications_enabled: notificationsEnabled,
     is_default: row.is_default === 1,

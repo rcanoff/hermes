@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { getBotById, getBotBySlug, listBotsForRoster, type BotRow } from '../db/repos/bots.js'
@@ -41,6 +42,9 @@ export interface MessageTeammateResult {
   reply: string
 }
 
+export const MESSAGE_TEAMMATE_MAX_DEPTH = 3
+export const messageTeammateDepth = new AsyncLocalStorage<number>()
+
 export async function messageTeammate(
   input: MessageTeammateInput,
 ): Promise<MessageTeammateResult> {
@@ -68,11 +72,16 @@ export async function messageTeammate(
   const callerBot = callerConversation.bot_id
     ? getBotById(input.db, callerConversation.bot_id)
     : undefined
-  if (!callerBot || callerBot.is_default !== 1) {
-    throw new Error('only the main assistant can message teammates')
+  if (!callerBot) {
+    throw new Error('Cannot message teammates without a caller bot')
   }
   if (targetBot.id === callerBot.id) {
     throw new Error('Cannot message yourself')
+  }
+
+  const depth = messageTeammateDepth.getStore() ?? 0
+  if (depth >= MESSAGE_TEAMMATE_MAX_DEPTH) {
+    throw new Error('message_teammate nested too deep')
   }
 
   const catalog = input.companionModels ?? DEFAULT_COMPANION_MODELS
@@ -118,21 +127,23 @@ export async function messageTeammate(
     catalog,
   })
 
-  const assistantMessageId = await executeAssistantRun({
-    db: input.db,
-    hermesClient: input.hermesClient,
-    hub: input.hub,
-    conversationId: targetConversation.id,
-    hermesSessionId: targetConversation.hermes_session_id,
-    userMessageId: targetTriggerId,
-    companionUsername: user.username,
-    bootstrapPrompt: targetConversation.bootstrap_prompt,
-    userId: user.id,
-    originSessionId: callerRun.origin_session_id,
-    attachmentsDir: input.attachmentsDir,
-    visionHistoryMaxBytes: input.visionHistoryMaxBytes,
-    companionModels: catalog,
-  })
+  const assistantMessageId = await messageTeammateDepth.run(depth + 1, () =>
+    executeAssistantRun({
+      db: input.db,
+      hermesClient: input.hermesClient,
+      hub: input.hub,
+      conversationId: targetConversation.id,
+      hermesSessionId: targetConversation.hermes_session_id,
+      userMessageId: targetTriggerId,
+      companionUsername: user.username,
+      bootstrapPrompt: targetConversation.bootstrap_prompt,
+      userId: user.id,
+      originSessionId: callerRun.origin_session_id,
+      attachmentsDir: input.attachmentsDir,
+      visionHistoryMaxBytes: input.visionHistoryMaxBytes,
+      companionModels: catalog,
+    }),
+  )
 
   const assistant = getMessage(input.db, targetConversation.id, assistantMessageId)
   if (!assistant?.content.trim()) {

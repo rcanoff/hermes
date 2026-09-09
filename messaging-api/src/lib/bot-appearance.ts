@@ -1,17 +1,4 @@
-export const BOT_ICONS = [
-  'person',
-  'brain',
-  'message',
-  'map',
-  'heart',
-  'star',
-  'leaf',
-  'bolt',
-  'moon',
-  'sun',
-  'briefcase',
-  'book',
-] as const
+export const BOT_ICONS = ['brain', 'message', 'map', 'bolt'] as const
 
 export const BOT_COLORS = [
   'blue',
@@ -26,7 +13,7 @@ export const BOT_COLORS = [
   'gray',
 ] as const
 
-export const DEFAULT_BOT_ICON: BotIcon = 'person'
+export const DEFAULT_BOT_ICON: BotIcon = 'message'
 export const DEFAULT_BOT_COLOR: BotColor = 'blue'
 
 export type BotIcon = (typeof BOT_ICONS)[number]
@@ -41,4 +28,8 @@ export function isBotIcon(value: unknown): value is BotIcon {
 
 export function isBotColor(value: unknown): value is BotColor {
   return typeof value === 'string' && BOT_COLOR_SET.has(value)
+}
+
+export function normalizeBotIcon(value: unknown): BotIcon {
+  return isBotIcon(value) ? value : DEFAULT_BOT_ICON
 }

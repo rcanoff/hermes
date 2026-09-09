@@ -472,6 +472,14 @@ Hermes keeps a centralized memory of personal records — currently trips — in
 Obsidian-compatible markdown vault at `data/vault/` (mounted in the container at
 `/opt/data/vault`, resolved by skills via `OBSIDIAN_VAULT_PATH`).
 
+On macOS, set `OBSIDIAN_VAULT_HOST_PATH` to the iCloud Hermes folder and keep
+`data/vault` as a **real empty directory** (the nested bind mount point). If
+`data/vault` is a symlink into iCloud, Docker follows it: inside the container
+`/opt/data/vault` stays a symlink, `realpath` leaves `/opt/data`, and
+`write_file`/`patch` are denied (`HERMES_WRITE_SAFE_ROOT=/opt/data`). Do not
+copy the vault into `data/vault`; live notes stay in iCloud. After replacing a
+symlink with a directory, recreate `hermes-gateway` so the nested bind applies.
+
 One note per trip lives in `Trips/` (named `YYYY-MM Origin-Destination.md`) and holds
 canonical booking facts: trip span, flight numbers, confirmation codes, lodging and
 car rental references. Enriched detail (terminal, address, when to leave) lives on

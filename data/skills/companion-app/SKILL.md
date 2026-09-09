@@ -1,7 +1,7 @@
 ---
 name: companion-app
 description: REQUIRED entry point for Companion App replies. iOS bootstrap tells Hermes to load this skill first. Routes intents to reply, block, and data skills. Does not own fence syntax.
-version: 1.2.6
+version: 1.2.8
 author: Hermes Agent
 metadata:
   hermes:
@@ -27,7 +27,11 @@ Operator tasks (invites, password resets) use `companion-account-management` dir
 
 The roster lists each bot’s **jobs** (`responsibilities`), never soul.
 
-If a teammate’s jobs match the user’s request, the **main** assistant MUST call companion MCP `message_teammate` with their name and the request. Do not do that job yourself. Only main may call `message_teammate`.
+**Any** bot may call companion MCP `message_teammate` with a teammate’s name. Do not message yourself.
+
+If a teammate’s jobs match the user’s request, the **main** assistant MUST call `message_teammate` with their name and the request. Do not do that job yourself — no vault, notes, memory, or terminal for their jobs.
+
+If `message_teammate` is not in your current tool list, call `tool_search("message_teammate")` then call it.
 
 If your own jobs are not set yet, ask 2–3 short questions, then call `set_my_responsibilities`. Do not do specialist work until jobs are set.
 

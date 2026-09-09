@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import {
+  BOT_ICONS,
   DEFAULT_BOT_COLOR,
   DEFAULT_BOT_ICON,
 } from '../lib/bot-appearance.js'
@@ -270,7 +271,13 @@ function ensureBots(db: Database.Database): void {
     db.exec(`ALTER TABLE bots ADD COLUMN responsibilities TEXT NOT NULL DEFAULT ''`)
   }
 
+  rewriteRetiredBotIcons(db)
   seedKnownBotResponsibilities(db)
+}
+
+function rewriteRetiredBotIcons(db: Database.Database): void {
+  const allowed = BOT_ICONS.map((icon) => `'${icon}'`).join(', ')
+  db.exec(`UPDATE bots SET icon = '${DEFAULT_BOT_ICON}' WHERE icon NOT IN (${allowed})`)
 }
 
 function ensureUserBotPreferences(db: Database.Database): void {

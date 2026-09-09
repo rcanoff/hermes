@@ -128,7 +128,43 @@ describe('schema', () => {
     const row = db
       .prepare('SELECT icon, color FROM bots WHERE id = ?')
       .get('b1') as { icon: string; color: string }
-    expect(row).toEqual({ icon: 'person', color: 'blue' })
+    expect(row).toEqual({ icon: 'message', color: 'blue' })
+  })
+
+  it('rewrites retired bot icons to message and keeps allowlisted icons', () => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(`
+      CREATE TABLE bots (
+        id TEXT PRIMARY KEY,
+        slug TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        soul TEXT NOT NULL,
+        icon TEXT NOT NULL DEFAULT 'person',
+        color TEXT NOT NULL DEFAULT 'blue',
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO bots (id, slug, name, role, soul, icon, is_default)
+      VALUES
+        ('b1', 'default', 'Hermes', 'Default', 'You are Hermes', 'person', 1),
+        ('b2', 'travel', 'Travel', 'Flights', 'You book trips.', 'map', 0),
+        ('b3', 'energy', 'Energy', 'Power', 'You track energy.', 'bolt', 0),
+        ('b4', 'old', 'Old', 'Retired', 'You used a retired icon.', 'briefcase', 0);
+    `)
+
+    initSchema(db)
+
+    const rows = db
+      .prepare('SELECT id, icon FROM bots ORDER BY id')
+      .all() as Array<{ id: string; icon: string }>
+    expect(rows).toEqual([
+      { id: 'b1', icon: 'message' },
+      { id: 'b2', icon: 'map' },
+      { id: 'b3', icon: 'bolt' },
+      { id: 'b4', icon: 'message' },
+    ])
   })
 
   it('adds responsibilities to legacy bots and seeds default plus Patrik', () => {
