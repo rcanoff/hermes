@@ -10,7 +10,7 @@ import {
   type ConversationRow,
 } from '../db/repos/conversations.js'
 import { resolveDefaultModel } from '../db/repos/settings.js'
-import { getBotById } from '../db/repos/bots.js'
+import { getBotById, normalizeBotRuntime } from '../db/repos/bots.js'
 import { assertCuratedModel } from '../lib/companion-models.js'
 import { validateBootstrap } from '../lib/bootstrap.js'
 import { getActiveRun } from '../db/repos/runs.js'
@@ -218,8 +218,8 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
         return toConversationResponse(result.conversation, app.companionModels)
       } catch (error) {
         if (error instanceof ModelChangeError) {
-          if (error.code === 'run_conflict') {
-            return reply.code(409).send({ error: 'run_conflict' })
+          if (error.code === 'run_conflict' || error.code === 'grok_runtime') {
+            return reply.code(409).send({ error: error.code })
           }
           return reply.code(400).send({ error: 'invalid_request' })
         }
@@ -289,6 +289,23 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
           'failed to remove Hermes cron job for deleted job conversation',
         )
         return reply.code(500).send({ error: 'processing_failed' })
+      }
+    }
+
+    if (existing.bot_id) {
+      const bot = getBotById(app.db, existing.bot_id)
+      if (bot && normalizeBotRuntime(bot.runtime) === 'grok') {
+        try {
+          await app.grokGatewayClient.deleteSession(conversationId)
+        } catch (error) {
+          app.log.warn(
+            {
+              err: error instanceof Error ? error.message : String(error),
+              conversationId,
+            },
+            'failed to delete grok gateway session',
+          )
+        }
       }
     }
 

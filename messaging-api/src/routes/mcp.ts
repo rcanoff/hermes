@@ -35,6 +35,8 @@ const mcpRoutes: FastifyPluginAsync = async (app) => {
     const toolHandlers = buildMcpToolHandlers(app.db, {
       inviteExpiryHours: app.inviteExpiryHours,
       hermesClient: app.hermesClient,
+      grokGatewayClient: app.grokGatewayClient,
+      hermesHome: app.hermesHome,
       hub: app.streamHub,
       companionModels: app.companionModels,
       attachmentsDir: app.attachmentsDir,

@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { listBotsForRoster } from '../db/repos/bots.js'
+import { getBotById, listBotsForRoster, normalizeBotRuntime } from '../db/repos/bots.js'
 import { listAttachmentsForMessages } from '../db/repos/message-attachments.js'
 import { botSummariesForMessages } from '../lib/attachment-serializer.js'
 import {
@@ -18,7 +18,7 @@ import type { HermesClient } from './hermes-client.js'
 import { buildHermesMessages } from './prompt-builder.js'
 import { scheduleConversationSessionWarmup } from './session-warmup.js'
 
-export type ModelChangeErrorCode = 'invalid_request' | 'run_conflict' | 'invalid_model'
+export type ModelChangeErrorCode = 'invalid_request' | 'run_conflict' | 'invalid_model' | 'grok_runtime'
 
 export class ModelChangeError extends Error {
   constructor(readonly code: ModelChangeErrorCode) {
@@ -116,6 +116,11 @@ export async function applyConversationModelChange(input: {
 
   if (input.conversation.kind === 'job') {
     throw new ModelChangeError('invalid_request')
+  }
+
+  const bot = input.conversation.bot_id ? getBotById(input.db, input.conversation.bot_id) : undefined
+  if (bot && normalizeBotRuntime(bot.runtime) === 'grok') {
+    throw new ModelChangeError('grok_runtime')
   }
 
   if (getActiveRun(input.db, input.conversation.id)) {

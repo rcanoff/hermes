@@ -37,6 +37,7 @@ import { createInviteRecord } from './invites.js'
 import { formatFreshness } from './freshness.js'
 import { messageTeammate, type MessageTeammateResult } from './bot-delegate.js'
 import type { CuratedModelEntry } from '../lib/companion-models.js'
+import type { GrokGatewayClient } from './grok-gateway-client.js'
 import type { HermesClient } from './hermes-client.js'
 import type { StreamHub } from '../streams/hub.js'
 
@@ -223,6 +224,8 @@ export function buildMcpToolHandlers(
   options: {
     inviteExpiryHours: number
     hermesClient: HermesClient
+    grokGatewayClient?: GrokGatewayClient
+    hermesHome?: string
     hub: StreamHub
     companionModels?: CuratedModelEntry[]
     attachmentsDir?: string
@@ -432,6 +435,8 @@ export function buildMcpToolHandlers(
       return messageTeammate({
         db,
         hermesClient: options.hermesClient,
+        grokGatewayClient: options.grokGatewayClient,
+        hermesHome: options.hermesHome,
         hub: options.hub,
         username: input.username,
         name: input.name,

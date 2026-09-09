@@ -1,7 +1,7 @@
 ---
 name: companion-replies
 description: Reply composition model for Companion App and related channels. Loaded via companion-app on iOS; delegate to block skills for maps, markdown, and links.
-version: 1.2.0
+version: 1.2.1
 author: Hermes Agent
 metadata:
   hermes:
@@ -26,6 +26,8 @@ Do not invent block syntax here. Load the block skill that matches what the repl
 - Do **not** use this skill for Telegram, CLI, or other Hermes platforms unless the user explicitly wants companion-style blocks there.
 
 ## Reply model
+
+Reply composition is **only** what the user should read — the final answer. Do not narrate tool use or write status preambles; the user already sees tools in the process list.
 
 A single reply may mix, in any order:
 
@@ -122,6 +124,7 @@ Optional: `companion-map-preview` for one shop if the user asks “nearest” an
 
 ## Do not
 
+- Narrate tool use or write status preambles (“I’ll pull”, “Loading …”, “Next I’ll”, “Pausing … now”) — the user already sees tools in the process list
 - Use markdown tables for listing-link dumps unless the user explicitly asks for a table
 - Reply with location or health data before loading this skill after a data fetch
 - Use Address/Coordinates/Accuracy/Updated format on Companion App — use `companion-map-preview` instead

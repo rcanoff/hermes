@@ -6,7 +6,7 @@ import {
   listAttachmentsForMessages,
   type AttachmentRow,
 } from '../db/repos/message-attachments.js'
-import type { MessageRow } from '../db/repos/messages.js'
+import type { MessageInput, MessageRow } from '../db/repos/messages.js'
 import type { MessageProcess } from '../db/repos/process.js'
 
 export interface AttachmentSummary {
@@ -29,12 +29,16 @@ export interface BotSummary {
   color: string
 }
 
-export type MessageWithAttachments = Omit<MessageRow, 'from_bot_id' | 'to_bot_id' | 'delegation_id'> & {
+export type MessageWithAttachments = Omit<
+  MessageRow,
+  'from_bot_id' | 'to_bot_id' | 'delegation_id' | 'input'
+> & {
   delegation_id?: string
   from_bot?: BotSummary
   to_bot?: BotSummary
   attachments?: AttachmentSummary[]
   process?: MessageProcess
+  input?: MessageInput
 }
 
 export function serializeAttachment(row: AttachmentRow): AttachmentSummary {
@@ -108,12 +112,14 @@ export function serializeMessage(
     to_bot: existingTo,
     attachments: _existingAttachments,
     delegation_id: delegationId,
+    input,
     ...rest
   } = row
   const serialized: MessageWithAttachments = {
     ...rest,
     kind: row.kind ?? 'chat',
     ...(delegationId ? { delegation_id: delegationId } : {}),
+    ...(input ? { input } : {}),
   }
 
   const fromBot = (fromBotId ? bots.get(fromBotId) : undefined) ?? existingFrom

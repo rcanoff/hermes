@@ -22,7 +22,11 @@ export const PATRIK_BOT_RESPONSIBILITIES =
   'Personal data: addresses, phone numbers, and things the user owns.'
 export const MAX_BOT_RESPONSIBILITIES_CHARS = 200
 
-const BOT_COLUMNS = `id, slug, name, role, soul, responsibilities, icon, color, is_default, created_at`
+export const BOT_RUNTIMES = ['hermes', 'grok'] as const
+export type BotRuntime = (typeof BOT_RUNTIMES)[number]
+export const DEFAULT_BOT_RUNTIME: BotRuntime = 'hermes'
+
+const BOT_COLUMNS = `id, slug, name, role, soul, responsibilities, icon, color, runtime, is_default, created_at`
 
 export interface BotRow {
   id: string
@@ -33,6 +37,7 @@ export interface BotRow {
   responsibilities: string
   icon: string
   color: string
+  runtime: BotRuntime
   is_default: number
   created_at: string
 }
@@ -51,7 +56,16 @@ export interface CreateBotInput {
   responsibilities?: string
   icon?: BotIcon
   color?: BotColor
+  runtime?: BotRuntime
   isDefault?: boolean
+}
+
+export function isBotRuntime(value: unknown): value is BotRuntime {
+  return value === 'hermes' || value === 'grok'
+}
+
+export function normalizeBotRuntime(value: string): BotRuntime {
+  return value === 'grok' ? 'grok' : 'hermes'
 }
 
 export function ensureDefaultBotRow(db: Database.Database, soul = DEFAULT_BOT_SOUL): BotRow {
@@ -97,9 +111,10 @@ export function seedDefaultBot(db: Database.Database, hermesHome: string): BotRo
 
 export function insertBot(db: Database.Database, input: CreateBotInput): BotRow {
   const id = randomUUID()
+  const runtime = input.runtime ?? DEFAULT_BOT_RUNTIME
   db.prepare(`
-    INSERT INTO bots (id, slug, name, role, soul, responsibilities, icon, color, is_default)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO bots (id, slug, name, role, soul, responsibilities, icon, color, runtime, is_default)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     input.slug,
@@ -109,6 +124,7 @@ export function insertBot(db: Database.Database, input: CreateBotInput): BotRow 
     input.responsibilities ?? '',
     input.icon ?? DEFAULT_BOT_ICON,
     input.color ?? DEFAULT_BOT_COLOR,
+    runtime,
     input.isDefault ? 1 : 0,
   )
 
@@ -144,6 +160,12 @@ export function getBotBySlug(db: Database.Database, slug: string): BotRow | unde
   return db
     .prepare(`SELECT ${BOT_COLUMNS} FROM bots WHERE slug = ?`)
     .get(slug) as BotRow | undefined
+}
+
+export function getGrokBot(db: Database.Database): BotRow | undefined {
+  return db
+    .prepare(`SELECT ${BOT_COLUMNS} FROM bots WHERE runtime = 'grok' LIMIT 1`)
+    .get() as BotRow | undefined
 }
 
 export function listBotsForRoster(db: Database.Database): BotRow[] {
@@ -334,6 +356,9 @@ export function listBotsPage(
 }
 
 export function soulForResponse(row: BotRow, hermesHome: string): string {
+  if (normalizeBotRuntime(row.runtime) === 'grok') {
+    return row.soul
+  }
   return readSoulFile(hermesHome, row.slug) ?? row.soul
 }
 

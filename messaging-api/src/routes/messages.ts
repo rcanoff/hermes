@@ -28,6 +28,7 @@ import {
   MessageRewindError,
   removeConversationMessagesFrom,
 } from '../services/conversation-message-rewind.js'
+import { GrokInputError, resolveGrokInput } from '../services/grok-input.js'
 import { executeAssistantRun } from '../services/run-executor.js'
 import { scheduleTitleGeneration } from '../services/title-generator.js'
 import { scheduleConversationSessionWarmup } from '../services/session-warmup.js'
@@ -225,6 +226,8 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       void executeAssistantRun({
         db: app.db,
         hermesClient: app.hermesClient,
+        grokGatewayClient: app.grokGatewayClient,
+        hermesHome: app.hermesHome,
         hub: app.streamHub,
         conversationId: conversation.id,
         hermesSessionId: conversation.hermes_session_id,
@@ -313,6 +316,8 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       void executeAssistantRun({
         db: app.db,
         hermesClient: app.hermesClient,
+        grokGatewayClient: app.grokGatewayClient,
+        hermesHome: app.hermesHome,
         hub: app.streamHub,
         conversationId: conversation.id,
         hermesSessionId: edited.hermesSessionId,
@@ -448,6 +453,52 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     },
   )
 
+  app.post(
+    '/conversations/:id/messages/:messageId/input',
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const { id, messageId } = request.params as { id: string; messageId: string }
+      const conversation = getOwnedConversation(app, request.userId, id)
+      if (!conversation) {
+        return reply.code(404).send({ error: 'not_found' })
+      }
+
+      const body = parseInputBody(request.body)
+      if (!body) {
+        return reply.code(400).send({ error: 'invalid_request' })
+      }
+
+      try {
+        await resolveGrokInput({
+          db: app.db,
+          hub: app.streamHub,
+          grokGatewayClient: app.grokGatewayClient,
+          userId: request.userId,
+          conversationId: conversation.id,
+          messageId,
+          action: body.action,
+          text: body.text,
+          companionModels: app.companionModels,
+        })
+        return reply.code(204).send()
+      } catch (error) {
+        if (error instanceof GrokInputError) {
+          if (error.code === 'not_found') {
+            return reply.code(404).send({ error: 'not_found' })
+          }
+          if (error.code === 'grok_unavailable') {
+            return reply.code(503).send({ error: 'grok_unavailable' })
+          }
+          if (error.code === 'invalid_request') {
+            return reply.code(400).send({ error: 'invalid_request' })
+          }
+          return reply.code(409).send({ error: error.code })
+        }
+        throw error
+      }
+    },
+  )
+
   app.get('/conversations/:id/stream', { preHandler: app.authenticate }, async (request, reply) => {
     const conversation = getOwnedConversation(app, request.userId, (request.params as { id: string }).id)
     if (!conversation) {
@@ -541,4 +592,18 @@ function normalizeAttachmentIds(value: string[] | undefined): string[] {
 function extractMessageText(body: MessageBody): string {
   const raw = typeof body.text === 'string' ? body.text : body.content
   return typeof raw === 'string' ? raw.trim() : ''
+}
+
+function parseInputBody(value: unknown): { action: string; text?: string } | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+  const body = value as { action?: unknown; text?: unknown }
+  if (typeof body.action !== 'string' || !body.action.trim()) {
+    return null
+  }
+  if (body.text !== undefined && typeof body.text !== 'string') {
+    return null
+  }
+  return { action: body.action.trim(), text: typeof body.text === 'string' ? body.text : undefined }
 }

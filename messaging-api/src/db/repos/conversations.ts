@@ -392,6 +392,19 @@ export function getConversationForUser(
     .get(userId, conversationId) as ConversationRow | undefined
 }
 
+export function getConversationById(
+  db: Database.Database,
+  conversationId: string,
+): ConversationRow | undefined {
+  return db
+    .prepare(`
+      SELECT ${CONVERSATION_COLUMNS}
+      FROM conversations
+      WHERE id = ?
+    `)
+    .get(conversationId) as ConversationRow | undefined
+}
+
 const MAX_CONVERSATION_TITLE_CHARS = 120
 
 export function normalizeConversationTitle(raw: string): string | null {

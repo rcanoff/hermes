@@ -18,6 +18,7 @@ export const MESSAGE_TEAMMATE_ROSTER_INSTRUCTION = [
   'To ask a teammate, call MCP tool message_teammate with their name and your request.',
   "The user already sees that send and their reply in this chat. Do not paste the teammate's full reply; one short wrap-up is enough.",
   "Any bot may call this tool with a teammate's name. Do not message yourself.",
+  'Do not narrate tool use in the reply. The user already sees tools in the process list. User-facing text is the final answer only.',
 ].join('\n')
 
 export const MESSAGE_TEAMMATE_MUST_HANDOFF_INSTRUCTION = [

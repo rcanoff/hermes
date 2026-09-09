@@ -49,6 +49,7 @@ export function readSoulFile(hermesHome: string, slug: string): string | null {
   }
 }
 
+/** Writes `$HERMES_HOME/profiles/<slug>/SOUL.md`. Callers must skip `runtime=grok`. */
 export function writeSoulFile(hermesHome: string, slug: string, soul: string): void {
   const dir = profileDir(hermesHome, slug)
   fs.mkdirSync(dir, { recursive: true })
@@ -59,6 +60,7 @@ export function defaultSoulFromRole(name: string, role: string): string {
   return `You are the ${name} assistant. ${role}`.trim()
 }
 
+/** Writes `profile.yaml` for Hermes multiplex profiles. Callers must skip `runtime=grok`. */
 export function writeProfileYaml(
   hermesHome: string,
   slug: string,
@@ -116,6 +118,7 @@ function isEnoent(error: unknown): boolean {
   )
 }
 
+/** Writes `$HERMES_HOME/profiles/<slug>/`. Callers must skip `runtime=grok`. */
 export function createBotProfile(input: {
   hermesHome: string
   slug: string
@@ -224,6 +227,7 @@ function unquoteEnvValue(value: string): string {
   return value
 }
 
+/** Removes `$HERMES_HOME/profiles/<slug>/`. Callers must skip `runtime=grok`. */
 export function deleteBotProfile(hermesHome: string, slug: string): void {
   if (slug === DEFAULT_BOT_SLUG) {
     return
@@ -231,6 +235,7 @@ export function deleteBotProfile(hermesHome: string, slug: string): void {
   fs.rmSync(profileDir(hermesHome, slug), { recursive: true, force: true })
 }
 
+/** Adds a honcho peer for a Hermes profile slug. Callers must skip `runtime=grok`. */
 export function addHonchoHost(hermesHome: string, slug: string): void {
   const honchoPath = path.join(hermesHome, HONCHO_CONFIG_NAME)
   if (!fs.existsSync(honchoPath)) {

@@ -76,6 +76,8 @@ describe('readConfig', () => {
       visionHistoryMaxBytes: 8_388_608,
       companionModels: DEFAULT_COMPANION_MODELS,
       hermesHome: '/opt/data',
+      grokGatewayUrl: '',
+      grokGatewayToken: '',
     })
   })
 

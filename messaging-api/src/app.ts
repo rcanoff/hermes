@@ -29,6 +29,7 @@ import pushRoutes from './routes/push.js'
 import { AddressEnrichmentQueue } from './services/address-enrichment.js'
 import { createApnsClient } from './services/apns-client.js'
 import { CronOutputBridge } from './services/cron-output-bridge.js'
+import { createGrokGatewayClient, type GrokGatewayClient } from './services/grok-gateway-client.js'
 import { OpenAiHermesClient } from './services/hermes-client.js'
 import { PushNotificationService } from './services/push-notifications.js'
 import { StreamHub } from './streams/hub.js'
@@ -42,6 +43,7 @@ declare module 'fastify' {
   interface FastifyInstance {
     db: Database.Database
     hermesClient: HermesClient
+    grokGatewayClient: GrokGatewayClient
     streamHub: StreamHub
     addressEnrichmentQueue: AddressEnrichmentQueueType
     companionMcpBearerToken: string
@@ -83,6 +85,11 @@ export function buildApp(options: AppOptions) {
         options.hermesApiKey,
         options.hermesStateDbPath,
       ),
+  )
+  app.decorate(
+    'grokGatewayClient',
+    options.grokGatewayClient ??
+      createGrokGatewayClient(options.grokGatewayUrl, options.grokGatewayToken),
   )
   app.decorate('streamHub', options.streamHub ?? new StreamHub())
   app.decorate('streamWaitMs', options.streamWaitMs ?? 30_000)

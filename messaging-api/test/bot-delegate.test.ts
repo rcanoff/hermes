@@ -15,7 +15,9 @@ import {
   messageTeammateDepth,
 } from '../src/services/bot-delegate.js'
 import { StreamHub, type SessionStreamEvent } from '../src/streams/hub.js'
+import { FakeGrokGatewayClient } from './helpers/grok-gateway.js'
 import { FakeHermesClient } from './helpers/hermes.js'
+import { resolveGrokInput } from '../src/services/grok-input.js'
 
 function seedUser(db: Database.Database) {
   db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash')`).run()
@@ -325,6 +327,123 @@ describe('messageTeammate', () => {
     ).rejects.toThrow('message_teammate nested too deep')
   })
 
+  it('routes Hermes→Grok through the gateway and copies pending_input with the same input.id', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedUser(db)
+    const hermes = getBotBySlug(db, 'default')!
+    const grokBot = insertBot(db, {
+      slug: 'grok',
+      name: 'Grok',
+      role: 'Mac agent',
+      soul: 'You are Grok.',
+      runtime: 'grok',
+    })
+    const callerId = seedCallerTurn(db)
+
+    const hermesClient = new FakeHermesClient()
+    const grokClient = new FakeGrokGatewayClient()
+    const hub = new StreamHub()
+    hub.registerUserSession('u1', 'sess-1')
+
+    const inputId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+    const teammate = messageTeammate({
+      db,
+      hermesClient,
+      grokGatewayClient: grokClient,
+      hermesHome: '/tmp/hermes-home-test',
+      hub,
+      username: 'operator',
+      name: 'Grok',
+      text: 'List files',
+    })
+
+    await waitFor(() => grokClient.prompts.length === 1)
+    grokClient.pushEvent({
+      type: 'pending_input',
+      content: 'Run `ls`?',
+      input: { id: inputId, status: 'pending', type: 'permission', tool: 'run_terminal_cmd', preview: 'ls' },
+    })
+
+    await waitFor(() => listMessages(db, callerId).some((message) => message.kind === 'pending_input'))
+    const callerCard = listMessages(db, callerId).find((message) => message.kind === 'pending_input')!
+    const pair = findPeerConversation(db, 'u1', grokBot.id, hermes.id)
+    const grokCard = listMessages(db, pair!.id).find((message) => message.kind === 'pending_input')!
+    expect(callerCard.input?.id).toBe(inputId)
+    expect(grokCard.input?.id).toBe(inputId)
+    expect(hermesClient.requests).toHaveLength(0)
+
+    await resolveGrokInput({
+      db,
+      hub,
+      grokGatewayClient: grokClient,
+      userId: 'u1',
+      conversationId: callerId,
+      messageId: callerCard.id,
+      action: 'allow',
+    })
+    expect(grokClient.inputs[0]).toMatchObject({
+      conversationId: pair!.id,
+      input_id: inputId,
+      action: 'allow',
+    })
+    expect(listMessages(db, callerId).find((message) => message.id === callerCard.id)?.input?.status).toBe(
+      'allowed',
+    )
+    expect(listMessages(db, pair!.id).find((message) => message.id === grokCard.id)?.input?.status).toBe(
+      'allowed',
+    )
+
+    grokClient.pushEvent({ type: 'token', text: 'README.md' })
+    grokClient.pushDone()
+    grokClient.close()
+
+    const result = await teammate
+    expect(result).toEqual({
+      ok: true,
+      from: 'Hermes',
+      to: 'Grok',
+      reply: 'README.md',
+    })
+    expect(grokClient.prompts[0]?.text).toContain('List files')
+  })
+
+  it('routes Grok→Hermes through the Hermes client, not the gateway', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedUser(db)
+    const grokBot = insertBot(db, {
+      slug: 'grok',
+      name: 'Grok',
+      role: 'Mac agent',
+      soul: 'You are Grok.',
+      runtime: 'grok',
+    })
+    seedCallerTurn(db, grokBot.id)
+
+    const hermesClient = new FakeHermesClient()
+    hermesClient.pushAnswerToken('I can help with that.')
+    hermesClient.pushDone()
+    hermesClient.closeWithoutDone()
+    const grokClient = new FakeGrokGatewayClient()
+
+    const result = await messageTeammate({
+      db,
+      hermesClient,
+      grokGatewayClient: grokClient,
+      hermesHome: '/tmp/hermes-home-test',
+      hub: new StreamHub(),
+      username: 'operator',
+      name: 'Hermes',
+      text: 'Help',
+    })
+
+    expect(result.to).toBe('Hermes')
+    expect(result.reply).toBe('I can help with that.')
+    expect(hermesClient.requests).toHaveLength(1)
+    expect(grokClient.prompts).toHaveLength(0)
+  })
+
   it('rejects messaging self', async () => {
     const db = new Database(':memory:')
     initSchema(db)
@@ -343,3 +462,14 @@ describe('messageTeammate', () => {
     ).rejects.toThrow('Cannot message yourself')
   })
 })
+
+async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (check()) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error('Timed out waiting for condition')
+}

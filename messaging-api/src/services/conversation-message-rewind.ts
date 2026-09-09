@@ -1,6 +1,11 @@
 import type Database from 'better-sqlite3'
 import { rotateHermesSessionId, touchConversationUpdatedAt } from '../db/repos/conversations.js'
-import { MESSAGE_COLUMNS, type MessageRow } from '../db/repos/messages.js'
+import {
+  MESSAGE_COLUMNS,
+  mapMessageRow,
+  type MessageRow,
+  type MessageSqlRow,
+} from '../db/repos/messages.js'
 import { getActiveRun } from '../db/repos/runs.js'
 import { emitConversationMessagesRewound } from './chat-sync-emitter.js'
 
@@ -26,27 +31,31 @@ export function listMessagesFromAnchor(
   conversationId: string,
   fromMessageId: string,
 ): MessageRow[] {
-  const anchor = db
+  const anchorRow = db
     .prepare(`
       SELECT rowid, ${MESSAGE_COLUMNS}
       FROM messages
       WHERE conversation_id = ? AND id = ?
     `)
-    .get(conversationId, fromMessageId) as MessageAnchorRow | undefined
+    .get(conversationId, fromMessageId) as (MessageSqlRow & { rowid: number }) | undefined
 
-  if (!anchor) {
+  if (!anchorRow) {
     return []
   }
 
-  return db
-    .prepare(`
-      SELECT ${MESSAGE_COLUMNS}
-      FROM messages
-      WHERE conversation_id = ?
-        AND (created_at > ? OR (created_at = ? AND rowid >= ?))
-      ORDER BY created_at ASC, rowid ASC
-    `)
-    .all(conversationId, anchor.created_at, anchor.created_at, anchor.rowid) as MessageRow[]
+  const anchor: MessageAnchorRow = { ...mapMessageRow(anchorRow), rowid: anchorRow.rowid }
+
+  return (
+    db
+      .prepare(`
+        SELECT ${MESSAGE_COLUMNS}
+        FROM messages
+        WHERE conversation_id = ?
+          AND (created_at > ? OR (created_at = ? AND rowid >= ?))
+        ORDER BY created_at ASC, rowid ASC
+      `)
+      .all(conversationId, anchor.created_at, anchor.created_at, anchor.rowid) as MessageSqlRow[]
+  ).map(mapMessageRow)
 }
 
 export function removeConversationMessagesFrom(

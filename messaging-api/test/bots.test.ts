@@ -16,6 +16,7 @@ interface BotBody {
   responsibilities: string
   icon: string
   color: string
+  runtime: 'hermes' | 'grok'
   notifications_enabled: boolean
   is_default: boolean
   created_at: string
@@ -68,6 +69,7 @@ describe('/bots', () => {
       is_default: true,
       icon: 'message',
       color: 'blue',
+      runtime: 'hermes',
       notifications_enabled: true,
       responsibilities: DEFAULT_BOT_RESPONSIBILITIES,
     })
@@ -95,6 +97,7 @@ describe('/bots', () => {
       is_default: false,
       icon: 'message',
       color: 'blue',
+      runtime: 'hermes',
       notifications_enabled: true,
     })
     expect(bot.soul).toContain('Finds flights, bookings, and tickets.')
@@ -400,5 +403,154 @@ describe('/bots', () => {
       payload: { responsibilities: 'x'.repeat(201) },
     })
     expect(tooLong.statusCode).toBe(400)
+  })
+
+  it('POST grok stores sqlite soul only and skips Hermes profile and honcho', async () => {
+    const honchoPath = path.join(hermesHome, 'honcho.json')
+    fs.writeFileSync(
+      honchoPath,
+      `${JSON.stringify({ hosts: { 'hermes.default': { aiPeer: 'default' } } }, null, 2)}\n`,
+    )
+    const honchoBefore = fs.readFileSync(honchoPath, 'utf8')
+
+    const response = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: {
+        name: 'Grok',
+        role: 'Local Mac agent.',
+        runtime: 'grok',
+      },
+    })
+
+    expect(response.statusCode).toBe(201)
+    const bot = response.json() as BotBody
+    expect(bot).toMatchObject({
+      slug: 'grok',
+      name: 'Grok',
+      role: 'Local Mac agent.',
+      runtime: 'grok',
+      is_default: false,
+    })
+    expect(bot.soul).toContain('Local Mac agent.')
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', 'grok'))).toBe(false)
+    expect(fs.readFileSync(honchoPath, 'utf8')).toBe(honchoBefore)
+
+    const listed = await app!.inject({
+      method: 'GET',
+      url: '/bots',
+      headers: authHeaders(),
+    })
+    const bots = (listed.json() as { bots: BotBody[] }).bots
+    expect(bots.find((row) => row.is_default)?.runtime).toBe('hermes')
+    expect(bots.find((row) => row.id === bot.id)?.runtime).toBe('grok')
+  })
+
+  it('POST second grok returns 409 grok_bot_exists', async () => {
+    const first = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Grok', role: 'Mac agent', runtime: 'grok' },
+    })
+    expect(first.statusCode).toBe(201)
+
+    const second = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Grok Two', role: 'Another Mac agent', runtime: 'grok' },
+    })
+    expect(second.statusCode).toBe(409)
+    expect(second.json()).toEqual({ error: 'grok_bot_exists' })
+  })
+
+  it('POST invalid runtime returns 400', async () => {
+    const response = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Grok', role: 'Mac agent', runtime: 'acp' },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toEqual({ error: 'invalid_request' })
+  })
+
+  it('PATCH runtime is forbidden', async () => {
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Travel', role: 'Flights' },
+    })
+    const bot = created.json() as BotBody
+
+    const response = await app!.inject({
+      method: 'PATCH',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+      payload: { runtime: 'grok' },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toEqual({ error: 'invalid_request' })
+    expect(
+      (
+        await app!.inject({
+          method: 'GET',
+          url: `/bots/${bot.id}`,
+          headers: authHeaders(),
+        })
+      ).json(),
+    ).toMatchObject({ id: bot.id, runtime: 'hermes' })
+  })
+
+  it('PATCH soul on grok updates sqlite only', async () => {
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Grok', role: 'Mac agent', runtime: 'grok', soul: 'You are Grok.' },
+    })
+    const bot = created.json() as BotBody
+    expect(bot.soul).toBe('You are Grok.')
+
+    const response = await app!.inject({
+      method: 'PATCH',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+      payload: { soul: 'Stay in ~/Companion/grok.' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      id: bot.id,
+      runtime: 'grok',
+      soul: 'Stay in ~/Companion/grok.',
+    })
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', 'grok'))).toBe(false)
+  })
+
+  it('DELETE grok returns 204 without a profile dir', async () => {
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Grok', role: 'Mac agent', runtime: 'grok' },
+    })
+    const bot = created.json() as BotBody
+
+    const response = await app!.inject({
+      method: 'DELETE',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+    expect(response.statusCode).toBe(204)
+
+    const missing = await app!.inject({
+      method: 'GET',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+    expect(missing.statusCode).toBe(404)
   })
 })

@@ -4,6 +4,7 @@ import type { AuxiliaryLlmConfig } from './services/auxiliary-llm-client.js'
 import type { AddressEnrichmentQueue } from './services/address-enrichment.js'
 import type { ApnsClient } from './services/apns-client.js'
 import type { CronOutputBridge } from './services/cron-output-bridge.js'
+import type { GrokGatewayClient } from './services/grok-gateway-client.js'
 import type { HermesClient } from './services/hermes-client.js'
 import type { PushNotificationService } from './services/push-notifications.js'
 import type { StreamHub } from './streams/hub.js'
@@ -35,6 +36,9 @@ export interface AppOptions {
   visionHistoryMaxBytes: number
   companionModels: CuratedModelEntry[]
   hermesHome: string
+  grokGatewayUrl: string
+  grokGatewayToken: string
+  grokGatewayClient?: GrokGatewayClient
   apnsClient?: ApnsClient
   cronOutputBridge?: CronOutputBridge
   hermesClient?: HermesClient

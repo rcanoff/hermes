@@ -55,6 +55,8 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
     visionHistoryMaxBytes: 8_388_608,
     companionModels: DEFAULT_COMPANION_MODELS,
     hermesHome: '/tmp/hermes-home-test',
+    grokGatewayUrl: '',
+    grokGatewayToken: '',
     ...overrides,
   })
 }

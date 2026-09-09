@@ -87,6 +87,7 @@ describe('schema', () => {
     expect(names).toContain('icon')
     expect(names).toContain('color')
     expect(names).toContain('responsibilities')
+    expect(names).toContain('runtime')
   })
 
   it('seeds default responsibilities; new bots start with empty jobs', () => {
@@ -129,6 +130,48 @@ describe('schema', () => {
       .prepare('SELECT icon, color FROM bots WHERE id = ?')
       .get('b1') as { icon: string; color: string }
     expect(row).toEqual({ icon: 'message', color: 'blue' })
+  })
+
+  it('adds runtime=hermes to legacy bots and allows one grok', () => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(`
+      CREATE TABLE bots (
+        id TEXT PRIMARY KEY,
+        slug TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        soul TEXT NOT NULL,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO bots (id, slug, name, role, soul, is_default)
+      VALUES ('b1', 'default', 'Hermes', 'Default', 'You are Hermes', 1);
+    `)
+
+    initSchema(db)
+
+    const defaultRow = db
+      .prepare('SELECT runtime FROM bots WHERE id = ?')
+      .get('b1') as { runtime: string }
+    expect(defaultRow.runtime).toBe('hermes')
+
+    insertBot(db, {
+      slug: 'grok',
+      name: 'Grok',
+      role: 'Mac agent',
+      soul: 'You are Grok.',
+      runtime: 'grok',
+    })
+    expect(() =>
+      insertBot(db, {
+        slug: 'grok-two',
+        name: 'Grok Two',
+        role: 'Mac agent',
+        soul: 'You are Grok.',
+        runtime: 'grok',
+      }),
+    ).toThrow()
   })
 
   it('rewrites retired bot icons to message and keeps allowlisted icons', () => {
@@ -406,6 +449,7 @@ describe('schema', () => {
     expect(names).toContain('from_bot_id')
     expect(names).toContain('to_bot_id')
     expect(names).toContain('delegation_id')
+    expect(names).toContain('input_json')
   })
 
   it('backfills kind=chat on legacy messages', () => {
@@ -473,6 +517,37 @@ describe('schema', () => {
         from_bot_id: null,
         to_bot_id: null,
         delegation_id: null,
+        input: null,
+      }),
+    ])
+  })
+
+  it('persists and reads pending_input on messages', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    db.exec(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash');`)
+    const conversationId = createConversation(db, 'u1', 'hs1')
+    const input = {
+      id: '11111111-1111-4111-8111-111111111111',
+      status: 'pending' as const,
+      type: 'permission' as const,
+      tool: 'run_terminal_cmd',
+      preview: 'git status',
+    }
+    insertMessage(db, {
+      conversationId,
+      role: 'assistant',
+      content: 'Run `git status` in ~/Companion/grok?',
+      kind: 'pending_input',
+      input,
+    })
+
+    expect(listMessages(db, conversationId)).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        kind: 'pending_input',
+        content: 'Run `git status` in ~/Companion/grok?',
+        input,
       }),
     ])
   })

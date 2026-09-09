@@ -147,6 +147,12 @@ describe('buildBotRosterPrompt', () => {
     expect(prompt).toContain(MESSAGE_TEAMMATE_ROSTER_INSTRUCTION)
     expect(MESSAGE_TEAMMATE_ROSTER_INSTRUCTION).toContain("Any bot may call this tool")
     expect(MESSAGE_TEAMMATE_ROSTER_INSTRUCTION).not.toContain('Only the main assistant')
+    expect(MESSAGE_TEAMMATE_ROSTER_INSTRUCTION).toContain(
+      'Do not narrate tool use in the reply. The user already sees tools in the process list. User-facing text is the final answer only.',
+    )
+    expect(prompt).toContain(
+      'Do not narrate tool use in the reply. The user already sees tools in the process list. User-facing text is the final answer only.',
+    )
   })
 
   it('requires the default bot to hand off when a teammate has jobs', () => {

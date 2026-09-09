@@ -148,5 +148,7 @@ export function readConfig(env: NodeJS.ProcessEnv): AppOptions {
       env.PROVIDER_MODELS_CACHE_PATH?.trim() || DEFAULT_PROVIDER_MODELS_CACHE_PATH,
     ),
     hermesHome: env.HERMES_HOME?.trim() || env.HERMES_DATA_DIR?.trim() || '/opt/data',
+    grokGatewayUrl: env.GROK_GATEWAY_URL?.trim() || '',
+    grokGatewayToken: env.GROK_GATEWAY_TOKEN?.trim() || '',
   }
 }

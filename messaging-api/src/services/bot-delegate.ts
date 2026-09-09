@@ -12,6 +12,7 @@ import { getLatestRunningRunForUser } from '../db/repos/runs.js'
 import { findUserByUsername, type UserRow } from '../db/repos/users.js'
 import { enrichMessageWithAttachments } from '../lib/attachment-serializer.js'
 import { DEFAULT_COMPANION_MODELS, type CuratedModelEntry } from '../lib/companion-models.js'
+import type { GrokGatewayClient } from './grok-gateway-client.js'
 import type { HermesClient } from './hermes-client.js'
 import { emitConversationMessageUpsert } from './chat-sync-emitter.js'
 import { executeAssistantRun } from './run-executor.js'
@@ -26,6 +27,8 @@ import type { StreamHub } from '../streams/hub.js'
 export interface MessageTeammateInput {
   db: Database.Database
   hermesClient: HermesClient
+  grokGatewayClient?: GrokGatewayClient
+  hermesHome?: string
   hub: StreamHub
   username: string
   name: string
@@ -131,6 +134,8 @@ export async function messageTeammate(
     executeAssistantRun({
       db: input.db,
       hermesClient: input.hermesClient,
+      grokGatewayClient: input.grokGatewayClient,
+      hermesHome: input.hermesHome,
       hub: input.hub,
       conversationId: targetConversation.id,
       hermesSessionId: targetConversation.hermes_session_id,

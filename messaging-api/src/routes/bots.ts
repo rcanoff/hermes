@@ -5,14 +5,18 @@ import {
   getBotBySlug,
   getBotNotificationsEnabled,
   getBotNotificationsEnabledMap,
+  getGrokBot,
   insertBot,
+  isBotRuntime,
   listBotsPage,
   MAX_BOT_RESPONSIBILITIES_CHARS,
+  normalizeBotRuntime,
   seedDefaultBot,
   soulForResponse,
   updateBot,
   upsertBotNotificationsEnabled,
   type BotRow,
+  type BotRuntime,
 } from '../db/repos/bots.js'
 import {
   DEFAULT_BOT_COLOR,
@@ -46,6 +50,7 @@ interface CreateBotBody {
   slug: string
   icon: BotIcon
   color: BotColor
+  runtime: BotRuntime
 }
 
 interface PatchBotBody {
@@ -113,6 +118,10 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(409).send({ error: 'slug_taken' })
     }
 
+    if (body.runtime === 'grok' && getGrokBot(app.db)) {
+      return reply.code(409).send({ error: 'grok_bot_exists' })
+    }
+
     let row: BotRow
     try {
       row = insertBot(app.db, {
@@ -122,28 +131,35 @@ const botRoutes: FastifyPluginAsync = async (app) => {
         soul: body.soul,
         icon: body.icon,
         color: body.color,
+        runtime: body.runtime,
       })
     } catch (error) {
       if (isUniqueConstraint(error)) {
+        if (body.runtime === 'grok' && getGrokBot(app.db)) {
+          return reply.code(409).send({ error: 'grok_bot_exists' })
+        }
         return reply.code(409).send({ error: 'slug_taken' })
       }
       throw error
     }
 
-    try {
-      createBotProfile({
-        hermesHome: app.hermesHome,
-        slug: row.slug,
-        name: row.name,
-        role: row.role,
-        soul: row.soul,
-      })
-    } catch (error) {
-      deleteBot(app.db, row.id)
-      throw error
+    if (row.runtime !== 'grok') {
+      try {
+        createBotProfile({
+          hermesHome: app.hermesHome,
+          slug: row.slug,
+          name: row.name,
+          role: row.role,
+          soul: row.soul,
+        })
+      } catch (error) {
+        deleteBot(app.db, row.id)
+        throw error
+      }
+
+      addHonchoHost(app.hermesHome, row.slug)
     }
 
-    addHonchoHost(app.hermesHome, row.slug)
     return reply.code(201).send(toBotResponse(row, app.hermesHome, true))
   })
 
@@ -190,11 +206,14 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       updated = next
     }
 
-    if (body.soul !== undefined) {
+    if (body.soul !== undefined && updated.runtime !== 'grok') {
       writeSoulFile(app.hermesHome, updated.slug, updated.soul)
     }
 
-    if (body.name !== undefined || body.role !== undefined) {
+    if (
+      (body.name !== undefined || body.role !== undefined) &&
+      updated.runtime !== 'grok'
+    ) {
       writeProfileYaml(app.hermesHome, updated.slug, {
         name: updated.name,
         role: updated.role,
@@ -223,7 +242,9 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(409).send({ error: 'default_bot' })
     }
 
-    deleteBotProfile(app.hermesHome, existing.slug)
+    if (existing.runtime !== 'grok') {
+      deleteBotProfile(app.hermesHome, existing.slug)
+    }
     deleteBot(app.db, existing.id)
     return reply.code(204).send()
   })
@@ -241,6 +262,7 @@ function toBotResponse(row: BotRow, hermesHome: string, notificationsEnabled: bo
     responsibilities: row.responsibilities,
     icon: normalizeBotIcon(row.icon),
     color: row.color,
+    runtime: normalizeBotRuntime(row.runtime),
     notifications_enabled: notificationsEnabled,
     is_default: row.is_default === 1,
     created_at: row.created_at,
@@ -290,11 +312,23 @@ function parseCreateBody(body: unknown): CreateBotBody | null {
     color = body.color
   }
 
-  return { name, role, soul, slug, icon, color }
+  let runtime: BotRuntime = 'hermes'
+  if (body.runtime !== undefined) {
+    if (!isBotRuntime(body.runtime)) {
+      return null
+    }
+    runtime = body.runtime
+  }
+
+  return { name, role, soul, slug, icon, color, runtime }
 }
 
 function parsePatchBody(body: unknown): PatchBotBody | null {
   if (!isRecord(body)) {
+    return null
+  }
+
+  if ('runtime' in body) {
     return null
   }
 

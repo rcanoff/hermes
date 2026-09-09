@@ -152,6 +152,7 @@ export function initSchema(db: Database.Database): void {
   ensureConversationBotId(db)
   ensureConversationPeerBotId(db)
   ensureMessageDelegationColumns(db)
+  ensureMessageInputJson(db)
   ensureCronOutputDeliveries(db)
   ensureLegacyHealthDailySummaries(db)
   ensureMessageRunsOriginSessionId(db)
@@ -243,6 +244,7 @@ function ensureBots(db: Database.Database): void {
       responsibilities TEXT NOT NULL DEFAULT '',
       icon TEXT NOT NULL DEFAULT '${DEFAULT_BOT_ICON}',
       color TEXT NOT NULL DEFAULT '${DEFAULT_BOT_COLOR}',
+      runtime TEXT NOT NULL DEFAULT 'hermes' CHECK (runtime IN ('hermes', 'grok')),
       is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -271,8 +273,28 @@ function ensureBots(db: Database.Database): void {
     db.exec(`ALTER TABLE bots ADD COLUMN responsibilities TEXT NOT NULL DEFAULT ''`)
   }
 
+  if (!columns.some((column) => column.name === 'runtime')) {
+    db.exec(`ALTER TABLE bots ADD COLUMN runtime TEXT NOT NULL DEFAULT 'hermes'`)
+  }
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS bots_one_grok_idx
+      ON bots (runtime)
+      WHERE runtime = 'grok'
+  `)
+
   rewriteRetiredBotIcons(db)
   seedKnownBotResponsibilities(db)
+}
+
+function ensureMessageInputJson(db: Database.Database): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(messages)`)
+    .all() as Array<{ name: string }>
+
+  if (!columns.some((column) => column.name === 'input_json')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN input_json TEXT`)
+  }
 }
 
 function rewriteRetiredBotIcons(db: Database.Database): void {

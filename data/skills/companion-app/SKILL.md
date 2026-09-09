@@ -1,7 +1,7 @@
 ---
 name: companion-app
 description: REQUIRED entry point for Companion App replies. iOS bootstrap tells Hermes to load this skill first. Routes intents to reply, block, and data skills. Does not own fence syntax.
-version: 1.2.8
+version: 1.2.9
 author: Hermes Agent
 metadata:
   hermes:
@@ -37,7 +37,7 @@ If your own jobs are not set yet, ask 2–3 short questions, then call `set_my_r
 
 ## Reply composition
 
-Before writing any Companion App reply, load `companion-replies` and follow its reply model. All user-facing text must be English (see **Language** above).
+Do not write user-facing text before or between tool calls. After tools finish, load `companion-replies` and compose the answer there. All user-facing text must be English (see **Language** above).
 
 ## Intent routing
 
@@ -96,10 +96,13 @@ For any vault data intent (live maps, location history, health):
 1. Parse user intent from the message.
 2. **GET** — if vault data is needed, load the data skill, call MCP, normalize to a record. Do not format the answer here.
 3. **PRESENT** — load `companion-replies`, then only the block skills the reply needs.
-4. **REPLY** — compose sibling parts (plain text, blocks, links) from the record.
+4. **REPLY** — after tools finish, compose sibling parts (plain text, blocks, links) from the record via `companion-replies`.
 
 ## Do not
 
+- Write user-facing text before or between tool calls
+- Narrate tools (“I’ll pull”, “Loading …”, “Next I’ll”, “Pausing … now”, “Removing … now”)
+- Repeat what the gear already shows (`skill_view`, `cronjob`, MCP names)
 - Use Todoist — Reminders is the task backend
 - Call `session_search` — disabled on the Companion App channel; use messages in **this** conversation only
 - Call `cronjob` for companion reminders without loading `companion-cron` and completing the MCP create/link flow

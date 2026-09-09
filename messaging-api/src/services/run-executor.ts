@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { getMessage, insertMessage, listMessages } from '../db/repos/messages.js'
+import { getMessage, insertMessage, listMessages, type MessageRow } from '../db/repos/messages.js'
 import { insertMessageProcess, type ToolingLine } from '../db/repos/process.js'
 import { createRun, markRunCompleted, markRunFailed } from '../db/repos/runs.js'
 import type { StreamHub } from '../streams/hub.js'
@@ -18,13 +18,29 @@ import {
   botSummariesForMessages,
   enrichMessageWithAttachments,
 } from '../lib/attachment-serializer.js'
-import { listBotsForRoster } from '../db/repos/bots.js'
-import { getConversationBotSlug, getConversationForUser } from '../db/repos/conversations.js'
+import {
+  getBotById,
+  listBotsForRoster,
+  normalizeBotRuntime,
+  soulForResponse,
+  type BotRow,
+} from '../db/repos/bots.js'
+import {
+  getConversationBotSlug,
+  getConversationForUser,
+  type ConversationRow,
+} from '../db/repos/conversations.js'
 import { buildBotRosterPrompt } from '../lib/bot-roster.js'
 import { DEFAULT_COMPANION_MODELS, type CuratedModelEntry } from '../lib/companion-models.js'
 import { DEFAULT_BOT_SLUG } from '../lib/hermes-profile.js'
-import { buildHermesMessages } from './prompt-builder.js'
+import { buildHermesMessages, mapDelegationForHermes } from './prompt-builder.js'
 import type { HermesClient } from './hermes-client.js'
+import {
+  createGrokGatewayClient,
+  GrokGatewayError,
+  type GrokGatewayClient,
+} from './grok-gateway-client.js'
+import { cancelPendingInputsForConversation, insertPendingInputCards } from './grok-input.js'
 import {
   buildActivityLine,
   buildReasoningLine,
@@ -41,6 +57,8 @@ import { autoLinkNewCompanionCronJobs } from './companion-cron-auto-link.js'
 export interface ExecuteAssistantRunInput {
   db: Database.Database
   hermesClient: HermesClient
+  grokGatewayClient?: GrokGatewayClient
+  hermesHome?: string
   hub: StreamHub
   conversationId: string
   hermesSessionId: string
@@ -132,6 +150,21 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
   if (input.rewindMessageIds && input.rewindMessageIds.length > 0) {
     publishRewind(streamCtx, input.rewindMessageIds)
+  }
+
+  const conversation = getConversationForUser(input.db, input.userId, input.conversationId)
+  const bot = conversation?.bot_id ? getBotById(input.db, conversation.bot_id) : undefined
+  if (conversation && bot && normalizeBotRuntime(bot.runtime) === 'grok') {
+    return executeGrokAssistantRun({
+      ...input,
+      runId,
+      streamCtx,
+      conversation,
+      bot,
+      processLines,
+      beginReplyPhase,
+      publishProcessLine,
+    })
   }
 
   try {
@@ -279,6 +312,167 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     publishRunError(streamCtx, 'hermes_stream_failed')
     throw error
   }
+}
+
+async function executeGrokAssistantRun(
+  input: ExecuteAssistantRunInput & {
+    runId: string
+    streamCtx: RunEventContext
+    conversation: ConversationRow
+    bot: BotRow
+    processLines: ToolingLine[]
+    beginReplyPhase: () => void
+    publishProcessLine: (line: ToolingLine) => void
+  },
+): Promise<string> {
+  const grokClient = input.grokGatewayClient ?? createGrokGatewayClient('', '')
+  const catalog = input.companionModels ?? DEFAULT_COMPANION_MODELS
+  let assistantText = ''
+  let sawDone = false
+  let reasoningBuffer = ''
+
+  const flushReasoningBuffer = () => {
+    const text = reasoningBuffer.trim()
+    reasoningBuffer = ''
+    if (!text) {
+      return
+    }
+
+    input.publishProcessLine(buildReasoningLine(text))
+  }
+
+  const beginReplyPhase = () => {
+    flushReasoningBuffer()
+    input.beginReplyPhase()
+  }
+
+  try {
+    const rosterPrompt = buildBotRosterPrompt(listBotsForRoster(input.db), input.bot.slug)
+    const soul = [soulForResponse(input.bot, input.hermesHome ?? ''), rosterPrompt]
+      .filter((part) => part.trim())
+      .join('\n\n')
+    await grokClient.putSession(input.conversationId, { soul })
+
+    const trigger = getMessage(input.db, input.conversationId, input.userMessageId)
+    if (!trigger) {
+      throw new GrokGatewayError('grok_unavailable', 'trigger_missing')
+    }
+    const text = grokPromptText(input.db, trigger, input.conversation.bot_id)
+
+    for await (const event of grokClient.prompt(input.conversationId, {
+      text,
+      user_id: input.userId,
+    })) {
+      if (event.type === 'tooling') {
+        if (event.phase === 'reasoning') {
+          if (event.text) {
+            reasoningBuffer += event.text
+            publishToolingDraft(input.streamCtx, event.text)
+          }
+          continue
+        }
+
+        flushReasoningBuffer()
+        input.publishProcessLine({
+          phase: event.phase,
+          text: event.text,
+          tool: event.tool,
+          args: event.args,
+        })
+        continue
+      }
+
+      if (event.type === 'token' && event.text) {
+        beginReplyPhase()
+        assistantText += event.text
+        publishReplyToken(input.streamCtx, event.text)
+        continue
+      }
+
+      if (event.type === 'pending_input') {
+        flushReasoningBuffer()
+        insertPendingInputCards({
+          db: input.db,
+          hub: input.hub,
+          userId: input.userId,
+          grokConversation: input.conversation,
+          grokBot: input.bot,
+          trigger,
+          content: event.content,
+          pendingInput: event.input,
+          companionModels: catalog,
+        })
+        continue
+      }
+
+      if (event.type === 'done') {
+        flushReasoningBuffer()
+        sawDone = true
+        continue
+      }
+
+      if (event.type === 'error') {
+        flushReasoningBuffer()
+        throw new GrokGatewayError('grok_unavailable', event.error)
+      }
+    }
+
+    if (!sawDone) {
+      throw new GrokGatewayError('grok_unavailable', 'stream_ended')
+    }
+
+    beginReplyPhase()
+    const assistantMessageId = persistCompletedRun(
+      input.db,
+      input.hub,
+      input.userId,
+      input.runId,
+      input.conversationId,
+      input.hermesSessionId,
+      assistantText,
+      input.processLines,
+      catalog,
+    )
+
+    await input.onAssistantMessageCommitted?.({
+      messageId: assistantMessageId,
+      content: assistantText,
+    })
+    publishReplyDone(input.streamCtx, assistantMessageId)
+    return assistantMessageId
+  } catch (error) {
+    cancelPendingInputsForConversation({
+      db: input.db,
+      hub: input.hub,
+      userId: input.userId,
+      conversationId: input.conversationId,
+      companionModels: catalog,
+    })
+    const message = error instanceof Error ? error.message : 'unknown'
+    markRunFailed(input.db, input.runId, 'grok_unavailable', message)
+    publishRunError(input.streamCtx, 'grok_unavailable')
+    throw error
+  }
+}
+
+function grokPromptText(
+  db: Database.Database,
+  trigger: MessageRow,
+  currentBotId: string | null,
+): string {
+  const bots = botSummariesForMessages(db, [trigger])
+  return mapDelegationForHermes(
+    {
+      role: trigger.role,
+      content: trigger.content,
+      kind: trigger.kind,
+      from_bot_id: trigger.from_bot_id,
+      to_bot_id: trigger.to_bot_id,
+      from_bot: trigger.from_bot_id ? bots.get(trigger.from_bot_id) ?? null : null,
+      to_bot: trigger.to_bot_id ? bots.get(trigger.to_bot_id) ?? null : null,
+    },
+    currentBotId,
+  ).content
 }
 
 function persistCompletedRun(
