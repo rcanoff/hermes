@@ -283,7 +283,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     if (!conversation) {
       return reply.code(404).send({ error: 'not_found' })
     }
-    app.runAbortRegistry.abort(conversation.id)
+    app.runAbortRegistry.abort(conversation.id, 'interrupt')
     try {
       await app.grokGatewayClient.cancelPrompt(conversation.id)
     } catch (error) {

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { DEFAULT_BOT_RESPONSIBILITIES } from '../src/db/repos/bots.js'
 import { createJobConversation } from '../src/db/repos/conversations.js'
+import { insertMessage } from '../src/db/repos/messages.js'
 import { createTestApp } from './helpers/app.js'
 import { seedTestUser } from './helpers/users.js'
 
@@ -20,6 +21,7 @@ interface BotBody {
   runtime: 'hermes' | 'grok'
   notifications_enabled: boolean
   last_message_at: string | null
+  last_message: string | null
   is_default: boolean
   created_at: string
 }
@@ -76,6 +78,7 @@ describe('/bots', () => {
       runtime: 'hermes',
       notifications_enabled: true,
       last_message_at: null,
+      last_message: null,
       responsibilities: DEFAULT_BOT_RESPONSIBILITIES,
     })
     expect(body._links.self.href).toBe('/bots?limit=20')
@@ -364,6 +367,60 @@ describe('/bots', () => {
     expect((asOther.json() as BotBody).last_message_at).toBe(otherUpdatedAt)
   })
 
+  it('last_message is the latest non-pending regular-chat content for this user', async () => {
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Travel', role: 'Flights' },
+    })
+    const bot = created.json() as BotBody
+    expect(bot.last_message).toBeNull()
+
+    const older = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: authHeaders(),
+      payload: { bot_id: bot.id },
+    })
+    const newer = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: authHeaders(),
+      payload: { bot_id: bot.id },
+    })
+    const olderId = (older.json() as { id: string }).id
+    const newerId = (newer.json() as { id: string }).id
+    insertMessage(app!.db, { conversationId: olderId, role: 'user', content: 'old question' })
+    insertMessage(app!.db, { conversationId: newerId, role: 'user', content: 'first' })
+    insertMessage(app!.db, {
+      conversationId: newerId,
+      role: 'assistant',
+      content: 'latest reply',
+    })
+    insertMessage(app!.db, {
+      conversationId: newerId,
+      role: 'assistant',
+      content: 'waiting',
+      kind: 'pending_input',
+    })
+
+    const got = await app!.inject({
+      method: 'GET',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+    expect((got.json() as BotBody).last_message).toBe('latest reply')
+
+    const listed = await app!.inject({
+      method: 'GET',
+      url: '/bots',
+      headers: authHeaders(),
+    })
+    const listedBot = (listed.json() as { bots: BotBody[] }).bots.find((row) => row.id === bot.id)
+    expect(listedBot?.last_message).toBe('latest reply')
+  })
+
   it('lists with HAL next when there is another page', async () => {
     await app!.inject({
       method: 'POST',
@@ -395,7 +452,7 @@ describe('/bots', () => {
   })
 
   it('POST with invalid or retired icon returns 400 invalid_request', async () => {
-    for (const icon of ['nope', 'person', 'briefcase']) {
+    for (const icon of ['nope', 'legacy-foo']) {
       const response = await app!.inject({
         method: 'POST',
         url: '/bots',
@@ -438,7 +495,7 @@ describe('/bots', () => {
     })
     const bot = created.json() as BotBody
 
-    for (const icon of ['nope', 'person', 'heart']) {
+    for (const icon of ['nope', 'legacy-foo']) {
       const response = await app!.inject({
         method: 'PATCH',
         url: `/bots/${bot.id}`,
@@ -484,7 +541,7 @@ describe('/bots', () => {
     })
     const bot = created.json() as BotBody
 
-    app!.db.prepare('UPDATE bots SET icon = ? WHERE id = ?').run('person', bot.id)
+    app!.db.prepare('UPDATE bots SET icon = ? WHERE id = ?').run('nope', bot.id)
     const retired = await app!.inject({
       method: 'GET',
       url: `/bots/${bot.id}`,

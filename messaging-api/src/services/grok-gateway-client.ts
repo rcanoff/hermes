@@ -17,6 +17,22 @@ export type GrokGatewayEvent =
   | { type: 'done' }
   | { type: 'error'; error: string; code?: string }
 
+export type GrokTurnStartEvent = { type: 'turn_start'; user_id: string; text: string }
+
+export type GrokOutboxEvent = GrokGatewayEvent | GrokTurnStartEvent
+
+export interface GrokOutboxItem {
+  seq: number
+  ts: string
+  event: GrokOutboxEvent
+}
+
+export interface GrokOutboxSnapshot {
+  events: GrokOutboxItem[]
+  last_seq: number
+  prompt_in_flight: boolean
+}
+
 export type GrokInputAction = 'allow' | 'deny' | 'reply'
 
 export type GrokGatewayErrorCode =
@@ -50,6 +66,8 @@ export interface GrokGatewayClient {
   ): Promise<void>
   cancelPrompt(conversationId: string): Promise<void>
   deleteSession(conversationId: string): Promise<void>
+  fetchOutbox(conversationId: string, afterSeq?: number): Promise<GrokOutboxSnapshot>
+  ackOutbox(conversationId: string, through: number): Promise<void>
 }
 
 export function createGrokGatewayClient(url: string, token: string): GrokGatewayClient {
@@ -84,6 +102,12 @@ export class DisabledGrokGatewayClient implements GrokGatewayClient {
   async cancelPrompt(): Promise<void> {}
 
   async deleteSession(): Promise<void> {}
+
+  async fetchOutbox(_conversationId: string, afterSeq = 0): Promise<GrokOutboxSnapshot> {
+    return { events: [], last_seq: afterSeq, prompt_in_flight: false }
+  }
+
+  async ackOutbox(): Promise<void> {}
 }
 
 export class HttpGrokGatewayClient implements GrokGatewayClient {
@@ -199,6 +223,33 @@ export class HttpGrokGatewayClient implements GrokGatewayClient {
     }
   }
 
+  async fetchOutbox(conversationId: string, afterSeq = 0): Promise<GrokOutboxSnapshot> {
+    const after = Number.isFinite(afterSeq) && afterSeq > 0 ? Math.floor(afterSeq) : 0
+    const response = await this.request(
+      `/sessions/${encodeURIComponent(conversationId)}/outbox?after=${encodeURIComponent(String(after))}`,
+      { method: 'GET' },
+      GROK_REQUEST_TIMEOUT_MS,
+    )
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch {
+      throw new GrokGatewayError('grok_unavailable', 'invalid_outbox')
+    }
+    return parseOutboxSnapshot(body)
+  }
+
+  async ackOutbox(conversationId: string, through: number): Promise<void> {
+    await this.request(
+      `/sessions/${encodeURIComponent(conversationId)}/outbox/ack`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ through }),
+      },
+      GROK_REQUEST_TIMEOUT_MS,
+    )
+  }
+
   private headers(): Record<string, string> {
     return {
       Authorization: `Bearer ${this.token}`,
@@ -262,6 +313,67 @@ export class HttpGrokGatewayClient implements GrokGatewayClient {
   }
 }
 
+function parseOutboxSnapshot(value: unknown): GrokOutboxSnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new GrokGatewayError('grok_unavailable', 'invalid_outbox')
+  }
+
+  const body = value as Record<string, unknown>
+  if (
+    !Array.isArray(body.events) ||
+    typeof body.last_seq !== 'number' ||
+    !Number.isFinite(body.last_seq) ||
+    typeof body.prompt_in_flight !== 'boolean'
+  ) {
+    throw new GrokGatewayError('grok_unavailable', 'invalid_outbox')
+  }
+
+  const events: GrokOutboxItem[] = []
+  for (const item of body.events) {
+    const parsed = parseOutboxItem(item)
+    if (parsed) {
+      events.push(parsed)
+    }
+  }
+
+  return {
+    events,
+    last_seq: body.last_seq,
+    prompt_in_flight: body.prompt_in_flight,
+  }
+}
+
+function parseOutboxItem(value: unknown): GrokOutboxItem | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const item = value as Record<string, unknown>
+  if (typeof item.seq !== 'number' || !Number.isFinite(item.seq) || typeof item.ts !== 'string') {
+    return null
+  }
+
+  const event = parseOutboxEvent(item.event)
+  if (!event) {
+    return null
+  }
+
+  return { seq: item.seq, ts: item.ts, event }
+}
+
+function parseOutboxEvent(value: unknown): GrokOutboxEvent | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  const event = value as Record<string, unknown>
+  if (event.type === 'turn_start' && typeof event.user_id === 'string' && typeof event.text === 'string') {
+    return { type: 'turn_start', user_id: event.user_id, text: event.text }
+  }
+
+  return parseGatewayEventValue(event)
+}
+
 function parseGatewayEvent(line: string): GrokGatewayEvent | null {
   if (!line) {
     return null
@@ -273,6 +385,10 @@ function parseGatewayEvent(line: string): GrokGatewayEvent | null {
   } catch {
     return null
   }
+  return parseGatewayEventValue(value)
+}
+
+function parseGatewayEventValue(value: unknown): GrokGatewayEvent | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null
   }

@@ -44,6 +44,31 @@ const RUN_COLUMNS = `
   status, error_code, error_detail, started_at, finished_at
 `
 
+export function getRunById(db: Database.Database, runId: string): RunRow | undefined {
+  return db
+    .prepare(`
+      SELECT ${RUN_COLUMNS}
+      FROM message_runs
+      WHERE id = ?
+    `)
+    .get(runId) as RunRow | undefined
+}
+
+export function getLatestRunForConversation(
+  db: Database.Database,
+  conversationId: string,
+): RunRow | undefined {
+  return db
+    .prepare(`
+      SELECT ${RUN_COLUMNS}
+      FROM message_runs
+      WHERE conversation_id = ?
+      ORDER BY started_at DESC, id DESC
+      LIMIT 1
+    `)
+    .get(conversationId) as RunRow | undefined
+}
+
 export function getActiveRun(db: Database.Database, conversationId: string): RunRow | undefined {
   return db
     .prepare(`
@@ -93,6 +118,26 @@ export function markRunCompleted(
         finished_at = datetime('now')
     WHERE id = ?
       AND status = 'running'
+  `).run(assistantMessageId, runId)
+
+  return result.changes === 1
+}
+
+export function markRunRecovered(
+  db: Database.Database,
+  runId: string,
+  assistantMessageId: string,
+): boolean {
+  const result = db.prepare(`
+    UPDATE message_runs
+    SET status = 'completed',
+        assistant_message_id = ?,
+        error_code = NULL,
+        error_detail = NULL,
+        finished_at = datetime('now')
+    WHERE id = ?
+      AND status = 'failed'
+      AND assistant_message_id IS NULL
   `).run(assistantMessageId, runId)
 
   return result.changes === 1

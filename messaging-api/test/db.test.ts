@@ -194,7 +194,7 @@ describe('schema', () => {
         ('b1', 'default', 'Hermes', 'Default', 'You are Hermes', 'person', 1),
         ('b2', 'travel', 'Travel', 'Flights', 'You book trips.', 'map', 0),
         ('b3', 'energy', 'Energy', 'Power', 'You track energy.', 'bolt', 0),
-        ('b4', 'old', 'Old', 'Retired', 'You used a retired icon.', 'briefcase', 0);
+        ('b4', 'old', 'Old', 'Retired', 'You used a retired icon.', 'legacy-foo', 0);
     `)
 
     initSchema(db)
@@ -203,7 +203,7 @@ describe('schema', () => {
       .prepare('SELECT id, icon FROM bots ORDER BY id')
       .all() as Array<{ id: string; icon: string }>
     expect(rows).toEqual([
-      { id: 'b1', icon: 'message' },
+      { id: 'b1', icon: 'person' },
       { id: 'b2', icon: 'map' },
       { id: 'b3', icon: 'bolt' },
       { id: 'b4', icon: 'message' },

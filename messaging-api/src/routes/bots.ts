@@ -3,7 +3,7 @@ import {
   deleteBot,
   getBotById,
   getBotBySlug,
-  getBotLastMessageAtMap,
+  getBotLastActivityMap,
   getBotNotificationsEnabled,
   getBotNotificationsEnabledMap,
   getGrokBot,
@@ -92,7 +92,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
     const lastId = page.bots[page.bots.length - 1]?.id
     const botIds = page.bots.map((row) => row.id)
     const notifications = getBotNotificationsEnabledMap(app.db, request.userId, botIds)
-    const lastMessageAt = getBotLastMessageAtMap(app.db, request.userId, botIds)
+    const lastActivity = getBotLastActivityMap(app.db, request.userId, botIds)
 
     return {
       bots: page.bots.map((row) =>
@@ -100,7 +100,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
           row,
           app.hermesHome,
           notifications.get(row.id) ?? true,
-          lastMessageAt.get(row.id) ?? null,
+          lastActivity.get(row.id) ?? { last_message_at: null, last_message: null },
         ),
       ),
       _links: buildHalLinks({
@@ -173,7 +173,10 @@ const botRoutes: FastifyPluginAsync = async (app) => {
         row,
         app.hermesHome,
         true,
-        getBotLastMessageAtMap(app.db, request.userId, [row.id]).get(row.id) ?? null,
+        getBotLastActivityMap(app.db, request.userId, [row.id]).get(row.id) ?? {
+          last_message_at: null,
+          last_message: null,
+        },
       ),
     )
   })
@@ -189,7 +192,10 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       row,
       app.hermesHome,
       getBotNotificationsEnabled(app.db, request.userId, row.id),
-      getBotLastMessageAtMap(app.db, request.userId, [row.id]).get(row.id) ?? null,
+      getBotLastActivityMap(app.db, request.userId, [row.id]).get(row.id) ?? {
+        last_message_at: null,
+        last_message: null,
+      },
     )
   })
 
@@ -244,7 +250,10 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       updated,
       app.hermesHome,
       getBotNotificationsEnabled(app.db, request.userId, updated.id),
-      getBotLastMessageAtMap(app.db, request.userId, [updated.id]).get(updated.id) ?? null,
+      getBotLastActivityMap(app.db, request.userId, [updated.id]).get(updated.id) ?? {
+        last_message_at: null,
+        last_message: null,
+      },
     )
   })
 
@@ -309,7 +318,7 @@ function toBotResponse(
   row: BotRow,
   hermesHome: string,
   notificationsEnabled: boolean,
-  lastMessageAt: string | null,
+  lastActivity: { last_message_at: string | null; last_message: string | null },
 ) {
   return {
     id: row.id,
@@ -322,7 +331,8 @@ function toBotResponse(
     color: row.color,
     runtime: normalizeBotRuntime(row.runtime),
     notifications_enabled: notificationsEnabled,
-    last_message_at: lastMessageAt,
+    last_message_at: lastActivity.last_message_at,
+    last_message: lastActivity.last_message,
     is_default: row.is_default === 1,
     created_at: row.created_at,
   }

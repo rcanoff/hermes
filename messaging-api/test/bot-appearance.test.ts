@@ -7,13 +7,16 @@ import {
 } from '../src/lib/bot-appearance.js'
 
 describe('bot appearance icons', () => {
-  it('allowlists four keys and defaults to message', () => {
-    expect([...BOT_ICONS]).toEqual(['brain', 'message', 'map', 'bolt'])
+  it('allowlists common keys and defaults to message', () => {
+    expect(BOT_ICONS).toContain('person')
+    expect(BOT_ICONS).toContain('house')
+    expect(BOT_ICONS).toContain('sparkles')
+    expect([...BOT_ICONS].slice(0, 4)).toEqual(['person', 'brain', 'message', 'map'])
     expect(DEFAULT_BOT_ICON).toBe('message')
   })
 
-  it('rejects retired keys on write and maps them to message on read', () => {
-    for (const icon of ['person', 'heart', 'star', 'leaf', 'moon', 'sun', 'briefcase', 'book']) {
+  it('rejects unknown keys on write and maps them to message on read', () => {
+    for (const icon of ['nope', 'legacy-foo']) {
       expect(isBotIcon(icon)).toBe(false)
       expect(normalizeBotIcon(icon)).toBe('message')
     }

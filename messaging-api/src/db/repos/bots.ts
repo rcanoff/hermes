@@ -272,14 +272,19 @@ export function getBotNotificationsEnabledMap(
   return result
 }
 
-export function getBotLastMessageAtMap(
+export type BotLastActivity = {
+  last_message_at: string | null
+  last_message: string | null
+}
+
+export function getBotLastActivityMap(
   db: Database.Database,
   userId: string,
   botIds: string[],
-): Map<string, string | null> {
-  const result = new Map<string, string | null>()
+): Map<string, BotLastActivity> {
+  const result = new Map<string, BotLastActivity>()
   for (const botId of botIds) {
-    result.set(botId, null)
+    result.set(botId, { last_message_at: null, last_message: null })
   }
 
   if (botIds.length === 0) {
@@ -287,7 +292,7 @@ export function getBotLastMessageAtMap(
   }
 
   const placeholders = botIds.map(() => '?').join(', ')
-  const rows = db
+  const times = db
     .prepare(`
       SELECT bot_id, MAX(updated_at) AS last_message_at
       FROM conversations
@@ -298,8 +303,41 @@ export function getBotLastMessageAtMap(
     `)
     .all(userId, ...botIds) as Array<{ bot_id: string; last_message_at: string | null }>
 
-  for (const row of rows) {
-    result.set(row.bot_id, row.last_message_at)
+  for (const row of times) {
+    const current = result.get(row.bot_id)
+    if (current) {
+      current.last_message_at = row.last_message_at
+    }
+  }
+
+  const previews = db
+    .prepare(`
+      SELECT bot_id, content AS last_message
+      FROM (
+        SELECT
+          c.bot_id AS bot_id,
+          m.content AS content,
+          ROW_NUMBER() OVER (
+            PARTITION BY c.bot_id
+            ORDER BY m.created_at DESC, m.rowid DESC
+          ) AS rn
+        FROM conversations c
+        INNER JOIN messages m ON m.conversation_id = c.id
+        WHERE c.user_id = ?
+          AND c.kind = 'regular'
+          AND c.bot_id IN (${placeholders})
+          AND m.kind != 'pending_input'
+          AND TRIM(m.content) != ''
+      )
+      WHERE rn = 1
+    `)
+    .all(userId, ...botIds) as Array<{ bot_id: string; last_message: string }>
+
+  for (const row of previews) {
+    const current = result.get(row.bot_id)
+    if (current) {
+      current.last_message = row.last_message
+    }
   }
 
   return result

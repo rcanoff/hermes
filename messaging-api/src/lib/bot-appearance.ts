@@ -1,4 +1,25 @@
-export const BOT_ICONS = ['brain', 'message', 'map', 'bolt'] as const
+export const BOT_ICONS = [
+  'person',
+  'brain',
+  'message',
+  'map',
+  'heart',
+  'star',
+  'leaf',
+  'bolt',
+  'moon',
+  'sun',
+  'briefcase',
+  'book',
+  'house',
+  'calendar',
+  'camera',
+  'music',
+  'globe',
+  'wrench',
+  'sparkles',
+  'bell',
+] as const
 
 export const BOT_COLORS = [
   'blue',

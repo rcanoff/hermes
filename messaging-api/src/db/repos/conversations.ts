@@ -419,6 +419,23 @@ export function getConversationById(
     .get(conversationId) as ConversationRow | undefined
 }
 
+export function listGrokRuntimeConversations(db: Database.Database): ConversationRow[] {
+  return db
+    .prepare(`
+      SELECT conversations.id, conversations.user_id, conversations.hermes_session_id,
+        conversations.kind, conversations.title, conversations.bootstrap_prompt,
+        conversations.hermes_job_id, conversations.schedule_display, conversations.job_enabled,
+        conversations.job_last_run_at, conversations.job_last_status, conversations.model,
+        conversations.provider, conversations.bot_id, conversations.peer_bot_id,
+        conversations.created_at, conversations.updated_at
+      FROM conversations
+      INNER JOIN bots ON bots.id = conversations.bot_id
+      WHERE bots.runtime = 'grok'
+      ORDER BY conversations.updated_at DESC, conversations.id DESC
+    `)
+    .all() as ConversationRow[]
+}
+
 const MAX_CONVERSATION_TITLE_CHARS = 120
 
 export function normalizeConversationTitle(raw: string): string | null {

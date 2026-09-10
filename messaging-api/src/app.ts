@@ -30,6 +30,7 @@ import { AddressEnrichmentQueue } from './services/address-enrichment.js'
 import { createApnsClient } from './services/apns-client.js'
 import { CronOutputBridge } from './services/cron-output-bridge.js'
 import { createGrokGatewayClient, type GrokGatewayClient } from './services/grok-gateway-client.js'
+import { drainGrokOutboxesOnStartup } from './services/grok-outbox-drain.js'
 import { OpenAiHermesClient } from './services/hermes-client.js'
 import { PushNotificationService } from './services/push-notifications.js'
 import { RunAbortRegistry } from './services/run-abort-registry.js'
@@ -177,6 +178,18 @@ export function buildApp(options: AppOptions) {
   app.register(pushRoutes)
 
   app.get('/health', async () => ({ ok: true }))
+
+  void drainGrokOutboxesOnStartup({
+    db: app.db,
+    client: app.grokGatewayClient,
+    hub: app.streamHub,
+    companionModels: options.companionModels,
+    log: (message, meta) => {
+      app.log.info(meta ?? {}, message)
+    },
+  }).catch((error) => {
+    app.log.error({ err: error }, 'grok outbox startup drain failed')
+  })
 
   return app
 }

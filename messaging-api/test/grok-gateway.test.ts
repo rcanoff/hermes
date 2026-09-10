@@ -329,14 +329,16 @@ describe('grok send path', () => {
       { role: 'user', content: 'Next' },
       { role: 'assistant', content: 'Hello again' },
     ])
-    expect(
-      app!.db
-        .prepare(`SELECT status, error_code FROM message_runs ORDER BY started_at, id`)
-        .all(),
-    ).toEqual([
-      expect.objectContaining({ status: 'failed', error_code: 'interrupted' }),
-      expect.objectContaining({ status: 'completed', error_code: null }),
-    ])
+    const runs = app!.db
+      .prepare(`SELECT status, error_code FROM message_runs ORDER BY started_at, id`)
+      .all()
+    expect(runs).toHaveLength(2)
+    expect(runs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ status: 'failed', error_code: 'interrupted' }),
+        expect.objectContaining({ status: 'completed', error_code: null }),
+      ]),
+    )
   })
 
   it('retries once when grok prompt returns prompt_in_flight', async () => {

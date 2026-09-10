@@ -2,6 +2,9 @@ import type {
   GrokGatewayClient,
   GrokGatewayEvent,
   GrokInputAction,
+  GrokOutboxEvent,
+  GrokOutboxItem,
+  GrokOutboxSnapshot,
 } from '../../src/services/grok-gateway-client.js'
 import { GrokGatewayError } from '../../src/services/grok-gateway-client.js'
 
@@ -27,8 +30,11 @@ export class FakeGrokGatewayClient implements GrokGatewayClient {
   }> = []
   readonly deletes: string[] = []
   readonly cancels: string[] = []
+  readonly acks: Array<{ conversationId: string; through: number }> = []
   down = false
   nextPromptError: Error | null = null
+  private readonly outboxEvents = new Map<string, GrokOutboxItem[]>()
+  private readonly promptInFlightOverride = new Map<string, boolean>()
 
   private readonly queues = new Map<number, QueueEntry[]>()
   private readonly waiters = new Map<number, Array<() => void>>()
@@ -135,6 +141,47 @@ export class FakeGrokGatewayClient implements GrokGatewayClient {
 
   async deleteSession(conversationId: string): Promise<void> {
     this.deletes.push(conversationId)
+  }
+
+  async fetchOutbox(conversationId: string, afterSeq = 0): Promise<GrokOutboxSnapshot> {
+    if (this.down) {
+      throw new GrokGatewayError('grok_unavailable')
+    }
+
+    const all = this.outboxEvents.get(conversationId) ?? []
+    const events = all.filter((item) => item.seq > afterSeq)
+    const last_seq = all.at(-1)?.seq ?? afterSeq
+    const prompt_in_flight =
+      this.promptInFlightOverride.get(conversationId) ?? this.inFlight.has(conversationId)
+    return { events, last_seq, prompt_in_flight }
+  }
+
+  async ackOutbox(conversationId: string, through: number): Promise<void> {
+    if (this.down) {
+      throw new GrokGatewayError('grok_unavailable')
+    }
+
+    this.acks.push({ conversationId, through })
+    const all = this.outboxEvents.get(conversationId) ?? []
+    this.outboxEvents.set(
+      conversationId,
+      all.filter((item) => item.seq > through),
+    )
+  }
+
+  setOutbox(conversationId: string, events: GrokOutboxEvent[]): void {
+    this.outboxEvents.set(
+      conversationId,
+      events.map((event, index) => ({
+        seq: index + 1,
+        ts: new Date().toISOString(),
+        event,
+      })),
+    )
+  }
+
+  setPromptInFlight(conversationId: string, value: boolean): void {
+    this.promptInFlightOverride.set(conversationId, value)
   }
 
   private abortStream(streamId: number): void {
