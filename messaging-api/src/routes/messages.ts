@@ -229,6 +229,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         grokGatewayClient: app.grokGatewayClient,
         hermesHome: app.hermesHome,
         hub: app.streamHub,
+        abortRegistry: app.runAbortRegistry,
         conversationId: conversation.id,
         hermesSessionId: conversation.hermes_session_id,
         userMessageId: created.message.id,
@@ -277,6 +278,26 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     }
   })
 
+  app.post('/conversations/:id/run/interrupt', { preHandler: app.authenticate }, async (request, reply) => {
+    const conversation = getOwnedConversation(app, request.userId, (request.params as { id: string }).id)
+    if (!conversation) {
+      return reply.code(404).send({ error: 'not_found' })
+    }
+    app.runAbortRegistry.abort(conversation.id)
+    try {
+      await app.grokGatewayClient.cancelPrompt(conversation.id)
+    } catch (error) {
+      app.log.warn(
+        {
+          err: error instanceof Error ? error.message : String(error),
+          conversationId: conversation.id,
+        },
+        'failed to cancel grok gateway prompt',
+      )
+    }
+    return reply.code(204).send()
+  })
+
   app.patch('/conversations/:id/messages/:messageId', { preHandler: app.authenticate }, async (request, reply) => {
     const conversation = getOwnedConversation(app, request.userId, (request.params as { id: string }).id)
     if (!conversation) {
@@ -319,6 +340,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         grokGatewayClient: app.grokGatewayClient,
         hermesHome: app.hermesHome,
         hub: app.streamHub,
+        abortRegistry: app.runAbortRegistry,
         conversationId: conversation.id,
         hermesSessionId: edited.hermesSessionId,
         userMessageId: edited.message.id,

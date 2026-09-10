@@ -32,6 +32,7 @@ import { CronOutputBridge } from './services/cron-output-bridge.js'
 import { createGrokGatewayClient, type GrokGatewayClient } from './services/grok-gateway-client.js'
 import { OpenAiHermesClient } from './services/hermes-client.js'
 import { PushNotificationService } from './services/push-notifications.js'
+import { RunAbortRegistry } from './services/run-abort-registry.js'
 import { StreamHub } from './streams/hub.js'
 import type { ApnsConfig } from './config.js'
 import type { ApnsClient } from './services/apns-client.js'
@@ -68,6 +69,7 @@ declare module 'fastify' {
     cronPromptSynthesis: import('./services/auxiliary-llm-client.js').AuxiliaryLlmConfig
     companionModels: import('./lib/companion-models.js').CuratedModelEntry[]
     hermesHome: string
+    runAbortRegistry: RunAbortRegistry
   }
 }
 
@@ -92,6 +94,7 @@ export function buildApp(options: AppOptions) {
       createGrokGatewayClient(options.grokGatewayUrl, options.grokGatewayToken),
   )
   app.decorate('streamHub', options.streamHub ?? new StreamHub())
+  app.decorate('runAbortRegistry', new RunAbortRegistry())
   app.decorate('streamWaitMs', options.streamWaitMs ?? 30_000)
   app.decorate('companionMcpBearerToken', options.companionMcpBearerToken)
   app.decorate('cronWebhookBearer', options.cronWebhookBearer)

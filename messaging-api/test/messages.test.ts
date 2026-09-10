@@ -279,6 +279,35 @@ describe('message routes', () => {
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
   })
 
+  it('interrupts an active run so a follow-up message can be posted', async () => {
+    const firstResponse = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'First' },
+    })
+    expect(firstResponse.statusCode).toBe(202)
+
+    hermesClient.pushAnswerToken('partial', 0)
+    await waitFor(() => getActiveRun(app!.db, conversationId) != null)
+
+    const interrupt = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/run/interrupt`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    expect(interrupt.statusCode).toBe(204)
+    await waitFor(() => getActiveRun(app!.db, conversationId) == null)
+
+    const secondResponse = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { text: 'Second' },
+    })
+    expect(secondResponse.statusCode).toBe(202)
+  })
+
   it('accepts legacy content field for backward compatibility', async () => {
     const response = await app!.inject({
       method: 'POST',

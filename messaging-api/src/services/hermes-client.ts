@@ -35,6 +35,7 @@ export interface StreamChatInput {
   companionUserId?: string
   /** Hermes profile slug. Non-default values prefix `/p/<slug>` on gateway URLs. */
   profileSlug?: string
+  signal?: AbortSignal
 }
 
 export interface CompleteChatInput {
@@ -359,6 +360,7 @@ export class OpenAiHermesClient implements HermesClient {
       {
       method: 'POST',
       headers,
+      signal: input.signal,
       body: JSON.stringify({
         model: 'hermes-agent',
         messages: input.messages,

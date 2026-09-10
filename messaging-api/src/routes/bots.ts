@@ -3,6 +3,7 @@ import {
   deleteBot,
   getBotById,
   getBotBySlug,
+  getBotLastMessageAtMap,
   getBotNotificationsEnabled,
   getBotNotificationsEnabledMap,
   getGrokBot,
@@ -18,6 +19,10 @@ import {
   type BotRow,
   type BotRuntime,
 } from '../db/repos/bots.js'
+import { listConversationsReferencingBot } from '../db/repos/conversations.js'
+import { removeHermesCronJob } from '../lib/hermes-cron-jobs.js'
+import { emitConversationDeleted } from '../services/chat-sync-emitter.js'
+import { publishConversationDeleted } from '../streams/sse-mutation-publisher.js'
 import {
   DEFAULT_BOT_COLOR,
   DEFAULT_BOT_ICON,
@@ -85,15 +90,18 @@ const botRoutes: FastifyPluginAsync = async (app) => {
 
     const firstId = page.bots[0]?.id
     const lastId = page.bots[page.bots.length - 1]?.id
-    const notifications = getBotNotificationsEnabledMap(
-      app.db,
-      request.userId,
-      page.bots.map((row) => row.id),
-    )
+    const botIds = page.bots.map((row) => row.id)
+    const notifications = getBotNotificationsEnabledMap(app.db, request.userId, botIds)
+    const lastMessageAt = getBotLastMessageAtMap(app.db, request.userId, botIds)
 
     return {
       bots: page.bots.map((row) =>
-        toBotResponse(row, app.hermesHome, notifications.get(row.id) ?? true),
+        toBotResponse(
+          row,
+          app.hermesHome,
+          notifications.get(row.id) ?? true,
+          lastMessageAt.get(row.id) ?? null,
+        ),
       ),
       _links: buildHalLinks({
         basePath: '/bots',
@@ -160,7 +168,14 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       addHonchoHost(app.hermesHome, row.slug)
     }
 
-    return reply.code(201).send(toBotResponse(row, app.hermesHome, true))
+    return reply.code(201).send(
+      toBotResponse(
+        row,
+        app.hermesHome,
+        true,
+        getBotLastMessageAtMap(app.db, request.userId, [row.id]).get(row.id) ?? null,
+      ),
+    )
   })
 
   app.get('/bots/:id', { preHandler: app.authenticate }, async (request, reply) => {
@@ -174,6 +189,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       row,
       app.hermesHome,
       getBotNotificationsEnabled(app.db, request.userId, row.id),
+      getBotLastMessageAtMap(app.db, request.userId, [row.id]).get(row.id) ?? null,
     )
   })
 
@@ -228,6 +244,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       updated,
       app.hermesHome,
       getBotNotificationsEnabled(app.db, request.userId, updated.id),
+      getBotLastMessageAtMap(app.db, request.userId, [updated.id]).get(updated.id) ?? null,
     )
   })
 
@@ -242,17 +259,58 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(409).send({ error: 'default_bot' })
     }
 
+    const conversations = listConversationsReferencingBot(app.db, existing.id)
+    for (const conversation of conversations) {
+      if (conversation.kind === 'job' && conversation.hermes_job_id?.trim()) {
+        const hermesJobId = conversation.hermes_job_id.trim()
+        try {
+          await removeHermesCronJob(app.cronJobsPath, hermesJobId)
+        } catch (error) {
+          app.log.warn(
+            {
+              err: error instanceof Error ? error.message : String(error),
+              hermesJobId,
+              conversationId: conversation.id,
+            },
+            'failed to remove Hermes cron job while deleting bot',
+          )
+        }
+      }
+
+      if (normalizeBotRuntime(existing.runtime) === 'grok') {
+        try {
+          await app.grokGatewayClient.deleteSession(conversation.id)
+        } catch (error) {
+          app.log.warn(
+            {
+              err: error instanceof Error ? error.message : String(error),
+              conversationId: conversation.id,
+            },
+            'failed to delete grok gateway session while deleting bot',
+          )
+        }
+      }
+
+      emitConversationDeleted(app.db, conversation.user_id, conversation.id)
+      publishConversationDeleted(app.streamHub, conversation.user_id, conversation.id)
+    }
+
+    deleteBot(app.db, existing.id)
     if (existing.runtime !== 'grok') {
       deleteBotProfile(app.hermesHome, existing.slug)
     }
-    deleteBot(app.db, existing.id)
     return reply.code(204).send()
   })
 }
 
 export default botRoutes
 
-function toBotResponse(row: BotRow, hermesHome: string, notificationsEnabled: boolean) {
+function toBotResponse(
+  row: BotRow,
+  hermesHome: string,
+  notificationsEnabled: boolean,
+  lastMessageAt: string | null,
+) {
   return {
     id: row.id,
     slug: row.slug,
@@ -264,6 +322,7 @@ function toBotResponse(row: BotRow, hermesHome: string, notificationsEnabled: bo
     color: row.color,
     runtime: normalizeBotRuntime(row.runtime),
     notifications_enabled: notificationsEnabled,
+    last_message_at: lastMessageAt,
     is_default: row.is_default === 1,
     created_at: row.created_at,
   }

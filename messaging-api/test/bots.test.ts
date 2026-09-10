@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { DEFAULT_BOT_RESPONSIBILITIES } from '../src/db/repos/bots.js'
+import { createJobConversation } from '../src/db/repos/conversations.js'
 import { createTestApp } from './helpers/app.js'
 import { seedTestUser } from './helpers/users.js'
 
@@ -18,6 +19,7 @@ interface BotBody {
   color: string
   runtime: 'hermes' | 'grok'
   notifications_enabled: boolean
+  last_message_at: string | null
   is_default: boolean
   created_at: string
 }
@@ -26,6 +28,7 @@ describe('/bots', () => {
   let app: FastifyInstance | undefined
   let hermesHome: string
   let token: string
+  let userId: string
 
   beforeEach(async () => {
     hermesHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-home-bots-'))
@@ -38,6 +41,7 @@ describe('/bots', () => {
     await app.ready()
     const seeded = await seedTestUser(app, 'operator', 'password123')
     token = seeded.token
+    userId = seeded.id
   })
 
   afterEach(async () => {
@@ -71,6 +75,7 @@ describe('/bots', () => {
       color: 'blue',
       runtime: 'hermes',
       notifications_enabled: true,
+      last_message_at: null,
       responsibilities: DEFAULT_BOT_RESPONSIBILITIES,
     })
     expect(body._links.self.href).toBe('/bots?limit=20')
@@ -99,6 +104,7 @@ describe('/bots', () => {
       color: 'blue',
       runtime: 'hermes',
       notifications_enabled: true,
+      last_message_at: null,
     })
     expect(bot.soul).toContain('Finds flights, bookings, and tickets.')
 
@@ -179,6 +185,183 @@ describe('/bots', () => {
       headers: authHeaders(),
     })
     expect(missing.statusCode).toBe(404)
+  })
+
+  it('DELETE other with conversations returns 204 and removes the chats', async () => {
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Travel', role: 'Flights' },
+    })
+    const bot = created.json() as BotBody
+
+    const chat = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: authHeaders(),
+      payload: { bot_id: bot.id },
+    })
+    expect(chat.statusCode).toBe(201)
+    const conversationId = (chat.json() as { id: string }).id
+
+    const response = await app!.inject({
+      method: 'DELETE',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+
+    expect(response.statusCode).toBe(204)
+
+    const missingBot = await app!.inject({
+      method: 'GET',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+    expect(missingBot.statusCode).toBe(404)
+
+    const missingChat = await app!.inject({
+      method: 'GET',
+      url: `/conversations/${conversationId}`,
+      headers: authHeaders(),
+    })
+    expect(missingChat.statusCode).toBe(404)
+  })
+
+  it('last_message_at is null when this user has no regular chats with the bot', async () => {
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Travel', role: 'Flights' },
+    })
+    const bot = created.json() as BotBody
+    expect(bot.last_message_at).toBeNull()
+
+    const got = await app!.inject({
+      method: 'GET',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+    expect(got.statusCode).toBe(200)
+    expect((got.json() as BotBody).last_message_at).toBeNull()
+
+    const listed = await app!.inject({
+      method: 'GET',
+      url: '/bots',
+      headers: authHeaders(),
+    })
+    const listedBot = (listed.json() as { bots: BotBody[] }).bots.find((row) => row.id === bot.id)
+    expect(listedBot?.last_message_at).toBeNull()
+  })
+
+  it('last_message_at is max regular conversation updated_at for this user', async () => {
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Travel', role: 'Flights' },
+    })
+    const bot = created.json() as BotBody
+
+    const older = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: authHeaders(),
+      payload: { bot_id: bot.id },
+    })
+    const newer = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: authHeaders(),
+      payload: { bot_id: bot.id },
+    })
+    expect(older.statusCode).toBe(201)
+    expect(newer.statusCode).toBe(201)
+    const olderId = (older.json() as { id: string }).id
+    const newerId = (newer.json() as { id: string }).id
+    const latest = '2026-09-10 12:00:00'
+    app!.db.prepare(`UPDATE conversations SET updated_at = '2026-09-01 00:00:00' WHERE id = ?`).run(olderId)
+    app!.db.prepare(`UPDATE conversations SET updated_at = ? WHERE id = ?`).run(latest, newerId)
+
+    const got = await app!.inject({
+      method: 'GET',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+    expect(got.statusCode).toBe(200)
+    expect((got.json() as BotBody).last_message_at).toBe(latest)
+
+    const listed = await app!.inject({
+      method: 'GET',
+      url: '/bots',
+      headers: authHeaders(),
+    })
+    const listedBot = (listed.json() as { bots: BotBody[] }).bots.find((row) => row.id === bot.id)
+    expect(listedBot?.last_message_at).toBe(latest)
+
+    const patched = await app!.inject({
+      method: 'PATCH',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+      payload: { name: 'Travel bot' },
+    })
+    expect(patched.statusCode).toBe(200)
+    expect((patched.json() as BotBody).last_message_at).toBe(latest)
+
+    const page = await app!.inject({
+      method: 'GET',
+      url: '/bots?limit=1',
+      headers: authHeaders(),
+    })
+    const pageBody = page.json() as { bots: BotBody[]; _links: { next?: { href: string } } }
+    expect(pageBody.bots[0]!.is_default).toBe(true)
+    expect(pageBody._links.next?.href).toMatch(/^\/bots\?limit=1&before=/)
+  })
+
+  it('last_message_at ignores other users’ chats and job conversations', async () => {
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Travel', role: 'Flights' },
+    })
+    const bot = created.json() as BotBody
+    const other = await seedTestUser(app!, 'other', 'password123')
+
+    const otherChat = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${other.token}` },
+      payload: { bot_id: bot.id },
+    })
+    expect(otherChat.statusCode).toBe(201)
+    const otherChatId = (otherChat.json() as { id: string; updated_at: string }).id
+    const otherUpdatedAt = '2026-09-10 15:00:00'
+    app!.db
+      .prepare(`UPDATE conversations SET updated_at = ? WHERE id = ?`)
+      .run(otherUpdatedAt, otherChatId)
+
+    const jobId = createJobConversation(app!.db, userId, 'operator', { name: 'Digest' })
+    app!.db
+      .prepare(`UPDATE conversations SET bot_id = ?, updated_at = '2026-09-10 18:00:00' WHERE id = ?`)
+      .run(bot.id, jobId)
+
+    const asOwner = await app!.inject({
+      method: 'GET',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+    expect(asOwner.statusCode).toBe(200)
+    expect((asOwner.json() as BotBody).last_message_at).toBeNull()
+
+    const asOther = await app!.inject({
+      method: 'GET',
+      url: `/bots/${bot.id}`,
+      headers: { authorization: `Bearer ${other.token}` },
+    })
+    expect(asOther.statusCode).toBe(200)
+    expect((asOther.json() as BotBody).last_message_at).toBe(otherUpdatedAt)
   })
 
   it('lists with HAL next when there is another page', async () => {

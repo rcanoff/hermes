@@ -5,6 +5,7 @@ import { getActiveRun } from '../src/db/repos/runs.js'
 import { insertMessage, listMessages } from '../src/db/repos/messages.js'
 import { getProcessByAssistantMessageIds } from '../src/db/repos/process.js'
 import { FakeHermesClient } from './helpers/hermes.js'
+import { GrokGatewayError } from '../src/services/grok-gateway-client.js'
 import { FakeGrokGatewayClient } from './helpers/grok-gateway.js'
 import { createTestApp } from './helpers/app.js'
 import { seedTestUser } from './helpers/users.js'
@@ -278,6 +279,89 @@ describe('grok send path', () => {
     expect(response.statusCode).toBe(409)
     expect(response.json()).toEqual({ error: 'grok_runtime' })
     expect(hermesClient.patchSessionModelRequests).toHaveLength(0)
+  })
+
+  it('interrupts a hanging grok prompt so the next send gets an assistant reply', async () => {
+    const first = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: authHeaders(),
+      payload: { text: 'Hey' },
+    })
+    expect(first.statusCode).toBe(202)
+
+    await waitFor(() => grokClient.prompts.length === 1)
+    await waitFor(() => getActiveRun(app!.db, conversationId) != null)
+
+    const interrupt = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/run/interrupt`,
+      headers: authHeaders(),
+    })
+    expect(interrupt.statusCode).toBe(204)
+    expect(grokClient.cancels).toEqual([conversationId])
+    await waitFor(() => getActiveRun(app!.db, conversationId) == null)
+
+    const second = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: authHeaders(),
+      payload: { text: 'Next' },
+    })
+    expect(second.statusCode).toBe(202)
+
+    await waitFor(() => grokClient.prompts.length === 2)
+    grokClient.pushEvent({ type: 'token', text: 'Hello again' }, 1)
+    grokClient.pushDone(1)
+    grokClient.close(1)
+
+    await waitFor(() =>
+      listMessages(app!.db, conversationId).some((message) => message.content === 'Hello again'),
+    )
+
+    expect(
+      listMessages(app!.db, conversationId).map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+    ).toEqual([
+      { role: 'user', content: 'Hey' },
+      { role: 'user', content: 'Next' },
+      { role: 'assistant', content: 'Hello again' },
+    ])
+    expect(
+      app!.db
+        .prepare(`SELECT status, error_code FROM message_runs ORDER BY started_at, id`)
+        .all(),
+    ).toEqual([
+      expect.objectContaining({ status: 'failed', error_code: 'interrupted' }),
+      expect.objectContaining({ status: 'completed', error_code: null }),
+    ])
+  })
+
+  it('retries once when grok prompt returns prompt_in_flight', async () => {
+    grokClient.nextPromptError = new GrokGatewayError('prompt_in_flight')
+
+    const response = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/messages`,
+      headers: authHeaders(),
+      payload: { text: 'Hello' },
+    })
+    expect(response.statusCode).toBe(202)
+
+    await waitFor(() => grokClient.cancels.includes(conversationId))
+    await waitFor(() => grokClient.prompts.length === 2)
+
+    grokClient.pushEvent({ type: 'token', text: 'Hi' })
+    grokClient.pushDone()
+    grokClient.close()
+
+    await waitFor(() => listMessages(app!.db, conversationId).some((message) => message.content === 'Hi'))
+    expect(listMessages(app!.db, conversationId)[1]).toMatchObject({
+      role: 'assistant',
+      content: 'Hi',
+    })
   })
 
   it('DELETE conversation drops the gateway session', async () => {

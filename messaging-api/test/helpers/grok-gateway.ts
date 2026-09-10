@@ -10,6 +10,12 @@ type QueueEntry =
   | { kind: 'error'; error: Error }
   | { kind: 'close' }
 
+function abortError(): Error {
+  const error = new Error('aborted')
+  error.name = 'AbortError'
+  return error
+}
+
 export class FakeGrokGatewayClient implements GrokGatewayClient {
   readonly putSessions: Array<{ conversationId: string; soul: string; cwd?: string }> = []
   readonly prompts: Array<{ conversationId: string; text: string; user_id: string }> = []
@@ -20,12 +26,16 @@ export class FakeGrokGatewayClient implements GrokGatewayClient {
     text?: string
   }> = []
   readonly deletes: string[] = []
+  readonly cancels: string[] = []
   down = false
+  nextPromptError: Error | null = null
 
   private readonly queues = new Map<number, QueueEntry[]>()
   private readonly waiters = new Map<number, Array<() => void>>()
   private readonly preStartQueue: QueueEntry[] = []
   private nextStreamId = 0
+  private readonly openStreams = new Map<string, number>()
+  private readonly inFlight = new Set<string>()
 
   async health(): Promise<{ ok: true; grok: 'up' | 'down' }> {
     return { ok: true, grok: this.down ? 'down' : 'up' }
@@ -41,30 +51,61 @@ export class FakeGrokGatewayClient implements GrokGatewayClient {
   async *prompt(
     conversationId: string,
     body: { text: string; user_id: string },
+    signal?: AbortSignal,
   ): AsyncIterable<GrokGatewayEvent> {
     if (this.down) {
       throw new GrokGatewayError('grok_unavailable')
     }
 
-    const streamId = this.nextStreamId++
     this.prompts.push({ conversationId, text: body.text, user_id: body.user_id })
+
+    if (this.nextPromptError) {
+      const error = this.nextPromptError
+      this.nextPromptError = null
+      throw error
+    }
+
+    if (this.inFlight.has(conversationId)) {
+      throw new GrokGatewayError('prompt_in_flight')
+    }
+
+    const streamId = this.nextStreamId++
     const initialQueue = streamId === 0 && this.preStartQueue.length > 0 ? [...this.preStartQueue] : []
     if (streamId === 0) {
       this.preStartQueue.length = 0
     }
     this.queues.set(streamId, initialQueue)
     this.waiters.set(streamId, [])
+    this.openStreams.set(conversationId, streamId)
+    this.inFlight.add(conversationId)
 
-    while (true) {
-      const entry = await this.nextEntry(streamId)
-      if (entry.kind === 'event') {
-        yield entry.event
-        continue
+    const abort = () => this.abortStream(streamId)
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) {
+      abort()
+    }
+
+    try {
+      while (true) {
+        const entry = await this.nextEntry(streamId)
+        if (entry.kind === 'event') {
+          yield entry.event
+          continue
+        }
+        if (entry.kind === 'error') {
+          throw entry.error
+        }
+        this.inFlight.delete(conversationId)
+        return
       }
-      if (entry.kind === 'error') {
-        throw entry.error
+    } catch (error) {
+      if (!(error instanceof Error && error.name === 'AbortError')) {
+        this.inFlight.delete(conversationId)
       }
-      return
+      throw error
+    } finally {
+      signal?.removeEventListener('abort', abort)
+      this.openStreams.delete(conversationId)
     }
   }
 
@@ -83,8 +124,24 @@ export class FakeGrokGatewayClient implements GrokGatewayClient {
     })
   }
 
+  async cancelPrompt(conversationId: string): Promise<void> {
+    this.cancels.push(conversationId)
+    this.inFlight.delete(conversationId)
+    const streamId = this.openStreams.get(conversationId)
+    if (streamId !== undefined) {
+      this.abortStream(streamId)
+    }
+  }
+
   async deleteSession(conversationId: string): Promise<void> {
     this.deletes.push(conversationId)
+  }
+
+  private abortStream(streamId: number): void {
+    if (!this.queues.has(streamId)) {
+      return
+    }
+    this.enqueue(streamId, { kind: 'error', error: abortError() })
   }
 
   pushEvent(event: GrokGatewayEvent, streamId = 0): void {

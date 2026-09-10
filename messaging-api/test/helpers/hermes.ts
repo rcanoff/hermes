@@ -75,7 +75,9 @@ export class FakeHermesClient implements HermesClient {
 
   async *streamChat(input: StreamChatInput): AsyncIterable<HermesStreamEvent> {
     const streamId = this.nextStreamId++
-    this.requests.push(input)
+    const { signal, ...stored } = input
+    this.requests.push(stored)
+    void signal
     const initialQueue = streamId === 0 && this.preStartQueue.length > 0 ? [...this.preStartQueue] : []
     if (streamId === 0) {
       this.preStartQueue.length = 0
@@ -83,6 +85,17 @@ export class FakeHermesClient implements HermesClient {
     this.queues.set(streamId, initialQueue)
     this.waiters.set(streamId, [])
 
+    const abort = () => {
+      const error = new Error('aborted')
+      error.name = 'AbortError'
+      this.enqueue(streamId, { kind: 'error', error })
+    }
+    input.signal?.addEventListener('abort', abort, { once: true })
+    if (input.signal?.aborted) {
+      abort()
+    }
+
+    try {
     while (true) {
       const entry = await this.nextEntry(streamId)
 
@@ -96,6 +109,9 @@ export class FakeHermesClient implements HermesClient {
       }
 
       return
+    }
+    } finally {
+      input.signal?.removeEventListener('abort', abort)
     }
   }
 

@@ -37,8 +37,10 @@ import { buildHermesMessages, mapDelegationForHermes } from './prompt-builder.js
 import type { HermesClient } from './hermes-client.js'
 import {
   createGrokGatewayClient,
+  GROK_PROMPT_IN_FLIGHT_RETRY_MS,
   GrokGatewayError,
   type GrokGatewayClient,
+  type GrokGatewayEvent,
 } from './grok-gateway-client.js'
 import { cancelPendingInputsForConversation, insertPendingInputCards } from './grok-input.js'
 import {
@@ -53,6 +55,7 @@ import {
 import type { AuxiliaryLlmConfig } from './auxiliary-llm-client.js'
 import { listHermesJobIdsFromFile } from '../lib/hermes-cron-jobs.js'
 import { autoLinkNewCompanionCronJobs } from './companion-cron-auto-link.js'
+import type { RunAbortRegistry } from './run-abort-registry.js'
 
 export interface ExecuteAssistantRunInput {
   db: Database.Database
@@ -80,12 +83,18 @@ export interface ExecuteAssistantRunInput {
     content: string
   }) => void | Promise<void>
   log?: (message: string, meta?: Record<string, unknown>) => void
+  abortRegistry?: RunAbortRegistry
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
 }
 
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
   const runId =
     input.runId ??
     createRun(input.db, input.conversationId, input.userMessageId, input.originSessionId ?? 'legacy')
+  const abortSignal = input.abortRegistry?.start(input.conversationId)
   const history = listMessages(input.db, input.conversationId)
   const attachmentMap = listAttachmentsForMessages(
     input.db,
@@ -155,16 +164,23 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
   const conversation = getConversationForUser(input.db, input.userId, input.conversationId)
   const bot = conversation?.bot_id ? getBotById(input.db, conversation.bot_id) : undefined
   if (conversation && bot && normalizeBotRuntime(bot.runtime) === 'grok') {
-    return executeGrokAssistantRun({
-      ...input,
-      runId,
-      streamCtx,
-      conversation,
-      bot,
-      processLines,
-      beginReplyPhase,
-      publishProcessLine,
-    })
+    try {
+      return await executeGrokAssistantRun({
+        ...input,
+        runId,
+        streamCtx,
+        conversation,
+        bot,
+        processLines,
+        beginReplyPhase,
+        publishProcessLine,
+        abortSignal,
+      })
+    } finally {
+      if (abortSignal) {
+        input.abortRegistry?.finish(input.conversationId, abortSignal)
+      }
+    }
   }
 
   try {
@@ -195,7 +211,11 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       messages: hermesMessages,
       companionUserId: input.userId,
       ...(profileSlug ? { profileSlug } : {}),
+      ...(abortSignal ? { signal: abortSignal } : {}),
     })) {
+      if (abortSignal?.aborted) {
+        break
+      }
       if (event.type === 'reasoning' && event.text) {
         reasoningBuffer += event.text
         sawToolingActivity = true
@@ -256,6 +276,22 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       }
     }
 
+    if (abortSignal?.aborted) {
+      return finalizeInterruptedRun({
+        db: input.db,
+        hub: input.hub,
+        userId: input.userId,
+        runId,
+        conversationId: input.conversationId,
+        hermesSessionId: input.hermesSessionId,
+        assistantText,
+        processLines,
+        streamCtx,
+        companionModels: input.companionModels ?? DEFAULT_COMPANION_MODELS,
+        onAssistantMessageCommitted: input.onAssistantMessageCommitted,
+      })
+    }
+
     if (!sawDone) {
       throw new Error('Hermes stream ended without a done event')
     }
@@ -307,10 +343,29 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
     return assistantMessageId
   } catch (error) {
+    if (abortSignal?.aborted || isAbortError(error)) {
+      return finalizeInterruptedRun({
+        db: input.db,
+        hub: input.hub,
+        userId: input.userId,
+        runId,
+        conversationId: input.conversationId,
+        hermesSessionId: input.hermesSessionId,
+        assistantText,
+        processLines,
+        streamCtx,
+        companionModels: input.companionModels ?? DEFAULT_COMPANION_MODELS,
+        onAssistantMessageCommitted: input.onAssistantMessageCommitted,
+      })
+    }
     const message = error instanceof Error ? error.message : 'unknown'
     markRunFailed(input.db, runId, 'hermes_stream_failed', message)
     publishRunError(streamCtx, 'hermes_stream_failed')
     throw error
+  } finally {
+    if (abortSignal) {
+      input.abortRegistry?.finish(input.conversationId, abortSignal)
+    }
   }
 }
 
@@ -323,6 +378,7 @@ async function executeGrokAssistantRun(
     processLines: ToolingLine[]
     beginReplyPhase: () => void
     publishProcessLine: (line: ToolingLine) => void
+    abortSignal?: AbortSignal
   },
 ): Promise<string> {
   const grokClient = input.grokGatewayClient ?? createGrokGatewayClient('', '')
@@ -359,10 +415,18 @@ async function executeGrokAssistantRun(
     }
     const text = grokPromptText(input.db, trigger, input.conversation.bot_id)
 
-    for await (const event of grokClient.prompt(input.conversationId, {
-      text,
-      user_id: input.userId,
-    })) {
+    for await (const event of promptGrokTurn(
+      grokClient,
+      input.conversationId,
+      {
+        text,
+        user_id: input.userId,
+      },
+      input.abortSignal,
+    )) {
+      if (input.abortSignal?.aborted) {
+        break
+      }
       if (event.type === 'tooling') {
         if (event.phase === 'reasoning') {
           if (event.text) {
@@ -417,6 +481,22 @@ async function executeGrokAssistantRun(
       }
     }
 
+    if (input.abortSignal?.aborted) {
+      return finalizeInterruptedRun({
+        db: input.db,
+        hub: input.hub,
+        userId: input.userId,
+        runId: input.runId,
+        conversationId: input.conversationId,
+        hermesSessionId: input.hermesSessionId,
+        assistantText,
+        processLines: input.processLines,
+        streamCtx: input.streamCtx,
+        companionModels: catalog,
+        onAssistantMessageCommitted: input.onAssistantMessageCommitted,
+      })
+    }
+
     if (!sawDone) {
       throw new GrokGatewayError('grok_unavailable', 'stream_ended')
     }
@@ -441,6 +521,21 @@ async function executeGrokAssistantRun(
     publishReplyDone(input.streamCtx, assistantMessageId)
     return assistantMessageId
   } catch (error) {
+    if (input.abortSignal?.aborted || isAbortError(error)) {
+      return finalizeInterruptedRun({
+        db: input.db,
+        hub: input.hub,
+        userId: input.userId,
+        runId: input.runId,
+        conversationId: input.conversationId,
+        hermesSessionId: input.hermesSessionId,
+        assistantText,
+        processLines: input.processLines,
+        streamCtx: input.streamCtx,
+        companionModels: catalog,
+        onAssistantMessageCommitted: input.onAssistantMessageCommitted,
+      })
+    }
     cancelPendingInputsForConversation({
       db: input.db,
       hub: input.hub,
@@ -453,6 +548,77 @@ async function executeGrokAssistantRun(
     publishRunError(input.streamCtx, 'grok_unavailable')
     throw error
   }
+}
+
+async function finalizeInterruptedRun(input: {
+  db: Database.Database
+  hub: StreamHub
+  userId: string
+  runId: string
+  conversationId: string
+  hermesSessionId: string
+  assistantText: string
+  processLines: ToolingLine[]
+  streamCtx: RunEventContext
+  companionModels: CuratedModelEntry[]
+  onAssistantMessageCommitted?: (ctx: { messageId: string; content: string }) => void | Promise<void>
+}): Promise<string> {
+  if (input.assistantText.trim()) {
+    const assistantMessageId = persistCompletedRun(
+      input.db,
+      input.hub,
+      input.userId,
+      input.runId,
+      input.conversationId,
+      input.hermesSessionId,
+      input.assistantText,
+      input.processLines,
+      input.companionModels,
+    )
+    await input.onAssistantMessageCommitted?.({
+      messageId: assistantMessageId,
+      content: input.assistantText,
+    })
+    publishReplyDone(input.streamCtx, assistantMessageId)
+    return assistantMessageId
+  }
+
+  markRunFailed(input.db, input.runId, 'interrupted', 'Interrupted by user')
+  publishRunError(input.streamCtx, 'interrupted')
+  return ''
+}
+
+async function* promptGrokTurn(
+  client: GrokGatewayClient,
+  conversationId: string,
+  body: { text: string; user_id: string },
+  signal?: AbortSignal,
+): AsyncIterable<GrokGatewayEvent> {
+  try {
+    yield* client.prompt(conversationId, body, signal)
+    return
+  } catch (error) {
+    if (
+      !(error instanceof GrokGatewayError) ||
+      error.code !== 'prompt_in_flight' ||
+      signal?.aborted
+    ) {
+      throw error
+    }
+  }
+
+  try {
+    await client.cancelPrompt(conversationId)
+  } catch {
+    // Cancel is best-effort; the retry is what unblocks a racing next send.
+  }
+  await new Promise((resolve) => setTimeout(resolve, GROK_PROMPT_IN_FLIGHT_RETRY_MS))
+  if (signal?.aborted) {
+    const abortError = new Error('aborted')
+    abortError.name = 'AbortError'
+    throw abortError
+  }
+  yield* client.prompt(conversationId, body, signal)
 }
 
 function grokPromptText(

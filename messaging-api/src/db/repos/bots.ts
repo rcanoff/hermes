@@ -272,9 +272,57 @@ export function getBotNotificationsEnabledMap(
   return result
 }
 
+export function getBotLastMessageAtMap(
+  db: Database.Database,
+  userId: string,
+  botIds: string[],
+): Map<string, string | null> {
+  const result = new Map<string, string | null>()
+  for (const botId of botIds) {
+    result.set(botId, null)
+  }
+
+  if (botIds.length === 0) {
+    return result
+  }
+
+  const placeholders = botIds.map(() => '?').join(', ')
+  const rows = db
+    .prepare(`
+      SELECT bot_id, MAX(updated_at) AS last_message_at
+      FROM conversations
+      WHERE user_id = ?
+        AND kind = 'regular'
+        AND bot_id IN (${placeholders})
+      GROUP BY bot_id
+    `)
+    .all(userId, ...botIds) as Array<{ bot_id: string; last_message_at: string | null }>
+
+  for (const row of rows) {
+    result.set(row.bot_id, row.last_message_at)
+  }
+
+  return result
+}
+
 export function deleteBot(db: Database.Database, id: string): boolean {
-  const result = db.prepare(`DELETE FROM bots WHERE id = ?`).run(id)
-  return result.changes === 1
+  return db.transaction(() => {
+    const conversationIds = db
+      .prepare(`SELECT id FROM conversations WHERE bot_id = ? OR peer_bot_id = ?`)
+      .all(id, id) as Array<{ id: string }>
+
+    for (const row of conversationIds) {
+      db.prepare('DELETE FROM message_runs WHERE conversation_id = ?').run(row.id)
+      db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(row.id)
+      db.prepare('DELETE FROM conversations WHERE id = ?').run(row.id)
+    }
+
+    db.prepare('UPDATE messages SET from_bot_id = NULL WHERE from_bot_id = ?').run(id)
+    db.prepare('UPDATE messages SET to_bot_id = NULL WHERE to_bot_id = ?').run(id)
+
+    const result = db.prepare(`DELETE FROM bots WHERE id = ?`).run(id)
+    return result.changes === 1
+  })()
 }
 
 export function listBotsPage(

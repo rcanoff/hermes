@@ -279,6 +279,20 @@ export function listRecentModelsForUser(
   return recents
 }
 
+export function listConversationsReferencingBot(
+  db: Database.Database,
+  botId: string,
+): ConversationRow[] {
+  return db
+    .prepare(`
+      SELECT ${CONVERSATION_COLUMNS}
+      FROM conversations
+      WHERE bot_id = ? OR peer_bot_id = ?
+      ORDER BY updated_at DESC, id DESC
+    `)
+    .all(botId, botId) as ConversationRow[]
+}
+
 export function listConversations(db: Database.Database, userId: string): ConversationRow[] {
   return db
     .prepare(`
