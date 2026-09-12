@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { insertBot } from '../src/db/repos/bots.js'
+import { createConversation } from '../src/db/repos/conversations.js'
 import { getActiveRun } from '../src/db/repos/runs.js'
 import { insertMessage, listMessages } from '../src/db/repos/messages.js'
 import { getProcessByAssistantMessageIds } from '../src/db/repos/process.js'
@@ -79,7 +80,9 @@ describe('grok send path', () => {
     await waitFor(() => listMessages(app!.db, conversationId).length === 2)
 
     expect(hermesClient.requests).toHaveLength(0)
-    expect(grokClient.putSessions).toHaveLength(1)
+    expect(grokClient.putSessions).toEqual([
+      expect.objectContaining({ conversationId, model: 'grok-4.6' }),
+    ])
     expect(grokClient.prompts).toEqual([
       { conversationId, text: 'Hello Grok', user_id: userId },
     ])
@@ -269,15 +272,47 @@ describe('grok send path', () => {
     expect(response.json()).toEqual({ error: 'run_not_running' })
   })
 
-  it('PATCH model on a grok conversation returns 409 grok_runtime', async () => {
+  it('creates grok conversations with the Grok TUI default model', async () => {
+    expect(
+      app!.db
+        .prepare('SELECT model, provider FROM conversations WHERE id = ?')
+        .get(conversationId),
+    ).toEqual({ model: 'grok-4.6', provider: 'grok' })
+  })
+
+  it('rejects a Hermes model on a grok conversation with 400 invalid_request', async () => {
     const response = await app!.inject({
       method: 'PATCH',
       url: `/conversations/${conversationId}`,
       headers: authHeaders(),
       payload: { model: 'gpt-5.4-mini', provider: 'openai-codex' },
     })
-    expect(response.statusCode).toBe(409)
-    expect(response.json()).toEqual({ error: 'grok_runtime' })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toEqual({ error: 'invalid_request' })
+    expect(hermesClient.patchSessionModelRequests).toHaveLength(0)
+    expect(grokClient.patchSessionModels).toHaveLength(0)
+  })
+
+  it('PATCHes a Grok TUI model onto a grok conversation', async () => {
+    const response = await app!.inject({
+      method: 'PATCH',
+      url: `/conversations/${conversationId}`,
+      headers: authHeaders(),
+      payload: { model: 'grok-4.5', provider: 'grok' },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      id: conversationId,
+      model: 'grok-4.5',
+      provider: 'grok',
+      model_display: 'grok-4.5',
+    })
+    expect(
+      app!.db
+        .prepare('SELECT model, provider FROM conversations WHERE id = ?')
+        .get(conversationId),
+    ).toEqual({ model: 'grok-4.5', provider: 'grok' })
+    expect(grokClient.patchSessionModels).toEqual([{ conversationId, model: 'grok-4.5' }])
     expect(hermesClient.patchSessionModelRequests).toHaveLength(0)
   })
 
@@ -400,7 +435,7 @@ describe('grok disabled when gateway URL is empty', () => {
     app = undefined
   })
 
-  it('fails grok sends with grok_unavailable and never calls Hermes', async () => {
+  it('fails grok conversation create with grok_unavailable when the gateway is down', async () => {
     const bot = insertBot(app!.db, {
       slug: 'grok',
       name: 'Grok',
@@ -414,7 +449,19 @@ describe('grok disabled when gateway URL is empty', () => {
       headers: { authorization: `Bearer ${token}` },
       payload: { bot_id: bot.id },
     })
-    const conversationId = (created.json() as { id: string }).id
+    expect(created.statusCode).toBe(503)
+    expect(created.json()).toEqual({ error: 'grok_unavailable' })
+  })
+
+  it('fails grok sends with grok_unavailable and never calls Hermes', async () => {
+    const bot = insertBot(app!.db, {
+      slug: 'grok',
+      name: 'Grok',
+      role: 'Mac agent',
+      soul: 'You are Grok.',
+      runtime: 'grok',
+    })
+    const conversationId = createConversation(app!.db, userId, 'hs-disabled', null, undefined, bot.id)
     const events: SessionStreamEvent[] = []
     app!.streamHub.subscribeSession(sessionId, (event) => events.push(event))
 

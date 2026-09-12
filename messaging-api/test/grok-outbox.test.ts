@@ -175,6 +175,76 @@ describe('HttpGrokGatewayClient outbox', () => {
   })
 })
 
+describe('HttpGrokGatewayClient models', () => {
+  it('GETs /models and PATCHes /sessions/:id model', async () => {
+    const originalFetch = globalThis.fetch
+    const calls: Array<{ url: string; method: string | undefined; body: string | undefined }> = []
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(url),
+        method: init?.method,
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      })
+      if (String(url).endsWith('/models')) {
+        return new Response(
+          JSON.stringify({
+            models: [
+              { id: 'grok-4.6', display: 'grok-4.6', default: true },
+              { id: 'grok-4.5', display: 'grok-4.5' },
+            ],
+            default: 'grok-4.6',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      return new Response(null, { status: 204 })
+    }) as typeof fetch
+
+    try {
+      const client = new HttpGrokGatewayClient('http://grok.test', 'tok')
+      await expect(client.listModels()).resolves.toEqual({
+        models: [
+          { id: 'grok-4.6', display: 'grok-4.6', default: true },
+          { id: 'grok-4.5', display: 'grok-4.5' },
+        ],
+        default: 'grok-4.6',
+      })
+      await client.patchSessionModel('c1', 'grok-4.5')
+      await client.putSession('c1', { soul: 'You are Grok.', model: 'grok-4.5' })
+      expect(calls).toEqual([
+        { url: 'http://grok.test/models', method: 'GET', body: undefined },
+        {
+          url: 'http://grok.test/sessions/c1',
+          method: 'PATCH',
+          body: JSON.stringify({ model: 'grok-4.5' }),
+        },
+        {
+          url: 'http://grok.test/sessions/c1',
+          method: 'PUT',
+          body: JSON.stringify({ soul: 'You are Grok.', model: 'grok-4.5' }),
+        },
+      ])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('swallows PATCH session 404 so model can be stored before the first prompt', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response(JSON.stringify({ error: 'not_found' }), {
+      status: 404,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch
+
+    try {
+      const client = new HttpGrokGatewayClient('http://grok.test', 'tok')
+      await expect(client.patchSessionModel('missing', 'grok-4.5')).resolves.toBeUndefined()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+})
+
 describe('grok outbox drain', () => {
   it('boot with failed run + outbox done persists the assistant and acks', async () => {
     const db = new Database(':memory:')

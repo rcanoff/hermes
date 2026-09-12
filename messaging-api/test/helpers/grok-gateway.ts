@@ -2,11 +2,21 @@ import type {
   GrokGatewayClient,
   GrokGatewayEvent,
   GrokInputAction,
+  GrokModelsResponse,
   GrokOutboxEvent,
   GrokOutboxItem,
   GrokOutboxSnapshot,
+  GrokPutSessionBody,
 } from '../../src/services/grok-gateway-client.js'
 import { GrokGatewayError } from '../../src/services/grok-gateway-client.js'
+
+export const FAKE_GROK_MODELS_RESPONSE: GrokModelsResponse = {
+  models: [
+    { id: 'grok-4.6', display: 'grok-4.6', default: true },
+    { id: 'grok-4.5', display: 'grok-4.5' },
+  ],
+  default: 'grok-4.6',
+}
 
 type QueueEntry =
   | { kind: 'event'; event: GrokGatewayEvent }
@@ -20,7 +30,12 @@ function abortError(): Error {
 }
 
 export class FakeGrokGatewayClient implements GrokGatewayClient {
-  readonly putSessions: Array<{ conversationId: string; soul: string; cwd?: string }> = []
+  readonly putSessions: Array<{ conversationId: string; soul: string; cwd?: string; model?: string }> = []
+  readonly patchSessionModels: Array<{ conversationId: string; model: string }> = []
+  models: GrokModelsResponse = {
+    models: FAKE_GROK_MODELS_RESPONSE.models.map((entry) => ({ ...entry })),
+    default: FAKE_GROK_MODELS_RESPONSE.default,
+  }
   readonly prompts: Array<{ conversationId: string; text: string; user_id: string }> = []
   readonly inputs: Array<{
     conversationId: string
@@ -47,11 +62,28 @@ export class FakeGrokGatewayClient implements GrokGatewayClient {
     return { ok: true, grok: this.down ? 'down' : 'up' }
   }
 
-  async putSession(conversationId: string, body: { soul: string; cwd?: string }): Promise<void> {
+  async listModels(): Promise<GrokModelsResponse> {
     if (this.down) {
       throw new GrokGatewayError('grok_unavailable')
     }
-    this.putSessions.push({ conversationId, soul: body.soul, cwd: body.cwd })
+    return {
+      models: this.models.models.map((entry) => ({ ...entry })),
+      default: this.models.default,
+    }
+  }
+
+  async putSession(conversationId: string, body: GrokPutSessionBody): Promise<void> {
+    if (this.down) {
+      throw new GrokGatewayError('grok_unavailable')
+    }
+    this.putSessions.push({ conversationId, soul: body.soul, cwd: body.cwd, model: body.model })
+  }
+
+  async patchSessionModel(conversationId: string, model: string): Promise<void> {
+    if (this.down) {
+      throw new GrokGatewayError('grok_unavailable')
+    }
+    this.patchSessionModels.push({ conversationId, model })
   }
 
   async *prompt(

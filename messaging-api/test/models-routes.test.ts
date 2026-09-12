@@ -7,9 +7,12 @@ import {
   COMPANION_DEFAULT_MODEL,
   COMPANION_DEFAULT_PROVIDER,
   DEFAULT_COMPANION_MODELS,
+  GROK_TUI_PROVIDER,
+  curatedGrokTuiModels,
 } from '../src/lib/companion-models.js'
 import { createConversation, createJobConversation } from '../src/db/repos/conversations.js'
 import { createTestApp } from './helpers/app.js'
+import { FAKE_GROK_MODELS_RESPONSE, FakeGrokGatewayClient } from './helpers/grok-gateway.js'
 import { seedTestUser } from './helpers/users.js'
 
 describe('GET /models', () => {
@@ -156,6 +159,143 @@ describe('GET /models', () => {
           display: 'grok-4.3',
         },
       ],
+    })
+  })
+
+  it('treats runtime=hermes as the curated Hermes catalog', async () => {
+    const { token } = await seedTestUser(app, 'operator', 'password123')
+    const omitted = await app.inject({
+      method: 'GET',
+      url: '/models',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    const hermes = await app.inject({
+      method: 'GET',
+      url: '/models?runtime=hermes',
+      headers: { authorization: `Bearer ${token}` },
+    })
+
+    expect(hermes.statusCode).toBe(200)
+    expect(hermes.json()).toEqual(omitted.json())
+    expect(hermes.json()).toMatchObject({
+      models: DEFAULT_COMPANION_MODELS,
+      default: {
+        model: COMPANION_DEFAULT_MODEL,
+        provider: COMPANION_DEFAULT_PROVIDER,
+      },
+    })
+  })
+
+  it('returns 400 for an unknown runtime', async () => {
+    const { token } = await seedTestUser(app, 'operator', 'password123')
+    const response = await app.inject({
+      method: 'GET',
+      url: '/models?runtime=openai',
+      headers: { authorization: `Bearer ${token}` },
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toEqual({ error: 'invalid_request' })
+  })
+
+  it('returns 503 grok_unavailable when runtime=grok and the gateway is down', async () => {
+    const { token } = await seedTestUser(app, 'operator', 'password123')
+    const response = await app.inject({
+      method: 'GET',
+      url: '/models?runtime=grok',
+      headers: { authorization: `Bearer ${token}` },
+    })
+
+    expect(response.statusCode).toBe(503)
+    expect(response.json()).toEqual({ error: 'grok_unavailable' })
+  })
+})
+
+describe('GET /models?runtime=grok', () => {
+  let app: FastifyInstance
+  let grokClient: FakeGrokGatewayClient
+
+  beforeEach(async () => {
+    grokClient = new FakeGrokGatewayClient()
+    app = await createTestApp({ grokGatewayClient: grokClient })
+    await app.ready()
+  })
+
+  afterEach(async () => {
+    await app.close()
+  })
+
+  it('returns Grok TUI models and leaves the Hermes catalog on GET /models', async () => {
+    const operator = await seedTestUser(app, 'operator', 'password123')
+    const hermesId = createConversation(app.db, operator.id, 'hs-hermes', null, {
+      model: 'gpt-5.4-mini',
+      provider: 'openai-codex',
+    })
+    const grokId = createConversation(app.db, operator.id, 'hs-grok', null, {
+      model: 'grok-4.5',
+      provider: GROK_TUI_PROVIDER,
+    })
+    const grokUnknownId = createConversation(app.db, operator.id, 'hs-grok-unknown', null, {
+      model: 'grok-old',
+      provider: GROK_TUI_PROVIDER,
+    })
+    app.db
+      .prepare(`UPDATE conversations SET updated_at = datetime('now', '-3 hours') WHERE id = ?`)
+      .run(hermesId)
+    app.db
+      .prepare(`UPDATE conversations SET updated_at = datetime('now', '-2 hours') WHERE id = ?`)
+      .run(grokId)
+    app.db
+      .prepare(`UPDATE conversations SET updated_at = datetime('now', '-1 hour') WHERE id = ?`)
+      .run(grokUnknownId)
+
+    const grok = await app.inject({
+      method: 'GET',
+      url: '/models?runtime=grok',
+      headers: { authorization: `Bearer ${operator.token}` },
+    })
+    const hermes = await app.inject({
+      method: 'GET',
+      url: '/models',
+      headers: { authorization: `Bearer ${operator.token}` },
+    })
+
+    expect(grok.statusCode).toBe(200)
+    expect(grok.json()).toEqual({
+      models: curatedGrokTuiModels(FAKE_GROK_MODELS_RESPONSE.models),
+      recents: [
+        {
+          model: 'grok-old',
+          provider: GROK_TUI_PROVIDER,
+          display: 'grok-old',
+        },
+        {
+          model: 'grok-4.5',
+          provider: GROK_TUI_PROVIDER,
+          display: 'grok-4.5',
+          subtitle: 'Grok TUI',
+        },
+      ],
+      default: {
+        model: 'grok-4.6',
+        provider: GROK_TUI_PROVIDER,
+      },
+    })
+    expect(hermes.statusCode).toBe(200)
+    expect(hermes.json()).toEqual({
+      models: DEFAULT_COMPANION_MODELS,
+      recents: [
+        {
+          model: 'gpt-5.4-mini',
+          provider: 'openai-codex',
+          display: 'gpt-5.4-mini',
+          subtitle: 'OpenAI Codex',
+        },
+      ],
+      default: {
+        model: COMPANION_DEFAULT_MODEL,
+        provider: COMPANION_DEFAULT_PROVIDER,
+      },
     })
   })
 })

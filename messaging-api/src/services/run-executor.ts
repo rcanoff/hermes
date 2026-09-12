@@ -397,7 +397,10 @@ async function executeGrokAssistantRun(
     const soul = [soulForResponse(input.bot, input.hermesHome ?? ''), rosterPrompt]
       .filter((part) => part.trim())
       .join('\n\n')
-    await grokClient.putSession(input.conversationId, { soul })
+    await grokClient.putSession(input.conversationId, {
+      soul,
+      ...(input.conversation.model ? { model: input.conversation.model } : {}),
+    })
 
     const trigger = getMessage(input.db, input.conversationId, input.userMessageId)
     if (!trigger) {

@@ -1,5 +1,7 @@
 export const COMPANION_DEFAULT_MODEL = 'grok-composer-2.5-fast'
 export const COMPANION_DEFAULT_PROVIDER = 'xai-oauth'
+export const GROK_TUI_PROVIDER = 'grok'
+export const GROK_TUI_SUBTITLE = 'Grok TUI'
 
 export interface CuratedModelEntry {
   model: string
@@ -97,4 +99,15 @@ export function assertCuratedModel(
   if (!catalog.some((entry) => entry.model === model && entry.provider === provider)) {
     throw new Error('invalid_model')
   }
+}
+
+export function curatedGrokTuiModels(
+  models: Array<{ id: string; display: string }>,
+): CuratedModelEntry[] {
+  return models.map((entry) => ({
+    model: entry.id,
+    provider: GROK_TUI_PROVIDER,
+    display: entry.display,
+    subtitle: GROK_TUI_SUBTITLE,
+  }))
 }

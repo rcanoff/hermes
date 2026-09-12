@@ -12,13 +12,22 @@ import { buildBotRosterPrompt } from '../lib/bot-roster.js'
 import { DEFAULT_BOT_SLUG } from '../lib/hermes-profile.js'
 import { listMessages } from '../db/repos/messages.js'
 import { getActiveRun } from '../db/repos/runs.js'
-import { assertCuratedModel, type CuratedModelEntry } from '../lib/companion-models.js'
+import {
+  assertCuratedModel,
+  curatedGrokTuiModels,
+  type CuratedModelEntry,
+} from '../lib/companion-models.js'
 import { resolveJobConversationBootstrap } from '../lib/job-conversation.js'
+import { GrokGatewayError, type GrokGatewayClient } from './grok-gateway-client.js'
 import type { HermesClient } from './hermes-client.js'
 import { buildHermesMessages } from './prompt-builder.js'
 import { scheduleConversationSessionWarmup } from './session-warmup.js'
 
-export type ModelChangeErrorCode = 'invalid_request' | 'run_conflict' | 'invalid_model' | 'grok_runtime'
+export type ModelChangeErrorCode =
+  | 'invalid_request'
+  | 'run_conflict'
+  | 'invalid_model'
+  | 'grok_unavailable'
 
 export class ModelChangeError extends Error {
   constructor(readonly code: ModelChangeErrorCode) {
@@ -99,6 +108,7 @@ export async function rewarmSessionTranscript(input: {
 export async function applyConversationModelChange(input: {
   db: Database.Database
   hermesClient: HermesClient
+  grokGatewayClient?: GrokGatewayClient
   catalog: CuratedModelEntry[]
   userId: string
   conversation: ConversationRow
@@ -108,6 +118,14 @@ export async function applyConversationModelChange(input: {
   attachmentsDir?: string
   visionHistoryMaxBytes?: number
 }): Promise<ModelChangeResult> {
+  const bot = input.conversation.bot_id ? getBotById(input.db, input.conversation.bot_id) : undefined
+  if (bot && normalizeBotRuntime(bot.runtime) === 'grok') {
+    if (input.conversation.kind === 'job') {
+      throw new ModelChangeError('invalid_request')
+    }
+    return applyGrokConversationModelChange(input)
+  }
+
   try {
     assertCuratedModel(input.catalog, input.model, input.provider)
   } catch {
@@ -116,11 +134,6 @@ export async function applyConversationModelChange(input: {
 
   if (input.conversation.kind === 'job') {
     throw new ModelChangeError('invalid_request')
-  }
-
-  const bot = input.conversation.bot_id ? getBotById(input.db, input.conversation.bot_id) : undefined
-  if (bot && normalizeBotRuntime(bot.runtime) === 'grok') {
-    throw new ModelChangeError('grok_runtime')
   }
 
   if (getActiveRun(input.db, input.conversation.id)) {
@@ -187,5 +200,65 @@ export async function applyConversationModelChange(input: {
     providerChanged: true,
     previousHermesSessionId,
     hermesSessionId,
+  }
+}
+
+async function applyGrokConversationModelChange(input: {
+  db: Database.Database
+  grokGatewayClient?: GrokGatewayClient
+  conversation: ConversationRow
+  model: string
+  provider: string
+}): Promise<ModelChangeResult> {
+  if (getActiveRun(input.db, input.conversation.id)) {
+    throw new ModelChangeError('run_conflict')
+  }
+
+  if (!input.grokGatewayClient) {
+    throw new ModelChangeError('grok_unavailable')
+  }
+
+  let catalog: CuratedModelEntry[]
+  try {
+    const list = await input.grokGatewayClient.listModels()
+    catalog = curatedGrokTuiModels(list.models)
+  } catch (error) {
+    if (error instanceof GrokGatewayError && error.code === 'grok_unavailable') {
+      throw new ModelChangeError('grok_unavailable')
+    }
+    throw error
+  }
+
+  try {
+    assertCuratedModel(catalog, input.model, input.provider)
+  } catch {
+    throw new ModelChangeError('invalid_request')
+  }
+
+  try {
+    await input.grokGatewayClient.patchSessionModel(input.conversation.id, input.model)
+  } catch (error) {
+    if (error instanceof GrokGatewayError && error.code === 'grok_unavailable') {
+      throw new ModelChangeError('grok_unavailable')
+    }
+    throw error
+  }
+
+  const previousHermesSessionId = input.conversation.hermes_session_id
+  const updated = updateConversationModel(
+    input.db,
+    input.conversation.id,
+    input.model,
+    input.provider,
+  )
+  if (!updated) {
+    throw new ModelChangeError('invalid_request')
+  }
+
+  return {
+    conversation: updated,
+    providerChanged: input.conversation.provider !== input.provider,
+    previousHermesSessionId,
+    hermesSessionId: previousHermesSessionId,
   }
 }

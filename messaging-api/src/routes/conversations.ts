@@ -11,7 +11,11 @@ import {
 } from '../db/repos/conversations.js'
 import { resolveDefaultModel } from '../db/repos/settings.js'
 import { getBotById, normalizeBotRuntime } from '../db/repos/bots.js'
-import { assertCuratedModel } from '../lib/companion-models.js'
+import {
+  GROK_TUI_PROVIDER,
+  assertCuratedModel,
+  curatedGrokTuiModels,
+} from '../lib/companion-models.js'
 import { validateBootstrap } from '../lib/bootstrap.js'
 import { getActiveRun } from '../db/repos/runs.js'
 import { buildHalLinks, isValidAnchor, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
@@ -29,6 +33,7 @@ import {
   applyConversationModelChange,
   ModelChangeError,
 } from '../services/conversation-model-change.js'
+import { GrokGatewayError } from '../services/grok-gateway-client.js'
 import { scheduleConversationSessionWarmup } from '../services/session-warmup.js'
 
 const conversationRoutes: FastifyPluginAsync = async (app) => {
@@ -88,6 +93,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
     let bootstrapPrompt: string | null = null
     let modelProvider: { model: string; provider: string } | undefined
     let botId: string | undefined
+    let grokDefault: { model: string; provider: string } | undefined
 
     if (isCreateConversationBody(request.body)) {
       const bootstrap = validateBootstrap(request.body.bootstrap)
@@ -102,22 +108,6 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ error: 'invalid_request' })
       }
 
-      if (hasModel && hasProvider) {
-        const model = request.body.model?.trim()
-        const provider = request.body.provider?.trim()
-        if (!model || !provider) {
-          return reply.code(400).send({ error: 'invalid_request' })
-        }
-
-        try {
-          assertCuratedModel(app.companionModels, model, provider)
-        } catch {
-          return reply.code(400).send({ error: 'invalid_request' })
-        }
-
-        modelProvider = { model, provider }
-      }
-
       if (request.body.bot_id !== undefined && request.body.bot_id !== null) {
         if (!isValidAnchor(request.body.bot_id)) {
           return reply.code(400).send({ error: 'invalid_request' })
@@ -127,6 +117,38 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
         }
         botId = request.body.bot_id
       }
+
+      const bot = botId ? getBotById(app.db, botId) : undefined
+      const isGrok = Boolean(bot && normalizeBotRuntime(bot.runtime) === 'grok')
+      let grokCatalog = app.companionModels
+      if (isGrok) {
+        try {
+          const list = await app.grokGatewayClient.listModels()
+          grokCatalog = curatedGrokTuiModels(list.models)
+          grokDefault = { model: list.default, provider: GROK_TUI_PROVIDER }
+        } catch (error) {
+          if (error instanceof GrokGatewayError && error.code === 'grok_unavailable') {
+            return reply.code(503).send({ error: 'grok_unavailable' })
+          }
+          throw error
+        }
+      }
+
+      if (hasModel && hasProvider) {
+        const model = request.body.model?.trim()
+        const provider = request.body.provider?.trim()
+        if (!model || !provider) {
+          return reply.code(400).send({ error: 'invalid_request' })
+        }
+
+        try {
+          assertCuratedModel(isGrok ? grokCatalog : app.companionModels, model, provider)
+        } catch {
+          return reply.code(400).send({ error: 'invalid_request' })
+        }
+
+        modelProvider = { model, provider }
+      }
     }
 
     const conversationId = createConversation(
@@ -134,7 +156,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
       request.userId,
       randomUUID(),
       bootstrapPrompt,
-      modelProvider ?? resolveDefaultModel(app.db, app.hermesHome),
+      modelProvider ?? grokDefault ?? resolveDefaultModel(app.db, app.hermesHome),
       botId,
     )
     emitAccountConversationUpsert(app.db, request.userId, conversationId, app.companionModels)
@@ -196,6 +218,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
         const result = await applyConversationModelChange({
           db: app.db,
           hermesClient: app.hermesClient,
+          grokGatewayClient: app.grokGatewayClient,
           catalog: app.companionModels,
           userId: request.userId,
           conversation: existing,
@@ -218,8 +241,11 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
         return toConversationResponse(result.conversation, app.companionModels)
       } catch (error) {
         if (error instanceof ModelChangeError) {
-          if (error.code === 'run_conflict' || error.code === 'grok_runtime') {
+          if (error.code === 'run_conflict') {
             return reply.code(409).send({ error: error.code })
+          }
+          if (error.code === 'grok_unavailable') {
+            return reply.code(503).send({ error: 'grok_unavailable' })
           }
           return reply.code(400).send({ error: 'invalid_request' })
         }

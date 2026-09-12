@@ -52,9 +52,28 @@ export class GrokGatewayError extends Error {
   }
 }
 
+export interface GrokGatewayModel {
+  id: string
+  display: string
+  default?: boolean
+}
+
+export interface GrokModelsResponse {
+  models: GrokGatewayModel[]
+  default: string
+}
+
+export interface GrokPutSessionBody {
+  soul: string
+  cwd?: string
+  model?: string
+}
+
 export interface GrokGatewayClient {
   health(): Promise<{ ok: true; grok: 'up' | 'down' }>
-  putSession(conversationId: string, body: { soul: string; cwd?: string }): Promise<void>
+  listModels(): Promise<GrokModelsResponse>
+  putSession(conversationId: string, body: GrokPutSessionBody): Promise<void>
+  patchSessionModel(conversationId: string, model: string): Promise<void>
   prompt(
     conversationId: string,
     body: { text: string; user_id: string },
@@ -83,7 +102,15 @@ export class DisabledGrokGatewayClient implements GrokGatewayClient {
     return { ok: true, grok: 'down' }
   }
 
+  async listModels(): Promise<GrokModelsResponse> {
+    throw new GrokGatewayError('grok_unavailable')
+  }
+
   async putSession(): Promise<void> {
+    throw new GrokGatewayError('grok_unavailable')
+  }
+
+  async patchSessionModel(): Promise<void> {
     throw new GrokGatewayError('grok_unavailable')
   }
 
@@ -123,7 +150,18 @@ export class HttpGrokGatewayClient implements GrokGatewayClient {
     return { ok: true, grok }
   }
 
-  async putSession(conversationId: string, body: { soul: string; cwd?: string }): Promise<void> {
+  async listModels(): Promise<GrokModelsResponse> {
+    const response = await this.request('/models', { method: 'GET' }, GROK_REQUEST_TIMEOUT_MS)
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch {
+      throw new GrokGatewayError('grok_unavailable', 'invalid_models')
+    }
+    return parseGrokModelsResponse(body)
+  }
+
+  async putSession(conversationId: string, body: GrokPutSessionBody): Promise<void> {
     await this.request(
       `/sessions/${encodeURIComponent(conversationId)}`,
       {
@@ -132,6 +170,24 @@ export class HttpGrokGatewayClient implements GrokGatewayClient {
       },
       GROK_REQUEST_TIMEOUT_MS,
     )
+  }
+
+  async patchSessionModel(conversationId: string, model: string): Promise<void> {
+    try {
+      await this.request(
+        `/sessions/${encodeURIComponent(conversationId)}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ model }),
+        },
+        GROK_REQUEST_TIMEOUT_MS,
+      )
+    } catch (error) {
+      if (error instanceof GrokGatewayError && error.code === 'not_found') {
+        return
+      }
+      throw error
+    }
   }
 
   async *prompt(
@@ -311,6 +367,46 @@ export class HttpGrokGatewayClient implements GrokGatewayClient {
     }
     return new GrokGatewayError(code, message)
   }
+}
+
+function parseGrokModelsResponse(value: unknown): GrokModelsResponse {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new GrokGatewayError('grok_unavailable', 'invalid_models')
+  }
+
+  const body = value as Record<string, unknown>
+  if (!Array.isArray(body.models)) {
+    throw new GrokGatewayError('grok_unavailable', 'invalid_models')
+  }
+
+  const models: GrokGatewayModel[] = []
+  for (const item of body.models) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      continue
+    }
+    const entry = item as Record<string, unknown>
+    if (typeof entry.id !== 'string' || !entry.id.trim()) {
+      continue
+    }
+    if (typeof entry.display !== 'string' || !entry.display.trim()) {
+      continue
+    }
+    models.push({
+      id: entry.id,
+      display: entry.display,
+      ...(entry.default === true ? { default: true } : {}),
+    })
+  }
+
+  const defaultId =
+    (typeof body.default === 'string' && body.default.trim()) ||
+    models.find((entry) => entry.default)?.id ||
+    models[0]?.id
+  if (!defaultId || models.length === 0) {
+    throw new GrokGatewayError('grok_unavailable', 'invalid_models')
+  }
+
+  return { models, default: defaultId }
 }
 
 function parseOutboxSnapshot(value: unknown): GrokOutboxSnapshot {
