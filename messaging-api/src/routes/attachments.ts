@@ -16,7 +16,9 @@ import { serializeAttachment } from '../lib/attachment-serializer.js'
 import {
   extensionForMime,
   generateAttachmentDerivatives,
+  isAcceptedAttachmentMime,
   isAcceptedImageMime,
+  normalizeMime,
 } from '../services/image-derivatives.js'
 
 type AttachmentVariant = 'original' | 'thumb' | 'vision'
@@ -33,8 +35,8 @@ const attachmentRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    const mime = file.mimetype.toLowerCase()
-    if (!isAcceptedImageMime(mime)) {
+    const mime = normalizeMime(file.mimetype)
+    if (!isAcceptedAttachmentMime(mime)) {
       return reply.code(400).send({ error: 'unsupported_media_type' })
     }
 
@@ -65,17 +67,27 @@ const attachmentRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'payload_too_large' })
     }
 
-    let derivatives
-    try {
-      derivatives = await generateAttachmentDerivatives({
-        inputPath: originalPath,
-        outputDir,
-        thumbMaxEdgePx: app.thumbMaxEdgePx,
-        visionMaxEdgePx: app.visionMaxEdgePx,
-      })
-    } catch {
-      removeAttachmentTree(app.attachmentsDir, request.userId, attachmentId)
-      return reply.code(500).send({ error: 'processing_failed' })
+    const isImage = isAcceptedImageMime(mime)
+    let width: number | null = null
+    let height: number | null = null
+    let thumbPath = ''
+    let visionPath = ''
+    if (isImage) {
+      try {
+        const derivatives = await generateAttachmentDerivatives({
+          inputPath: originalPath,
+          outputDir,
+          thumbMaxEdgePx: app.thumbMaxEdgePx,
+          visionMaxEdgePx: app.visionMaxEdgePx,
+        })
+        width = derivatives.width
+        height = derivatives.height
+        thumbPath = 'thumb.jpg'
+        visionPath = 'vision.jpg'
+      } catch {
+        removeAttachmentTree(app.attachmentsDir, request.userId, attachmentId)
+        return reply.code(500).send({ error: 'processing_failed' })
+      }
     }
 
     const id = insertStagedAttachment(app.db, {
@@ -83,11 +95,11 @@ const attachmentRoutes: FastifyPluginAsync = async (app) => {
       userId: request.userId,
       contentType: mime,
       byteSize,
-      width: derivatives.width,
-      height: derivatives.height,
+      width,
+      height,
       originalPath: originalFilename,
-      thumbPath: 'thumb.jpg',
-      visionPath: 'vision.jpg',
+      thumbPath,
+      visionPath,
       orphanTtlHours: app.attachmentOrphanTtlHours,
     })
 
@@ -107,6 +119,10 @@ const attachmentRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const variant = parseVariant((request.query as { variant?: string }).variant)
+    if ((variant === 'thumb' || variant === 'vision') && !isAcceptedImageMime(row.content_type)) {
+      return reply.code(400).send({ error: 'unsupported_media_type' })
+    }
+
     const filename = variantPath(row, variant)
     const absolutePath = resolveAttachmentFile(
       app.attachmentsDir,

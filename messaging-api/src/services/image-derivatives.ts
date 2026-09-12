@@ -1,20 +1,43 @@
 import path from 'node:path'
 import sharp from 'sharp'
 
-const ACCEPTED_MIME = new Set(['image/jpeg', 'image/png', 'image/heic', 'image/heif'])
+const ACCEPTED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/heic', 'image/heif'])
+const ACCEPTED_DOCUMENT_MIME = new Set([
+  'text/plain',
+  'application/pdf',
+  'application/octet-stream',
+])
+
+export function normalizeMime(mime: string): string {
+  return mime.toLowerCase().split(';')[0].trim()
+}
 
 export function isAcceptedImageMime(mime: string): boolean {
-  return ACCEPTED_MIME.has(mime.toLowerCase())
+  return ACCEPTED_IMAGE_MIME.has(normalizeMime(mime))
+}
+
+export function isAcceptedDocumentMime(mime: string): boolean {
+  return ACCEPTED_DOCUMENT_MIME.has(normalizeMime(mime))
+}
+
+export function isAcceptedAttachmentMime(mime: string): boolean {
+  return isAcceptedImageMime(mime) || isAcceptedDocumentMime(mime)
 }
 
 export function extensionForMime(mime: string): string {
-  switch (mime.toLowerCase()) {
+  switch (normalizeMime(mime)) {
     case 'image/png':
       return '.png'
     case 'image/heic':
       return '.heic'
     case 'image/heif':
       return '.heif'
+    case 'text/plain':
+      return '.txt'
+    case 'application/pdf':
+      return '.pdf'
+    case 'application/octet-stream':
+      return '.bin'
     default:
       return '.jpg'
   }

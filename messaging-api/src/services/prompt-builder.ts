@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import type { AttachmentRow } from '../db/repos/message-attachments.js'
 import type { MessageKind } from '../db/repos/messages.js'
 import { resolveAttachmentFile } from '../lib/attachment-storage.js'
+import { isAcceptedImageMime } from './image-derivatives.js'
 
 export interface TranscriptMessage {
   role: 'user' | 'assistant'
@@ -150,6 +151,9 @@ async function selectVisionImages(
 
     for (let attachmentIndex = 0; attachmentIndex < message.attachments.length; attachmentIndex += 1) {
       const attachment = message.attachments[attachmentIndex]
+      if (!isAcceptedImageMime(attachment.content_type) || !attachment.vision_path) {
+        continue
+      }
       const absolutePath = resolveVisionPath(options, attachment)
       let byteSize = 0
       try {
