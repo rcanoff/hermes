@@ -28,6 +28,7 @@ import {
   type ConversationRow,
 } from '../db/repos/conversations.js'
 import { buildBotRosterPrompt } from '../lib/bot-roster.js'
+import { createReplyAssembler, type ReplyAssembler } from '../lib/reply-assembler.js'
 import { DEFAULT_COMPANION_MODELS, type CuratedModelEntry } from '../lib/companion-models.js'
 import { DEFAULT_BOT_SLUG } from '../lib/hermes-profile.js'
 import { buildHermesMessages, mapDelegationForHermes } from './prompt-builder.js'
@@ -87,6 +88,19 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError'
 }
 
+function publishAssembledReply(
+  assembler: ReplyAssembler,
+  streamCtx: RunEventContext,
+  beginReplyPhase: () => void,
+): string {
+  const assistantText = assembler.text()
+  beginReplyPhase()
+  for (const part of assembler.tokens()) {
+    publishReplyToken(streamCtx, part)
+  }
+  return assistantText
+}
+
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
   const runId =
     input.runId ??
@@ -113,13 +127,11 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     originSessionId: input.originSessionId,
   }
 
-  let assistantText = ''
+  const reply = createReplyAssembler()
   let sawDone = false
   const processLines: ToolingLine[] = []
   let reasoningBuffer = ''
   let inReplyPhase = false
-  let sawFirstTool = false
-  let outstandingTools = 0
   let sawToolingActivity = false
   let sawCronjobTool = false
   const knownJobIdsBefore = input.cronJobsPath
@@ -222,8 +234,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
 
       if (event.type === 'tool' && event.name) {
         flushReasoningBuffer()
-        sawFirstTool = true
-        outstandingTools++
+        reply.onToolActivity()
         if (event.name === 'cronjob') {
           sawCronjobTool = true
         }
@@ -237,7 +248,6 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       }
 
       if (event.type === 'tool_complete') {
-        outstandingTools = Math.max(0, outstandingTools - 1)
         if (event.name === 'cronjob') {
           sawCronjobTool = true
         }
@@ -245,26 +255,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       }
 
       if (event.type === 'answer_token' && event.text) {
-        if (inReplyPhase) {
-          assistantText += event.text
-          publishReplyToken(streamCtx, event.text)
-          continue
-        }
-
-        if (!sawFirstTool) {
-          beginReplyPhase()
-          assistantText += event.text
-          publishReplyToken(streamCtx, event.text)
-          continue
-        }
-
-        if (outstandingTools > 0) {
-          outstandingTools = 0
-        }
-
-        beginReplyPhase()
-        assistantText += event.text
-        publishReplyToken(streamCtx, event.text)
+        reply.pushToken(event.text)
         continue
       }
 
@@ -281,7 +272,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
         runId,
         conversationId: input.conversationId,
         hermesSessionId: input.hermesSessionId,
-        assistantText,
+        assistantText: reply.text(),
         processLines,
         streamCtx,
         companionModels: input.companionModels ?? DEFAULT_COMPANION_MODELS,
@@ -293,10 +284,11 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       throw new Error('Hermes stream ended without a done event')
     }
 
-    if (!assistantText.trim()) {
+    if (!reply.text().trim()) {
       throw new Error('Hermes stream completed without assistant text')
     }
 
+    const assistantText = publishAssembledReply(reply, streamCtx, beginReplyPhase)
     const assistantMessageId = persistAssistantRun(
       input.db,
       input.hub,
@@ -348,7 +340,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
         runId,
         conversationId: input.conversationId,
         hermesSessionId: input.hermesSessionId,
-        assistantText,
+        assistantText: reply.text(),
         processLines,
         streamCtx,
         companionModels: input.companionModels ?? DEFAULT_COMPANION_MODELS,
@@ -380,7 +372,7 @@ async function executeGrokAssistantRun(
 ): Promise<string> {
   const grokClient = input.grokGatewayClient ?? createGrokGatewayClient('', '')
   const catalog = input.companionModels ?? DEFAULT_COMPANION_MODELS
-  let assistantText = ''
+  const reply = createReplyAssembler()
   let sawDone = false
   let attemptedOutboxRecover = false
   let reasoningBuffer = ''
@@ -435,6 +427,7 @@ async function executeGrokAssistantRun(
         }
 
         flushReasoningBuffer()
+        reply.onToolActivity()
         input.publishProcessLine({
           phase: event.phase,
           text: event.text,
@@ -445,14 +438,13 @@ async function executeGrokAssistantRun(
       }
 
       if (event.type === 'token' && event.text) {
-        beginReplyPhase()
-        assistantText += event.text
-        publishReplyToken(input.streamCtx, event.text)
+        reply.pushToken(event.text)
         continue
       }
 
       if (event.type === 'pending_input') {
         flushReasoningBuffer()
+        reply.onToolActivity()
         insertPendingInputCards({
           db: input.db,
           hub: input.hub,
@@ -487,7 +479,7 @@ async function executeGrokAssistantRun(
         runId: input.runId,
         conversationId: input.conversationId,
         hermesSessionId: input.hermesSessionId,
-        assistantText,
+        assistantText: reply.text(),
         processLines: input.processLines,
         streamCtx: input.streamCtx,
         companionModels: catalog,
@@ -506,7 +498,7 @@ async function executeGrokAssistantRun(
           runId: input.runId,
           conversationId: input.conversationId,
           hermesSessionId: input.hermesSessionId,
-          assistantText,
+          assistantText: reply.text(),
           processLines: input.processLines,
           streamCtx: input.streamCtx,
           companionModels: catalog,
@@ -519,7 +511,7 @@ async function executeGrokAssistantRun(
       throw new GrokGatewayError('grok_unavailable', 'stream_ended')
     }
 
-    beginReplyPhase()
+    const assistantText = publishAssembledReply(reply, input.streamCtx, beginReplyPhase)
     const assistantMessageId = persistAssistantRun(
       input.db,
       input.hub,
@@ -548,7 +540,7 @@ async function executeGrokAssistantRun(
         runId: input.runId,
         conversationId: input.conversationId,
         hermesSessionId: input.hermesSessionId,
-        assistantText,
+        assistantText: reply.text(),
         processLines: input.processLines,
         streamCtx: input.streamCtx,
         companionModels: catalog,
@@ -568,7 +560,7 @@ async function executeGrokAssistantRun(
             runId: input.runId,
             conversationId: input.conversationId,
             hermesSessionId: input.hermesSessionId,
-            assistantText,
+            assistantText: reply.text(),
             processLines: input.processLines,
             streamCtx: input.streamCtx,
             companionModels: catalog,
@@ -601,7 +593,7 @@ async function executeGrokAssistantRun(
         runId: input.runId,
         conversationId: input.conversationId,
         hermesSessionId: input.hermesSessionId,
-        assistantText,
+        assistantText: reply.text(),
         processLines: input.processLines,
         streamCtx: input.streamCtx,
         companionModels: catalog,

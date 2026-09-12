@@ -62,6 +62,41 @@ describe('applyOutboxEvents', () => {
     ])
   })
 
+  it('drops tokens that arrived before tool activity', () => {
+    const applied = applyOutboxEvents([
+      {
+        seq: 1,
+        ts: '2026-09-10T00:00:00.000Z',
+        event: { type: 'turn_start', user_id: 'u1', text: 'status' },
+      },
+      {
+        seq: 2,
+        ts: '2026-09-10T00:00:01.000Z',
+        event: { type: 'token', text: 'Fetching live house status now.' },
+      },
+      {
+        seq: 3,
+        ts: '2026-09-10T00:00:01.200Z',
+        event: { type: 'tooling', phase: 'activity', text: 'ha_get_overview', tool: 'ha_get_overview' },
+      },
+      {
+        seq: 4,
+        ts: '2026-09-10T00:00:02.000Z',
+        event: { type: 'token', text: 'House is quiet.' },
+      },
+      {
+        seq: 5,
+        ts: '2026-09-10T00:00:02.100Z',
+        event: { type: 'done' },
+      },
+    ])
+
+    expect(applied.assistantText).toBe('House is quiet.')
+    expect(applied.processLines).toEqual([
+      { phase: 'activity', text: 'ha_get_overview', tool: 'ha_get_overview' },
+    ])
+  })
+
   it('resets buffers on a later turn_start', () => {
     const applied = applyOutboxEvents([
       {

@@ -96,7 +96,7 @@ describe('executeAssistantRun process stream', () => {
     ])
   })
 
-  it('streams pre-tool answer tokens immediately then emits activity for memory', async () => {
+  it('drops pre-tool answer tokens from the reply bubble and keeps the final answer', async () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedConversation(db)
@@ -127,12 +127,21 @@ describe('executeAssistantRun process stream', () => {
 
     const assistantMessageId = await runPromise
 
-    expect(events).toContainEqual({
+    expect(events).not.toContainEqual({
       event: 'reply',
       data: expect.objectContaining({
         text: 'Updating user preferences…',
       }),
     })
+    expect(events).toContainEqual({
+      event: 'reply',
+      data: expect.objectContaining({
+        text: 'Got it.',
+      }),
+    })
+    expect(
+      db.prepare(`SELECT content FROM messages WHERE id = ?`).get(assistantMessageId),
+    ).toEqual({ content: 'Got it.' })
 
     const process = getProcessByAssistantMessageIds(db, [assistantMessageId]).get(assistantMessageId)
     expect(process?.lines).toEqual(
@@ -146,7 +155,51 @@ describe('executeAssistantRun process stream', () => {
     )
   })
 
-  it('streams no-tool reply tokens immediately instead of buffering until stream end', async () => {
+  it('drops mid-turn narration and persists only the last post-tool answer', async () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    seedConversation(db)
+
+    const hermes = new FakeHermesClient()
+    const hub = new StreamHub()
+    const events: SessionStreamEvent[] = []
+    hub.subscribeSession('sess-1', (event) => events.push(event))
+    hub.registerUserSession('u1', 'sess-1')
+
+    const runPromise = executeAssistantRun({
+      db,
+      hermesClient: hermes,
+      hub,
+      conversationId: 'c1',
+      hermesSessionId: 'sess-1',
+      userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
+      runId: 'run-1',
+      userId: 'u1',
+      originSessionId: 'sess-1',
+    })
+
+    hermes.pushAnswerToken("I'll pull the home overview from Home Assistant and format a short status for you.")
+    hermes.pushToolCall('skill_view', '{"name":"home-assistant-mcp"}')
+    hermes.pushAnswerToken('Pulling the live Home Assistant overview next.')
+    hermes.pushToolCall('mcp__ha__ha_get_overview', '{}')
+    hermes.pushAnswerToken('Fetching live house status now.')
+    hermes.pushToolCall('mcp__ha__ha_get_state', '{}')
+    hermes.pushAnswerToken('House is quiet and empty.')
+    hermes.pushDone()
+    hermes.closeWithoutDone()
+
+    const assistantMessageId = await runPromise
+
+    const replyTexts = events
+      .filter((event) => event.event === 'reply' && typeof event.data.text === 'string')
+      .map((event) => event.data.text as string)
+    expect(replyTexts).toEqual(['House is quiet and empty.'])
+    expect(
+      db.prepare(`SELECT content FROM messages WHERE id = ?`).get(assistantMessageId),
+    ).toEqual({ content: 'House is quiet and empty.' })
+  })
+
+  it('emits no-tool reply tokens before done', async () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedConversation(db)
@@ -169,21 +222,20 @@ describe('executeAssistantRun process stream', () => {
     })
 
     hermes.pushAnswerToken('Here is')
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
-    expect(legacyEvents.map((event) => event.event)).toContain('token')
-    expect(legacyEvents.map((event) => event.event)).not.toContain('done')
-
     hermes.pushAnswerToken(' an idea')
     hermes.pushDone()
     hermes.closeWithoutDone()
 
     await runPromise
 
-    expect(legacyEvents.filter((event) => event.event === 'token')).toEqual([
+    const tokenEvents = legacyEvents.filter((event) => event.event === 'token')
+    const doneIndex = legacyEvents.findIndex((event) => event.event === 'done')
+    expect(tokenEvents).toEqual([
       { event: 'token', data: { text: 'Here is' } },
       { event: 'token', data: { text: ' an idea' } },
     ])
+    expect(doneIndex).toBeGreaterThan(-1)
+    expect(legacyEvents.findIndex((event) => event.event === 'token')).toBeLessThan(doneIndex)
   })
 
   it('streams reasoning drafts and ignores tool completion events', async () => {

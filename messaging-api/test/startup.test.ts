@@ -185,9 +185,9 @@ describe('durable run execution', () => {
     seedConversation(db)
 
     const hermesClient = new FakeHermesClient()
-    hermesClient.pushAnswerToken('Hi')
+    hermesClient.pushAnswerToken('Looking up the weather…')
     hermesClient.pushToolCall('lookup_weather', '{}')
-    hermesClient.pushAnswerToken(' there')
+    hermesClient.pushAnswerToken('Sunny and 72.')
     hermesClient.pushDone()
     hermesClient.closeWithoutDone()
 
@@ -213,7 +213,7 @@ describe('durable run execution', () => {
     expect(assistantMessageId).toEqual(expect.any(String))
     expect(listMessages(db, 'c1')).toEqual([
       expect.objectContaining({ id: 'm1', role: 'user', content: 'hello' }),
-      expect.objectContaining({ id: assistantMessageId, role: 'assistant', content: 'Hi there' }),
+      expect.objectContaining({ id: assistantMessageId, role: 'assistant', content: 'Sunny and 72.' }),
     ])
     expect(
       db
@@ -230,12 +230,12 @@ describe('durable run execution', () => {
       }),
     )
     expect(events).toEqual([
-      { event: 'token', data: { text: 'Hi' } },
       {
         event: 'process',
         data: { phase: 'activity', text: 'Running lookup weather', tool: 'lookup_weather' },
       },
-      { event: 'token', data: { text: ' there' } },
+      { event: 'process_complete', data: {} },
+      { event: 'token', data: { text: 'Sunny and 72.' } },
       { event: 'done', data: { messageId: assistantMessageId } },
     ])
     expect(hermesClient.requests).toEqual([
@@ -289,7 +289,6 @@ describe('durable run execution', () => {
       assistant_message_id: null,
     })
     expect(events).toEqual([
-      { event: 'token', data: { text: 'partial' } },
       { event: 'error', data: { code: 'hermes_stream_failed' } },
     ])
   })
@@ -407,7 +406,6 @@ describe('durable run execution', () => {
       expect.objectContaining({ id: 'm1', role: 'user', content: 'hello' }),
     ])
     expect(events).toEqual([
-      { event: 'token', data: { text: 'partial' } },
       { event: 'error', data: { code: 'hermes_stream_failed' } },
     ])
   })

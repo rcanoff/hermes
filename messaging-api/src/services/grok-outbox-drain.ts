@@ -22,6 +22,7 @@ import {
 } from '../db/repos/runs.js'
 import { enrichMessageWithAttachments } from '../lib/attachment-serializer.js'
 import { DEFAULT_COMPANION_MODELS, type CuratedModelEntry } from '../lib/companion-models.js'
+import { createReplyAssembler } from '../lib/reply-assembler.js'
 import type { StreamHub } from '../streams/hub.js'
 import {
   publishReplyDone,
@@ -52,7 +53,7 @@ export interface AppliedOutboxTurn {
 }
 
 export function applyOutboxEvents(items: GrokOutboxItem[]): AppliedOutboxTurn {
-  let assistantText = ''
+  const reply = createReplyAssembler()
   let processLines: ToolingLine[] = []
   let reasoningBuffer = ''
   let pendingInputs: Array<{ content: string; input: MessageInput }> = []
@@ -70,7 +71,7 @@ export function applyOutboxEvents(items: GrokOutboxItem[]): AppliedOutboxTurn {
   }
 
   const resetTurn = () => {
-    assistantText = ''
+    reply.reset()
     processLines = []
     reasoningBuffer = ''
     pendingInputs = []
@@ -96,6 +97,7 @@ export function applyOutboxEvents(items: GrokOutboxItem[]): AppliedOutboxTurn {
       }
 
       flushReasoningBuffer()
+      reply.onToolActivity()
       processLines.push({
         phase: event.phase,
         text: event.text,
@@ -108,13 +110,14 @@ export function applyOutboxEvents(items: GrokOutboxItem[]): AppliedOutboxTurn {
     if (event.type === 'token') {
       flushReasoningBuffer()
       if (event.text) {
-        assistantText += event.text
+        reply.pushToken(event.text)
       }
       continue
     }
 
     if (event.type === 'pending_input') {
       flushReasoningBuffer()
+      reply.onToolActivity()
       pendingInputs.push({ content: event.content, input: event.input })
       continue
     }
@@ -132,7 +135,7 @@ export function applyOutboxEvents(items: GrokOutboxItem[]): AppliedOutboxTurn {
     }
   }
 
-  return { assistantText, processLines, pendingInputs, doneSeq, error, lastSeq }
+  return { assistantText: reply.text(), processLines, pendingInputs, doneSeq, error, lastSeq }
 }
 
 export function persistAssistantRun(
