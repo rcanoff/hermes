@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import Database from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
 import {
+  ensureDefaultBotRow,
   getBotBySlug,
   upsertBotNotificationsEnabled,
 } from '../src/db/repos/bots.js'
@@ -114,7 +115,7 @@ describe('push dispatcher', () => {
     const db = openTestDb()
     const userId = seedUser(db)
     const conversationId = createConversation(db, userId, randomUUID())
-    const bot = getBotBySlug(db, 'default')
+    const bot = getBotBySlug(db, userId, 'default')
     expect(bot).toBeDefined()
     upsertBotNotificationsEnabled(db, userId, bot!.id, false)
     upsertPushDevice(db, {
@@ -144,7 +145,8 @@ describe('push dispatcher', () => {
     const db = openTestDb()
     const userId = seedUser(db)
     const jobConversationId = createJobConversation(db, userId, 'alice', { name: 'Gate' })
-    const bot = getBotBySlug(db, 'default')
+    ensureDefaultBotRow(db, userId)
+    const bot = getBotBySlug(db, userId, 'default')
     expect(bot).toBeDefined()
     upsertBotNotificationsEnabled(db, userId, bot!.id, false)
     upsertPushDevice(db, {

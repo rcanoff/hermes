@@ -1,7 +1,8 @@
 import type { FastifyPluginAsync } from 'fastify'
 import {
+  botOwner,
   deleteBot,
-  getBotById,
+  getBotByIdForUser,
   getBotBySlug,
   getBotLastActivityMap,
   getBotNotificationsEnabled,
@@ -81,9 +82,9 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    seedDefaultBot(app.db, app.hermesHome)
+    seedDefaultBot(app.db, request.userId, app.hermesHome)
 
-    const page = listBotsPage(app.db, limit, anchors)
+    const page = listBotsPage(app.db, request.userId, limit, anchors)
     if (!page) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
@@ -122,17 +123,20 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    if (body.slug === DEFAULT_BOT_SLUG || getBotBySlug(app.db, body.slug)) {
+    seedDefaultBot(app.db, request.userId, app.hermesHome)
+
+    if (body.slug === DEFAULT_BOT_SLUG || getBotBySlug(app.db, request.userId, body.slug)) {
       return reply.code(409).send({ error: 'slug_taken' })
     }
 
-    if (body.runtime === 'grok' && getGrokBot(app.db)) {
+    if (body.runtime === 'grok' && getGrokBot(app.db, request.userId)) {
       return reply.code(409).send({ error: 'grok_bot_exists' })
     }
 
     let row: BotRow
     try {
       row = insertBot(app.db, {
+        userId: request.userId,
         slug: body.slug,
         name: body.name,
         role: body.role,
@@ -143,7 +147,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       })
     } catch (error) {
       if (isUniqueConstraint(error)) {
-        if (body.runtime === 'grok' && getGrokBot(app.db)) {
+        if (body.runtime === 'grok' && getGrokBot(app.db, request.userId)) {
           return reply.code(409).send({ error: 'grok_bot_exists' })
         }
         return reply.code(409).send({ error: 'slug_taken' })
@@ -155,17 +159,18 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       try {
         createBotProfile({
           hermesHome: app.hermesHome,
+          owner: botOwner(row),
           slug: row.slug,
           name: row.name,
           role: row.role,
           soul: row.soul,
         })
       } catch (error) {
-        deleteBot(app.db, row.id)
+        deleteBot(app.db, row.id, request.userId)
         throw error
       }
 
-      addHonchoHost(app.hermesHome, row.slug)
+      addHonchoHost(app.hermesHome, botOwner(row), row.slug)
     }
 
     return reply.code(201).send(
@@ -183,7 +188,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/bots/:id', { preHandler: app.authenticate }, async (request, reply) => {
     const { id } = request.params as { id: string }
-    const row = getBotById(app.db, id)
+    const row = getBotByIdForUser(app.db, request.userId, id)
     if (!row) {
       return reply.code(404).send({ error: 'not_found' })
     }
@@ -206,7 +211,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    const existing = getBotById(app.db, id)
+    const existing = getBotByIdForUser(app.db, request.userId, id)
     if (!existing) {
       return reply.code(404).send({ error: 'not_found' })
     }
@@ -229,14 +234,14 @@ const botRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (body.soul !== undefined && updated.runtime !== 'grok') {
-      writeSoulFile(app.hermesHome, updated.slug, updated.soul)
+      writeSoulFile(app.hermesHome, botOwner(updated), updated.slug, updated.soul)
     }
 
     if (
       (body.name !== undefined || body.role !== undefined) &&
       updated.runtime !== 'grok'
     ) {
-      writeProfileYaml(app.hermesHome, updated.slug, {
+      writeProfileYaml(app.hermesHome, botOwner(updated), updated.slug, {
         name: updated.name,
         role: updated.role,
       })
@@ -259,7 +264,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete('/bots/:id', { preHandler: app.authenticate }, async (request, reply) => {
     const { id } = request.params as { id: string }
-    const existing = getBotById(app.db, id)
+    const existing = getBotByIdForUser(app.db, request.userId, id)
     if (!existing) {
       return reply.code(404).send({ error: 'not_found' })
     }
@@ -268,7 +273,11 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(409).send({ error: 'default_bot' })
     }
 
-    const conversations = listConversationsReferencingBot(app.db, existing.id)
+    const conversations = listConversationsReferencingBot(
+      app.db,
+      existing.id,
+      request.userId,
+    )
     for (const conversation of conversations) {
       if (conversation.kind === 'job' && conversation.hermes_job_id?.trim()) {
         const hermesJobId = conversation.hermes_job_id.trim()
@@ -304,9 +313,9 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       publishConversationDeleted(app.streamHub, conversation.user_id, conversation.id)
     }
 
-    deleteBot(app.db, existing.id)
+    deleteBot(app.db, existing.id, request.userId)
     if (existing.runtime !== 'grok') {
-      deleteBotProfile(app.hermesHome, existing.slug)
+      deleteBotProfile(app.hermesHome, botOwner(existing), existing.slug)
     }
     return reply.code(204).send()
   })
@@ -322,6 +331,7 @@ function toBotResponse(
 ) {
   return {
     id: row.id,
+    user_id: row.user_id,
     slug: row.slug,
     name: row.name,
     role: row.role,

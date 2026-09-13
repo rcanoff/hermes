@@ -2,9 +2,15 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 export const DEFAULT_BOT_SLUG = 'default'
+export const OPERATOR_USERNAME = 'rcanoff'
 export const BOT_SLUG_PATTERN = /^[a-z0-9-]{1,32}$/
 
 const HONCHO_CONFIG_NAME = 'honcho.json'
+
+export interface BotProfileOwner {
+  userId: string
+  username: string
+}
 
 export function slugifyBotName(name: string): string | null {
   const slug = name
@@ -26,65 +32,116 @@ export function isValidBotSlug(slug: string): boolean {
   return BOT_SLUG_PATTERN.test(slug)
 }
 
-export function profileDir(hermesHome: string, slug: string): string {
-  if (slug === DEFAULT_BOT_SLUG) {
+export function isOperatorOwner(owner: BotProfileOwner): boolean {
+  return owner.username === OPERATOR_USERNAME
+}
+
+/**
+ * Relative path under `$HERMES_HOME/profiles`, or `null` for the operator
+ * default home (`$HERMES_HOME` itself).
+ *
+ * rcanoff default → home. Existing rcanoff extras at `profiles/<slug>/` stay.
+ * New bots and every non-rcanoff bot → `profiles/<userId>/<slug>/`.
+ */
+export function profileRelativeKey(
+  owner: BotProfileOwner,
+  slug: string,
+  hermesHome?: string,
+): string | null {
+  if (slug === DEFAULT_BOT_SLUG && isOperatorOwner(owner)) {
+    return null
+  }
+
+  const namespaced = `${owner.userId}/${slug}`
+  if (hermesHome && isOperatorOwner(owner)) {
+    const legacyDir = path.join(hermesHome, 'profiles', slug)
+    const namespacedDir = path.join(hermesHome, 'profiles', owner.userId, slug)
+    if (fs.existsSync(legacyDir) && !fs.existsSync(namespacedDir)) {
+      return slug
+    }
+  }
+
+  return namespaced
+}
+
+export function profileDir(hermesHome: string, owner: BotProfileOwner, slug: string): string {
+  const key = profileRelativeKey(owner, slug, hermesHome)
+  if (key === null) {
     return hermesHome
   }
-  return path.join(hermesHome, 'profiles', slug)
+  return path.join(hermesHome, 'profiles', ...key.split('/'))
 }
 
-export function soulFilePath(hermesHome: string, slug: string): string {
-  return path.join(profileDir(hermesHome, slug), 'SOUL.md')
+export function soulFilePath(hermesHome: string, owner: BotProfileOwner, slug: string): string {
+  return path.join(profileDir(hermesHome, owner, slug), 'SOUL.md')
 }
 
-export function profileYamlPath(hermesHome: string, slug: string): string {
-  return path.join(profileDir(hermesHome, slug), 'profile.yaml')
+export function profileYamlPath(hermesHome: string, owner: BotProfileOwner, slug: string): string {
+  return path.join(profileDir(hermesHome, owner, slug), 'profile.yaml')
 }
 
-export function readSoulFile(hermesHome: string, slug: string): string | null {
+export function readSoulFile(
+  hermesHome: string,
+  owner: BotProfileOwner,
+  slug: string,
+): string | null {
   try {
-    return fs.readFileSync(soulFilePath(hermesHome, slug), 'utf8')
+    return fs.readFileSync(soulFilePath(hermesHome, owner, slug), 'utf8')
   } catch {
     return null
   }
 }
 
-/** Writes `$HERMES_HOME/profiles/<slug>/SOUL.md`. Callers must skip `runtime=grok`. */
-export function writeSoulFile(hermesHome: string, slug: string, soul: string): void {
-  const dir = profileDir(hermesHome, slug)
+/** Writes the bot's `SOUL.md`. Callers must skip `runtime=grok`. */
+export function writeSoulFile(
+  hermesHome: string,
+  owner: BotProfileOwner,
+  slug: string,
+  soul: string,
+): void {
+  const dir = profileDir(hermesHome, owner, slug)
   fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(soulFilePath(hermesHome, slug), soul)
+  fs.writeFileSync(soulFilePath(hermesHome, owner, slug), soul)
 }
 
 export function defaultSoulFromRole(name: string, role: string): string {
   return `You are the ${name} assistant. ${role}`.trim()
 }
 
+function isOperatorHome(hermesHome: string, owner: BotProfileOwner, slug: string): boolean {
+  return profileDir(hermesHome, owner, slug) === hermesHome
+}
+
 /** Writes `profile.yaml` for Hermes multiplex profiles. Callers must skip `runtime=grok`. */
 export function writeProfileYaml(
   hermesHome: string,
+  owner: BotProfileOwner,
   slug: string,
   input: { name: string; role: string },
 ): void {
-  if (slug === DEFAULT_BOT_SLUG) {
+  if (isOperatorHome(hermesHome, owner, slug)) {
     return
   }
 
-  const dir = profileDir(hermesHome, slug)
+  const dir = profileDir(hermesHome, owner, slug)
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(
-    profileYamlPath(hermesHome, slug),
+    profileYamlPath(hermesHome, owner, slug),
     `display_name: ${yamlScalar(input.name)}\ndescription: ${yamlScalar(input.role)}\n`,
   )
 }
 
-/** Point `profiles/<slug>/skills` at `$HERMES_HOME/skills` so multiplex profiles see default skills. */
-export function shareDefaultSkills(hermesHome: string, slug: string): void {
-  if (slug === DEFAULT_BOT_SLUG) {
+/** Point the profile `skills` dir at `$HERMES_HOME/skills` so multiplex profiles see default skills. */
+export function shareDefaultSkills(
+  hermesHome: string,
+  owner: BotProfileOwner,
+  slug: string,
+): void {
+  if (isOperatorHome(hermesHome, owner, slug)) {
     return
   }
 
-  const dest = path.join(profileDir(hermesHome, slug), 'skills')
+  const dest = path.join(profileDir(hermesHome, owner, slug), 'skills')
   const source = path.join(hermesHome, 'skills')
 
   try {
@@ -106,6 +163,7 @@ export function shareDefaultSkills(hermesHome: string, slug: string): void {
     }
   }
 
+  fs.mkdirSync(path.dirname(dest), { recursive: true })
   fs.symlinkSync(source, dest)
 }
 
@@ -118,35 +176,43 @@ function isEnoent(error: unknown): boolean {
   )
 }
 
-/** Writes `$HERMES_HOME/profiles/<slug>/`. Callers must skip `runtime=grok`. */
+/** Writes a multiplex Hermes profile. Callers must skip `runtime=grok` and the operator home. */
 export function createBotProfile(input: {
   hermesHome: string
+  owner: BotProfileOwner
   slug: string
   name: string
   role: string
   soul: string
 }): void {
-  if (input.slug === DEFAULT_BOT_SLUG) {
+  if (isOperatorHome(input.hermesHome, input.owner, input.slug)) {
     throw new Error('cannot_create_default_profile')
   }
 
-  const dir = profileDir(input.hermesHome, input.slug)
+  const dir = profileDir(input.hermesHome, input.owner, input.slug)
   fs.mkdirSync(dir, { recursive: true })
-  shareDefaultSkills(input.hermesHome, input.slug)
+  shareDefaultSkills(input.hermesHome, input.owner, input.slug)
 
   const sourceConfig = path.join(input.hermesHome, 'config.yaml')
   if (fs.existsSync(sourceConfig)) {
     fs.copyFileSync(sourceConfig, path.join(dir, 'config.yaml'))
   }
 
-  syncProfileApiServerKey(input.hermesHome, input.slug)
-  fs.writeFileSync(soulFilePath(input.hermesHome, input.slug), input.soul)
-  writeProfileYaml(input.hermesHome, input.slug, { name: input.name, role: input.role })
+  syncProfileApiServerKey(input.hermesHome, input.owner, input.slug)
+  fs.writeFileSync(soulFilePath(input.hermesHome, input.owner, input.slug), input.soul)
+  writeProfileYaml(input.hermesHome, input.owner, input.slug, {
+    name: input.name,
+    role: input.role,
+  })
 }
 
-/** Multiplex `/p/<slug>` auth requires a profile-scoped API_SERVER_KEY; it does not inherit default. */
-export function syncProfileApiServerKey(hermesHome: string, slug: string): void {
-  if (slug === DEFAULT_BOT_SLUG) {
+/** Multiplex `/p/<key>` auth requires a profile-scoped API_SERVER_KEY; it does not inherit default. */
+export function syncProfileApiServerKey(
+  hermesHome: string,
+  owner: BotProfileOwner,
+  slug: string,
+): void {
+  if (isOperatorHome(hermesHome, owner, slug)) {
     return
   }
 
@@ -155,7 +221,7 @@ export function syncProfileApiServerKey(hermesHome: string, slug: string): void 
     return
   }
 
-  upsertDotEnvValue(path.join(profileDir(hermesHome, slug), '.env'), 'API_SERVER_KEY', key)
+  upsertDotEnvValue(path.join(profileDir(hermesHome, owner, slug), '.env'), 'API_SERVER_KEY', key)
 }
 
 function readDotEnvValue(envPath: string, name: string): string | null {
@@ -227,16 +293,20 @@ function unquoteEnvValue(value: string): string {
   return value
 }
 
-/** Removes `$HERMES_HOME/profiles/<slug>/`. Callers must skip `runtime=grok`. */
-export function deleteBotProfile(hermesHome: string, slug: string): void {
-  if (slug === DEFAULT_BOT_SLUG) {
+/** Removes a multiplex profile dir. No-op for the operator home. Callers must skip `runtime=grok`. */
+export function deleteBotProfile(
+  hermesHome: string,
+  owner: BotProfileOwner,
+  slug: string,
+): void {
+  if (isOperatorHome(hermesHome, owner, slug)) {
     return
   }
-  fs.rmSync(profileDir(hermesHome, slug), { recursive: true, force: true })
+  fs.rmSync(profileDir(hermesHome, owner, slug), { recursive: true, force: true })
 }
 
-/** Adds a honcho peer for a Hermes profile slug. Callers must skip `runtime=grok`. */
-export function addHonchoHost(hermesHome: string, slug: string): void {
+/** Adds a honcho peer for a Hermes profile. Callers must skip `runtime=grok`. */
+export function addHonchoHost(hermesHome: string, owner: BotProfileOwner, slug: string): void {
   const honchoPath = path.join(hermesHome, HONCHO_CONFIG_NAME)
   if (!fs.existsSync(honchoPath)) {
     return
@@ -253,12 +323,14 @@ export function addHonchoHost(hermesHome: string, slug: string): void {
       root.hosts && typeof root.hosts === 'object' && !Array.isArray(root.hosts)
         ? { ...(root.hosts as Record<string, unknown>) }
         : {}
-    const key = `hermes.${slug}`
+    const relative = profileRelativeKey(owner, slug, hermesHome)
+    const key = relative === null ? `hermes.${slug}` : `hermes.${relative.replaceAll('/', '.')}`
     if (hosts[key]) {
       return
     }
 
-    hosts[key] = { aiPeer: slug }
+    const aiPeer = relative === null || !relative.includes('/') ? slug : relative.replaceAll('/', '.')
+    hosts[key] = { aiPeer }
     root.hosts = hosts
     fs.writeFileSync(honchoPath, `${JSON.stringify(root, null, 2)}\n`)
   } catch {

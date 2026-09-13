@@ -8,8 +8,15 @@ import {
 } from '../../lib/bot-appearance.js'
 import {
   DEFAULT_BOT_SLUG,
+  addHonchoHost,
+  createBotProfile,
+  isOperatorOwner,
+  profileRelativeKey,
   readSoulFile,
+  shareDefaultSkills,
+  type BotProfileOwner,
 } from '../../lib/hermes-profile.js'
+import { findUserById } from './users.js'
 import type { ListPageAnchors } from './conversations.js'
 
 export const DEFAULT_BOT_NAME = 'Hermes'
@@ -26,10 +33,12 @@ export const BOT_RUNTIMES = ['hermes', 'grok'] as const
 export type BotRuntime = (typeof BOT_RUNTIMES)[number]
 export const DEFAULT_BOT_RUNTIME: BotRuntime = 'hermes'
 
-const BOT_COLUMNS = `id, slug, name, role, soul, responsibilities, icon, color, runtime, is_default, created_at`
+const BOT_COLUMNS = `bots.id, bots.user_id, bots.slug, bots.name, bots.role, bots.soul, bots.responsibilities, bots.icon, bots.color, bots.runtime, bots.is_default, bots.created_at, users.username AS owner_username`
+const BOT_FROM = `bots INNER JOIN users ON users.id = bots.user_id`
 
 export interface BotRow {
   id: string
+  user_id: string
   slug: string
   name: string
   role: string
@@ -40,6 +49,7 @@ export interface BotRow {
   runtime: BotRuntime
   is_default: number
   created_at: string
+  owner_username: string
 }
 
 export interface BotPage {
@@ -49,6 +59,7 @@ export interface BotPage {
 }
 
 export interface CreateBotInput {
+  userId: string
   slug: string
   name: string
   role: string
@@ -68,13 +79,22 @@ export function normalizeBotRuntime(value: string): BotRuntime {
   return value === 'grok' ? 'grok' : 'hermes'
 }
 
-export function ensureDefaultBotRow(db: Database.Database, soul = DEFAULT_BOT_SOUL): BotRow {
-  const existing = getBotBySlug(db, DEFAULT_BOT_SLUG)
+export function botOwner(row: Pick<BotRow, 'user_id' | 'owner_username'>): BotProfileOwner {
+  return { userId: row.user_id, username: row.owner_username }
+}
+
+export function ensureDefaultBotRow(
+  db: Database.Database,
+  userId: string,
+  soul = DEFAULT_BOT_SOUL,
+): BotRow {
+  const existing = getBotBySlug(db, userId, DEFAULT_BOT_SLUG)
   if (existing) {
     return existing
   }
 
   return insertBot(db, {
+    userId,
     slug: DEFAULT_BOT_SLUG,
     name: DEFAULT_BOT_NAME,
     role: DEFAULT_BOT_ROLE,
@@ -98,25 +118,65 @@ export function seedKnownBotResponsibilities(db: Database.Database): void {
   `).run(PATRIK_BOT_RESPONSIBILITIES, PATRIK_BOT_SLUG)
 }
 
-export function seedDefaultBot(db: Database.Database, hermesHome: string): BotRow {
-  const existing = getBotBySlug(db, DEFAULT_BOT_SLUG)
-  if (existing) {
-    seedKnownBotResponsibilities(db)
-    return getBotBySlug(db, DEFAULT_BOT_SLUG)!
+export function seedDefaultBot(
+  db: Database.Database,
+  userId: string,
+  hermesHome: string,
+): BotRow {
+  const user = findUserById(db, userId)
+  if (!user) {
+    throw new Error('user_missing')
   }
 
-  const soul = readSoulFile(hermesHome, DEFAULT_BOT_SLUG) ?? DEFAULT_BOT_SOUL
-  return ensureDefaultBotRow(db, soul)
+  const owner: BotProfileOwner = { userId: user.id, username: user.username }
+  const existing = getBotBySlug(db, userId, DEFAULT_BOT_SLUG)
+  if (existing) {
+    seedKnownBotResponsibilities(db)
+    if (!isOperatorOwner(owner)) {
+      ensureUserDefaultProfile(hermesHome, owner, existing)
+    }
+    return getBotBySlug(db, userId, DEFAULT_BOT_SLUG)!
+  }
+
+  const soul = isOperatorOwner(owner)
+    ? (readSoulFile(hermesHome, owner, DEFAULT_BOT_SLUG) ?? DEFAULT_BOT_SOUL)
+    : DEFAULT_BOT_SOUL
+  const row = ensureDefaultBotRow(db, userId, soul)
+  if (!isOperatorOwner(owner)) {
+    ensureUserDefaultProfile(hermesHome, owner, row)
+  }
+  return row
+}
+
+function ensureUserDefaultProfile(
+  hermesHome: string,
+  owner: BotProfileOwner,
+  row: BotRow,
+): void {
+  if (readSoulFile(hermesHome, owner, DEFAULT_BOT_SLUG) !== null) {
+    shareDefaultSkills(hermesHome, owner, DEFAULT_BOT_SLUG)
+    return
+  }
+  createBotProfile({
+    hermesHome,
+    owner,
+    slug: DEFAULT_BOT_SLUG,
+    name: row.name,
+    role: row.role,
+    soul: row.soul,
+  })
+  addHonchoHost(hermesHome, owner, DEFAULT_BOT_SLUG)
 }
 
 export function insertBot(db: Database.Database, input: CreateBotInput): BotRow {
   const id = randomUUID()
   const runtime = input.runtime ?? DEFAULT_BOT_RUNTIME
   db.prepare(`
-    INSERT INTO bots (id, slug, name, role, soul, responsibilities, icon, color, runtime, is_default)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO bots (id, user_id, slug, name, role, soul, responsibilities, icon, color, runtime, is_default)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
+    input.userId,
     input.slug,
     input.name,
     input.role,
@@ -133,8 +193,18 @@ export function insertBot(db: Database.Database, input: CreateBotInput): BotRow 
 
 export function getBotById(db: Database.Database, id: string): BotRow | undefined {
   return db
-    .prepare(`SELECT ${BOT_COLUMNS} FROM bots WHERE id = ?`)
+    .prepare(`SELECT ${BOT_COLUMNS} FROM ${BOT_FROM} WHERE bots.id = ?`)
     .get(id) as BotRow | undefined
+}
+
+export function getBotByIdForUser(
+  db: Database.Database,
+  userId: string,
+  id: string,
+): BotRow | undefined {
+  return db
+    .prepare(`SELECT ${BOT_COLUMNS} FROM ${BOT_FROM} WHERE bots.id = ? AND bots.user_id = ?`)
+    .get(id, userId) as BotRow | undefined
 }
 
 export function getBotsByIds(db: Database.Database, ids: string[]): Map<string, BotRow> {
@@ -146,7 +216,7 @@ export function getBotsByIds(db: Database.Database, ids: string[]): Map<string, 
 
   const placeholders = unique.map(() => '?').join(', ')
   const rows = db
-    .prepare(`SELECT ${BOT_COLUMNS} FROM bots WHERE id IN (${placeholders})`)
+    .prepare(`SELECT ${BOT_COLUMNS} FROM ${BOT_FROM} WHERE bots.id IN (${placeholders})`)
     .all(...unique) as BotRow[]
 
   for (const row of rows) {
@@ -156,26 +226,33 @@ export function getBotsByIds(db: Database.Database, ids: string[]): Map<string, 
   return result
 }
 
-export function getBotBySlug(db: Database.Database, slug: string): BotRow | undefined {
+export function getBotBySlug(
+  db: Database.Database,
+  userId: string,
+  slug: string,
+): BotRow | undefined {
   return db
-    .prepare(`SELECT ${BOT_COLUMNS} FROM bots WHERE slug = ?`)
-    .get(slug) as BotRow | undefined
+    .prepare(`SELECT ${BOT_COLUMNS} FROM ${BOT_FROM} WHERE bots.user_id = ? AND bots.slug = ?`)
+    .get(userId, slug) as BotRow | undefined
 }
 
-export function getGrokBot(db: Database.Database): BotRow | undefined {
+export function getGrokBot(db: Database.Database, userId: string): BotRow | undefined {
   return db
-    .prepare(`SELECT ${BOT_COLUMNS} FROM bots WHERE runtime = 'grok' LIMIT 1`)
-    .get() as BotRow | undefined
+    .prepare(
+      `SELECT ${BOT_COLUMNS} FROM ${BOT_FROM} WHERE bots.user_id = ? AND bots.runtime = 'grok' LIMIT 1`,
+    )
+    .get(userId) as BotRow | undefined
 }
 
-export function listBotsForRoster(db: Database.Database): BotRow[] {
+export function listBotsForRoster(db: Database.Database, userId: string): BotRow[] {
   return db
     .prepare(`
       SELECT ${BOT_COLUMNS}
-      FROM bots
-      ORDER BY is_default DESC, name ASC, id ASC
+      FROM ${BOT_FROM}
+      WHERE bots.user_id = ?
+      ORDER BY bots.is_default DESC, bots.name ASC, bots.id ASC
     `)
-    .all() as BotRow[]
+    .all(userId) as BotRow[]
 }
 
 export function updateBot(
@@ -343,11 +420,13 @@ export function getBotLastActivityMap(
   return result
 }
 
-export function deleteBot(db: Database.Database, id: string): boolean {
+export function deleteBot(db: Database.Database, id: string, userId: string): boolean {
   return db.transaction(() => {
     const conversationIds = db
-      .prepare(`SELECT id FROM conversations WHERE bot_id = ? OR peer_bot_id = ?`)
-      .all(id, id) as Array<{ id: string }>
+      .prepare(
+        `SELECT id FROM conversations WHERE user_id = ? AND (bot_id = ? OR peer_bot_id = ?)`,
+      )
+      .all(userId, id, id) as Array<{ id: string }>
 
     for (const row of conversationIds) {
       db.prepare('DELETE FROM message_runs WHERE conversation_id = ?').run(row.id)
@@ -355,21 +434,30 @@ export function deleteBot(db: Database.Database, id: string): boolean {
       db.prepare('DELETE FROM conversations WHERE id = ?').run(row.id)
     }
 
+    db.prepare(`UPDATE conversations SET bot_id = NULL WHERE bot_id = ? AND user_id != ?`).run(
+      id,
+      userId,
+    )
+    db.prepare(
+      `UPDATE conversations SET peer_bot_id = NULL WHERE peer_bot_id = ? AND user_id != ?`,
+    ).run(id, userId)
+
     db.prepare('UPDATE messages SET from_bot_id = NULL WHERE from_bot_id = ?').run(id)
     db.prepare('UPDATE messages SET to_bot_id = NULL WHERE to_bot_id = ?').run(id)
 
-    const result = db.prepare(`DELETE FROM bots WHERE id = ?`).run(id)
+    const result = db.prepare(`DELETE FROM bots WHERE id = ? AND user_id = ?`).run(id, userId)
     return result.changes === 1
   })()
 }
 
 export function listBotsPage(
   db: Database.Database,
+  userId: string,
   limit: number,
   anchors: ListPageAnchors = {},
 ): BotPage | null {
   if (anchors.before) {
-    const cursor = getBotById(db, anchors.before)
+    const cursor = getBotByIdForUser(db, userId, anchors.before)
     if (!cursor) {
       return null
     }
@@ -377,15 +465,19 @@ export function listBotsPage(
     const bots = db
       .prepare(`
         SELECT ${BOT_COLUMNS}
-        FROM bots
+        FROM ${BOT_FROM}
         WHERE
-          is_default < ?
-          OR (is_default = ? AND created_at < ?)
-          OR (is_default = ? AND created_at = ? AND id < ?)
-        ORDER BY is_default DESC, created_at DESC, id DESC
+          bots.user_id = ?
+          AND (
+            bots.is_default < ?
+            OR (bots.is_default = ? AND bots.created_at < ?)
+            OR (bots.is_default = ? AND bots.created_at = ? AND bots.id < ?)
+          )
+        ORDER BY bots.is_default DESC, bots.created_at DESC, bots.id DESC
         LIMIT ?
       `)
       .all(
+        userId,
         cursor.is_default,
         cursor.is_default,
         cursor.created_at,
@@ -395,11 +487,11 @@ export function listBotsPage(
         limit,
       ) as BotRow[]
 
-    return buildBotPage(db, bots)
+    return buildBotPage(db, userId, bots)
   }
 
   if (anchors.after) {
-    const cursor = getBotById(db, anchors.after)
+    const cursor = getBotByIdForUser(db, userId, anchors.after)
     if (!cursor) {
       return null
     }
@@ -407,15 +499,19 @@ export function listBotsPage(
     const bots = db
       .prepare(`
         SELECT ${BOT_COLUMNS}
-        FROM bots
+        FROM ${BOT_FROM}
         WHERE
-          is_default > ?
-          OR (is_default = ? AND created_at > ?)
-          OR (is_default = ? AND created_at = ? AND id > ?)
-        ORDER BY is_default ASC, created_at ASC, id ASC
+          bots.user_id = ?
+          AND (
+            bots.is_default > ?
+            OR (bots.is_default = ? AND bots.created_at > ?)
+            OR (bots.is_default = ? AND bots.created_at = ? AND bots.id > ?)
+          )
+        ORDER BY bots.is_default ASC, bots.created_at ASC, bots.id ASC
         LIMIT ?
       `)
       .all(
+        userId,
         cursor.is_default,
         cursor.is_default,
         cursor.created_at,
@@ -426,29 +522,34 @@ export function listBotsPage(
       ) as BotRow[]
 
     bots.reverse()
-    return buildBotPage(db, bots)
+    return buildBotPage(db, userId, bots)
   }
 
   const bots = db
     .prepare(`
       SELECT ${BOT_COLUMNS}
-      FROM bots
-      ORDER BY is_default DESC, created_at DESC, id DESC
+      FROM ${BOT_FROM}
+      WHERE bots.user_id = ?
+      ORDER BY bots.is_default DESC, bots.created_at DESC, bots.id DESC
       LIMIT ?
     `)
-    .all(limit) as BotRow[]
+    .all(userId, limit) as BotRow[]
 
-  return buildBotPage(db, bots)
+  return buildBotPage(db, userId, bots)
 }
 
 export function soulForResponse(row: BotRow, hermesHome: string): string {
   if (normalizeBotRuntime(row.runtime) === 'grok') {
     return row.soul
   }
-  return readSoulFile(hermesHome, row.slug) ?? row.soul
+  return readSoulFile(hermesHome, botOwner(row), row.slug) ?? row.soul
 }
 
-function buildBotPage(db: Database.Database, bots: BotRow[]): BotPage {
+export function hermesProfileKeyForBot(row: BotRow, hermesHome?: string): string | undefined {
+  return profileRelativeKey(botOwner(row), row.slug, hermesHome) ?? undefined
+}
+
+function buildBotPage(db: Database.Database, userId: string, bots: BotRow[]): BotPage {
   if (bots.length === 0) {
     return {
       bots,
@@ -465,12 +566,16 @@ function buildBotPage(db: Database.Database, bots: BotRow[]): BotPage {
       SELECT 1
       FROM bots
       WHERE
-        is_default > ?
-        OR (is_default = ? AND created_at > ?)
-        OR (is_default = ? AND created_at = ? AND id > ?)
+        user_id = ?
+        AND (
+          is_default > ?
+          OR (is_default = ? AND created_at > ?)
+          OR (is_default = ? AND created_at = ? AND id > ?)
+        )
       LIMIT 1
     `)
     .get(
+      userId,
       first.is_default,
       first.is_default,
       first.created_at,
@@ -484,12 +589,16 @@ function buildBotPage(db: Database.Database, bots: BotRow[]): BotPage {
       SELECT 1
       FROM bots
       WHERE
-        is_default < ?
-        OR (is_default = ? AND created_at < ?)
-        OR (is_default = ? AND created_at = ? AND id < ?)
+        user_id = ?
+        AND (
+          is_default < ?
+          OR (is_default = ? AND created_at < ?)
+          OR (is_default = ? AND created_at = ? AND id < ?)
+        )
       LIMIT 1
     `)
     .get(
+      userId,
       last.is_default,
       last.is_default,
       last.created_at,

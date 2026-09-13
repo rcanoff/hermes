@@ -64,7 +64,7 @@ describe('bot notification preferences', () => {
     })
   })
 
-  it('PATCH notifications_enabled is per-user', async () => {
+  it('PATCH notifications_enabled is per-user and other users cannot see the bot', async () => {
     const bot = await createTravelBot()
 
     const muted = await app!.inject({
@@ -89,15 +89,15 @@ describe('bot notification preferences', () => {
       url: `/bots/${bot.id}`,
       headers: { authorization: `Bearer ${tokenB}` },
     })
-    expect(asB.statusCode).toBe(200)
-    expect(asB.json()).toMatchObject({ notifications_enabled: true })
+    expect(asB.statusCode).toBe(404)
 
     const listB = await app!.inject({
       method: 'GET',
       url: '/bots',
       headers: { authorization: `Bearer ${tokenB}` },
     })
-    const listed = (listB.json() as { bots: BotBody[] }).bots.find((row) => row.id === bot.id)
-    expect(listed?.notifications_enabled).toBe(true)
+    const listed = (listB.json() as { bots: BotBody[] }).bots
+    expect(listed.find((row) => row.id === bot.id)).toBeUndefined()
+    expect(listed.every((row) => row.notifications_enabled)).toBe(true)
   })
 })

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { initSchema } from '../src/db/schema.js'
 import { insertMessage } from '../src/db/repos/messages.js'
 import { getProcessByAssistantMessageIds } from '../src/db/repos/process.js'
-import { insertBot, getBotBySlug } from '../src/db/repos/bots.js'
+import { insertBot, ensureDefaultBotRow } from '../src/db/repos/bots.js'
 import { createJobConversation } from '../src/db/repos/conversations.js'
 import { executeAssistantRun } from '../src/services/run-executor.js'
 import type { SessionStreamEvent } from '../src/streams/hub.js'
@@ -359,7 +359,9 @@ describe('executeAssistantRun process stream', () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedConversation(db)
+    ensureDefaultBotRow(db, 'u1')
     const travel = insertBot(db, {
+      userId: 'u1',
       slug: 'travel',
       name: 'Travel',
       role: 'Flights',
@@ -386,7 +388,7 @@ describe('executeAssistantRun process stream', () => {
     hermes.closeWithoutDone()
     await runPromise
 
-    expect(hermes.requests[0]?.profileSlug).toBe('travel')
+    expect(hermes.requests[0]?.profileSlug).toBe('u1/travel')
     const system = hermes.requests[0]?.messages[0]
     expect(system).toMatchObject({ role: 'system' })
     expect(system?.content).toContain('You are Travel. Specialty: Flights')
@@ -402,12 +404,13 @@ describe('executeAssistantRun process stream', () => {
     initSchema(db)
     seedConversation(db)
     insertBot(db, {
+      userId: 'u1',
       slug: 'travel',
       name: 'Travel',
       role: 'Finds flights, bookings, and tickets.',
       soul: 'You book trips.',
     })
-    const hermesBot = getBotBySlug(db, 'default')!
+    const hermesBot = ensureDefaultBotRow(db, 'u1')
     db.prepare(`UPDATE conversations SET bot_id = ? WHERE id = 'c1'`).run(hermesBot.id)
 
     const hermes = new FakeHermesClient()
@@ -444,6 +447,7 @@ describe('executeAssistantRun process stream', () => {
     initSchema(db)
     db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'op', 'hash')`).run()
     insertBot(db, {
+      userId: 'u1',
       slug: 'travel',
       name: 'Travel',
       role: 'Finds flights, bookings, and tickets.',

@@ -5,7 +5,7 @@ import {
   COMPANION_DEFAULT_PROVIDER,
 } from '../../lib/companion-models.js'
 import { buildJobConversationBootstrap } from '../../lib/job-conversation.js'
-import { DEFAULT_BOT_SLUG } from '../../lib/hermes-profile.js'
+import { ensureDefaultBotRow } from './bots.js'
 
 export type ConversationKind = 'regular' | 'job'
 
@@ -86,7 +86,7 @@ export function createConversation(
 ): string {
   const model = modelProvider?.model ?? COMPANION_DEFAULT_MODEL
   const provider = modelProvider?.provider ?? COMPANION_DEFAULT_PROVIDER
-  const resolvedBotId = botId ?? defaultBotId(db)
+  const resolvedBotId = botId ?? defaultBotId(db, userId)
   const id = randomUUID()
   db.prepare(`
     INSERT INTO conversations (
@@ -282,15 +282,17 @@ export function listRecentModelsForUser(
 export function listConversationsReferencingBot(
   db: Database.Database,
   botId: string,
+  userId: string,
 ): ConversationRow[] {
   return db
     .prepare(`
       SELECT ${CONVERSATION_COLUMNS}
       FROM conversations
-      WHERE bot_id = ? OR peer_bot_id = ?
+      WHERE user_id = ?
+        AND (bot_id = ? OR peer_bot_id = ?)
       ORDER BY updated_at DESC, id DESC
     `)
-    .all(botId, botId) as ConversationRow[]
+    .all(userId, botId, botId) as ConversationRow[]
 }
 
 export function listConversations(db: Database.Database, userId: string): ConversationRow[] {
@@ -561,14 +563,8 @@ export function deleteConversationForUser(
   return true
 }
 
-function defaultBotId(db: Database.Database): string {
-  const row = db
-    .prepare(`SELECT id FROM bots WHERE slug = ?`)
-    .get(DEFAULT_BOT_SLUG) as { id: string } | undefined
-  if (!row) {
-    throw new Error('default_bot_missing')
-  }
-  return row.id
+function defaultBotId(db: Database.Database, userId: string): string {
+  return ensureDefaultBotRow(db, userId).id
 }
 
 function conversationFilterSql(filter: ListConversationsFilter): {

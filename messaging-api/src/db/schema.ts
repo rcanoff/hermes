@@ -8,6 +8,7 @@ import {
   COMPANION_DEFAULT_MODEL,
   COMPANION_DEFAULT_PROVIDER,
 } from '../lib/companion-models.js'
+import { OPERATOR_USERNAME } from '../lib/hermes-profile.js'
 import { backfillAccountSyncEvents } from './repos/chat-sync-events.js'
 import { ensureDefaultBotRow, seedKnownBotResponsibilities } from './repos/bots.js'
 
@@ -171,11 +172,24 @@ function ensureConversationBotId(db: Database.Database): void {
     db.exec(`ALTER TABLE conversations ADD COLUMN bot_id TEXT REFERENCES bots(id)`)
   }
 
-  ensureDefaultBotRow(db)
+  const usersNeedingDefault = db
+    .prepare(`
+      SELECT DISTINCT user_id
+      FROM conversations
+      WHERE bot_id IS NULL AND kind = 'regular'
+    `)
+    .all() as Array<{ user_id: string }>
+
+  for (const row of usersNeedingDefault) {
+    ensureDefaultBotRow(db, row.user_id)
+  }
 
   db.exec(`
     UPDATE conversations
-    SET bot_id = (SELECT id FROM bots WHERE slug = 'default')
+    SET bot_id = (
+      SELECT id FROM bots
+      WHERE bots.user_id = conversations.user_id AND bots.is_default = 1
+    )
     WHERE bot_id IS NULL
       AND kind = 'regular'
   `)
@@ -237,7 +251,8 @@ function ensureBots(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS bots (
       id TEXT PRIMARY KEY,
-      slug TEXT NOT NULL UNIQUE,
+      user_id TEXT NOT NULL,
+      slug TEXT NOT NULL,
       name TEXT NOT NULL,
       role TEXT NOT NULL,
       soul TEXT NOT NULL,
@@ -246,20 +261,15 @@ function ensureBots(db: Database.Database): void {
       color TEXT NOT NULL DEFAULT '${DEFAULT_BOT_COLOR}',
       runtime TEXT NOT NULL DEFAULT 'hermes' CHECK (runtime IN ('hermes', 'grok')),
       is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE (user_id, slug)
     );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS bots_one_default_idx
-      ON bots (is_default)
-      WHERE is_default = 1;
-
-    CREATE INDEX IF NOT EXISTS bots_list_idx
-      ON bots (is_default DESC, created_at DESC, id DESC);
   `)
 
   const columns = db
     .prepare(`PRAGMA table_info(bots)`)
-    .all() as Array<{ name: string }>
+    .all() as Array<{ name: string; notnull: number }>
 
   if (!columns.some((column) => column.name === 'icon')) {
     db.exec(`ALTER TABLE bots ADD COLUMN icon TEXT NOT NULL DEFAULT '${DEFAULT_BOT_ICON}'`)
@@ -277,14 +287,126 @@ function ensureBots(db: Database.Database): void {
     db.exec(`ALTER TABLE bots ADD COLUMN runtime TEXT NOT NULL DEFAULT 'hermes'`)
   }
 
+  if (!columns.some((column) => column.name === 'user_id')) {
+    db.exec(`ALTER TABLE bots ADD COLUMN user_id TEXT`)
+  }
+
+  backfillBotsUserId(db)
+  rebuildBotsIfNeeded(db)
+
   db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS bots_user_slug_idx
+      ON bots (user_id, slug);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS bots_one_default_idx
+      ON bots (user_id)
+      WHERE is_default = 1;
+
     CREATE UNIQUE INDEX IF NOT EXISTS bots_one_grok_idx
-      ON bots (runtime)
-      WHERE runtime = 'grok'
+      ON bots (user_id)
+      WHERE runtime = 'grok';
+
+    CREATE INDEX IF NOT EXISTS bots_list_idx
+      ON bots (user_id, is_default DESC, created_at DESC, id DESC);
   `)
 
   rewriteRetiredBotIcons(db)
   seedKnownBotResponsibilities(db)
+}
+
+function backfillBotsUserId(db: Database.Database): void {
+  const operator = db
+    .prepare(`SELECT id FROM users WHERE username = ?`)
+    .get(OPERATOR_USERNAME) as { id: string } | undefined
+  if (!operator) {
+    return
+  }
+
+  db.prepare(`
+    UPDATE bots
+    SET user_id = ?
+    WHERE user_id IS NULL OR user_id = ''
+  `).run(operator.id)
+}
+
+function rebuildBotsIfNeeded(db: Database.Database): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(bots)`)
+    .all() as Array<{ name: string; notnull: number }>
+  const userIdCol = columns.find((column) => column.name === 'user_id')
+  const createSql = (
+    db
+      .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bots'`)
+      .get() as { sql: string } | undefined
+  )?.sql ?? ''
+
+  const defaultIndexCols = indexColumns(db, 'bots_one_default_idx')
+  const grokIndexCols = indexColumns(db, 'bots_one_grok_idx')
+  const needsRebuild =
+    !userIdCol ||
+    userIdCol.notnull === 0 ||
+    /slug TEXT NOT NULL UNIQUE/i.test(createSql) ||
+    (defaultIndexCols.length === 1 && defaultIndexCols[0] === 'is_default') ||
+    (grokIndexCols.length === 1 && grokIndexCols[0] === 'runtime')
+
+  if (!needsRebuild) {
+    return
+  }
+
+  const unowned = db
+    .prepare(`SELECT 1 FROM bots WHERE user_id IS NULL OR user_id = '' LIMIT 1`)
+    .get()
+  if (unowned) {
+    return
+  }
+
+  db.pragma('foreign_keys = OFF')
+  db.exec(`
+    DROP INDEX IF EXISTS bots_one_default_idx;
+    DROP INDEX IF EXISTS bots_one_grok_idx;
+    DROP INDEX IF EXISTS bots_list_idx;
+    DROP INDEX IF EXISTS bots_user_slug_idx;
+
+    CREATE TABLE bots_new (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL,
+      soul TEXT NOT NULL,
+      responsibilities TEXT NOT NULL DEFAULT '',
+      icon TEXT NOT NULL DEFAULT '${DEFAULT_BOT_ICON}',
+      color TEXT NOT NULL DEFAULT '${DEFAULT_BOT_COLOR}',
+      runtime TEXT NOT NULL DEFAULT 'hermes' CHECK (runtime IN ('hermes', 'grok')),
+      is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE (user_id, slug)
+    );
+
+    INSERT INTO bots_new (
+      id, user_id, slug, name, role, soul, responsibilities, icon, color, runtime, is_default, created_at
+    )
+    SELECT
+      id, user_id, slug, name, role, soul, responsibilities, icon, color, runtime, is_default, created_at
+    FROM bots;
+
+    DROP TABLE bots;
+    ALTER TABLE bots_new RENAME TO bots;
+  `)
+  db.pragma('foreign_keys = ON')
+}
+
+function indexColumns(db: Database.Database, indexName: string): string[] {
+  const exists = db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?`)
+    .get(indexName)
+  if (!exists) {
+    return []
+  }
+  return (
+    db.prepare(`PRAGMA index_info(${indexName})`).all() as Array<{ name: string }>
+  ).map((row) => row.name)
 }
 
 function ensureMessageInputJson(db: Database.Database): void {
@@ -554,6 +676,10 @@ function ensureLegacyUserColumns(db: Database.Database): void {
     .all() as Array<{ name: string }>
   if (!columns.some((column) => column.name === 'password_changed_at')) {
     db.exec(`ALTER TABLE users ADD COLUMN password_changed_at TEXT`)
+  }
+  if (!columns.some((column) => column.name === 'created_at')) {
+    db.exec(`ALTER TABLE users ADD COLUMN created_at TEXT`)
+    db.exec(`UPDATE users SET created_at = datetime('now') WHERE created_at IS NULL`)
   }
 }
 

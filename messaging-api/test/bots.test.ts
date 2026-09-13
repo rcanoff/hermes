@@ -11,6 +11,7 @@ import { seedTestUser } from './helpers/users.js'
 
 interface BotBody {
   id: string
+  user_id: string
   slug: string
   name: string
   role: string
@@ -56,6 +57,10 @@ describe('/bots', () => {
     return { authorization: `Bearer ${token}` }
   }
 
+  function extraProfileDir(slug: string) {
+    return path.join(hermesHome, 'profiles', userId, slug)
+  }
+
   it('GET seeds the default Hermes bot', async () => {
     const response = await app!.inject({
       method: 'GET',
@@ -70,6 +75,7 @@ describe('/bots', () => {
     }
     expect(body.bots).toHaveLength(1)
     expect(body.bots[0]).toMatchObject({
+      user_id: userId,
       slug: 'default',
       name: 'Hermes',
       is_default: true,
@@ -82,6 +88,10 @@ describe('/bots', () => {
       responsibilities: DEFAULT_BOT_RESPONSIBILITIES,
     })
     expect(body._links.self.href).toBe('/bots?limit=20')
+    const defaultDir = extraProfileDir('default')
+    expect(fs.existsSync(path.join(defaultDir, 'SOUL.md'))).toBe(true)
+    expect(fs.lstatSync(path.join(defaultDir, 'skills')).isSymbolicLink()).toBe(true)
+    expect(fs.readlinkSync(path.join(defaultDir, 'skills'))).toBe(path.join(hermesHome, 'skills'))
   })
 
   it('POST creates sqlite row and profile dir with SOUL.md containing role', async () => {
@@ -98,6 +108,7 @@ describe('/bots', () => {
     expect(response.statusCode).toBe(201)
     const bot = response.json() as BotBody
     expect(bot).toMatchObject({
+      user_id: userId,
       slug: 'travel',
       name: 'Travel',
       role: 'Finds flights, bookings, and tickets.',
@@ -111,18 +122,19 @@ describe('/bots', () => {
     })
     expect(bot.soul).toContain('Finds flights, bookings, and tickets.')
 
-    const profileDir = path.join(hermesHome, 'profiles', 'travel')
-    expect(fs.existsSync(path.join(profileDir, 'SOUL.md'))).toBe(true)
-    expect(fs.readFileSync(path.join(profileDir, 'SOUL.md'), 'utf8')).toContain(
+    const dir = extraProfileDir('travel')
+    expect(fs.existsSync(path.join(dir, 'SOUL.md'))).toBe(true)
+    expect(fs.readFileSync(path.join(dir, 'SOUL.md'), 'utf8')).toContain(
       'Finds flights, bookings, and tickets.',
     )
-    expect(fs.readFileSync(path.join(profileDir, 'profile.yaml'), 'utf8')).toContain('Travel')
-    expect(fs.readFileSync(path.join(profileDir, 'config.yaml'), 'utf8')).toContain('test-model')
-    expect(fs.readFileSync(path.join(profileDir, '.env'), 'utf8')).toContain(
+    expect(fs.readFileSync(path.join(dir, 'profile.yaml'), 'utf8')).toContain('Travel')
+    expect(fs.readFileSync(path.join(dir, 'config.yaml'), 'utf8')).toContain('test-model')
+    expect(fs.readFileSync(path.join(dir, '.env'), 'utf8')).toContain(
       'API_SERVER_KEY=test-gateway-key-32chars-minimum',
     )
-    expect(fs.lstatSync(path.join(profileDir, 'skills')).isSymbolicLink()).toBe(true)
-    expect(fs.existsSync(path.join(profileDir, 'skills', 'companion-app', 'SKILL.md'))).toBe(true)
+    expect(fs.lstatSync(path.join(dir, 'skills')).isSymbolicLink()).toBe(true)
+    expect(fs.readlinkSync(path.join(dir, 'skills'))).toBe(path.join(hermesHome, 'skills'))
+    expect(fs.existsSync(path.join(dir, 'skills', 'companion-app', 'SKILL.md'))).toBe(true)
   })
 
   it('POST returns 409 slug_taken for a duplicate name slug', async () => {
@@ -170,8 +182,8 @@ describe('/bots', () => {
       payload: { name: 'Travel', role: 'Flights' },
     })
     const bot = created.json() as BotBody
-    const profileDir = path.join(hermesHome, 'profiles', 'travel')
-    expect(fs.existsSync(profileDir)).toBe(true)
+    const dir = extraProfileDir('travel')
+    expect(fs.existsSync(dir)).toBe(true)
 
     const response = await app!.inject({
       method: 'DELETE',
@@ -180,7 +192,7 @@ describe('/bots', () => {
     })
 
     expect(response.statusCode).toBe(204)
-    expect(fs.existsSync(profileDir)).toBe(false)
+    expect(fs.existsSync(dir)).toBe(false)
 
     const missing = await app!.inject({
       method: 'GET',
@@ -331,19 +343,17 @@ describe('/bots', () => {
     })
     const bot = created.json() as BotBody
     const other = await seedTestUser(app!, 'other', 'password123')
-
-    const otherChat = await app!.inject({
-      method: 'POST',
-      url: '/conversations',
-      headers: { authorization: `Bearer ${other.token}` },
-      payload: { bot_id: bot.id },
-    })
-    expect(otherChat.statusCode).toBe(201)
-    const otherChatId = (otherChat.json() as { id: string; updated_at: string }).id
+    const otherChatId = '11111111-1111-4111-8111-111111111111'
     const otherUpdatedAt = '2026-09-10 15:00:00'
     app!.db
-      .prepare(`UPDATE conversations SET updated_at = ? WHERE id = ?`)
-      .run(otherUpdatedAt, otherChatId)
+      .prepare(
+        `
+        INSERT INTO conversations (
+          id, user_id, hermes_session_id, kind, bot_id, updated_at
+        ) VALUES (?, ?, 'hs-other', 'regular', ?, ?)
+      `,
+      )
+      .run(otherChatId, other.id, bot.id, otherUpdatedAt)
 
     const jobId = createJobConversation(app!.db, userId, 'operator', { name: 'Digest' })
     app!.db
@@ -363,8 +373,7 @@ describe('/bots', () => {
       url: `/bots/${bot.id}`,
       headers: { authorization: `Bearer ${other.token}` },
     })
-    expect(asOther.statusCode).toBe(200)
-    expect((asOther.json() as BotBody).last_message_at).toBe(otherUpdatedAt)
+    expect(asOther.statusCode).toBe(404)
   })
 
   it('last_message is the latest non-pending regular-chat content for this user', async () => {
@@ -589,7 +598,7 @@ describe('/bots', () => {
       slug: 'travel',
       soul: 'You book trips and never invent prices.',
     })
-    expect(fs.readFileSync(path.join(hermesHome, 'profiles', 'travel', 'SOUL.md'), 'utf8')).toBe(
+    expect(fs.readFileSync(path.join(extraProfileDir('travel'), 'SOUL.md'), 'utf8')).toBe(
       'You book trips and never invent prices.',
     )
   })
@@ -674,8 +683,13 @@ describe('/bots', () => {
       is_default: false,
     })
     expect(bot.soul).toContain('Local Mac agent.')
-    expect(fs.existsSync(path.join(hermesHome, 'profiles', 'grok'))).toBe(false)
-    expect(fs.readFileSync(honchoPath, 'utf8')).toBe(honchoBefore)
+    expect(fs.existsSync(extraProfileDir('grok'))).toBe(false)
+    const honchoAfter = JSON.parse(fs.readFileSync(honchoPath, 'utf8')) as {
+      hosts: Record<string, unknown>
+    }
+    expect(honchoAfter.hosts['hermes.default']).toEqual({ aiPeer: 'default' })
+    expect(honchoAfter.hosts[`hermes.${userId}.grok`]).toBeUndefined()
+    expect(honchoAfter.hosts['hermes.grok']).toBeUndefined()
 
     const listed = await app!.inject({
       method: 'GET',
@@ -767,7 +781,7 @@ describe('/bots', () => {
       runtime: 'grok',
       soul: 'Stay in ~/Companion/grok.',
     })
-    expect(fs.existsSync(path.join(hermesHome, 'profiles', 'grok'))).toBe(false)
+    expect(fs.existsSync(extraProfileDir('grok'))).toBe(false)
   })
 
   it('DELETE grok returns 204 without a profile dir', async () => {
@@ -792,5 +806,168 @@ describe('/bots', () => {
       headers: authHeaders(),
     })
     expect(missing.statusCode).toBe(404)
+  })
+
+  it('keeps rcanoff default at $HERMES_HOME and namespaces new extras', async () => {
+    const rcanoff = await seedTestUser(app!, 'rcanoff', 'password123')
+    const listed = await app!.inject({
+      method: 'GET',
+      url: '/bots',
+      headers: { authorization: `Bearer ${rcanoff.token}` },
+    })
+    expect(listed.statusCode).toBe(200)
+    expect((listed.json() as { bots: BotBody[] }).bots[0]).toMatchObject({
+      user_id: rcanoff.id,
+      slug: 'default',
+      is_default: true,
+    })
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', rcanoff.id, 'default'))).toBe(false)
+
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: { authorization: `Bearer ${rcanoff.token}` },
+      payload: { name: 'Travel', role: 'Flights' },
+    })
+    expect(created.statusCode).toBe(201)
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', rcanoff.id, 'travel', 'SOUL.md'))).toBe(
+      true,
+    )
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', 'travel'))).toBe(false)
+  })
+
+  it('scopes the roster to the JWT user and 404s other users’ bots', async () => {
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Travel', role: 'Flights' },
+    })
+    const travel = created.json() as BotBody
+    const other = await seedTestUser(app!, 'AlineTusi', 'password123')
+
+    const otherList = await app!.inject({
+      method: 'GET',
+      url: '/bots',
+      headers: { authorization: `Bearer ${other.token}` },
+    })
+    expect(otherList.statusCode).toBe(200)
+    const otherBots = (otherList.json() as { bots: BotBody[] }).bots
+    expect(otherBots).toHaveLength(1)
+    expect(otherBots[0]).toMatchObject({
+      user_id: other.id,
+      slug: 'default',
+      is_default: true,
+    })
+    expect(otherBots.find((row) => row.id === travel.id)).toBeUndefined()
+
+    const hidden = await app!.inject({
+      method: 'GET',
+      url: `/bots/${travel.id}`,
+      headers: { authorization: `Bearer ${other.token}` },
+    })
+    expect(hidden.statusCode).toBe(404)
+
+    const patched = await app!.inject({
+      method: 'PATCH',
+      url: `/bots/${travel.id}`,
+      headers: { authorization: `Bearer ${other.token}` },
+      payload: { soul: 'stolen' },
+    })
+    expect(patched.statusCode).toBe(404)
+
+    const deleted = await app!.inject({
+      method: 'DELETE',
+      url: `/bots/${travel.id}`,
+      headers: { authorization: `Bearer ${other.token}` },
+    })
+    expect(deleted.statusCode).toBe(404)
+  })
+
+  it('lets two users each have slug default and each a Grok bot', async () => {
+    const firstGrok = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Grok', role: 'Mac agent', runtime: 'grok' },
+    })
+    expect(firstGrok.statusCode).toBe(201)
+
+    const other = await seedTestUser(app!, 'AlineTusi', 'password123')
+    const otherDefault = await app!.inject({
+      method: 'GET',
+      url: '/bots',
+      headers: { authorization: `Bearer ${other.token}` },
+    })
+    expect(otherDefault.statusCode).toBe(200)
+    expect((otherDefault.json() as { bots: BotBody[] }).bots[0]?.slug).toBe('default')
+
+    const otherGrok = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: { authorization: `Bearer ${other.token}` },
+      payload: { name: 'Grok', role: 'Mac agent', runtime: 'grok' },
+    })
+    expect(otherGrok.statusCode).toBe(201)
+    expect((otherGrok.json() as BotBody).user_id).toBe(other.id)
+
+    const sameUserSecond = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: { authorization: `Bearer ${other.token}` },
+      payload: { name: 'Grok Two', role: 'Another Mac agent', runtime: 'grok' },
+    })
+    expect(sameUserSecond.statusCode).toBe(409)
+    expect(sameUserSecond.json()).toEqual({ error: 'grok_bot_exists' })
+  })
+
+  it('DELETE bot removes only that user’s conversations', async () => {
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Travel', role: 'Flights' },
+    })
+    const bot = created.json() as BotBody
+    const ownChat = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: authHeaders(),
+      payload: { bot_id: bot.id },
+    })
+    expect(ownChat.statusCode).toBe(201)
+    const ownChatId = (ownChat.json() as { id: string }).id
+
+    const other = await seedTestUser(app!, 'AlineTusi', 'password123')
+    const otherChatId = '22222222-2222-4222-8222-222222222222'
+    app!.db
+      .prepare(
+        `
+        INSERT INTO conversations (
+          id, user_id, hermes_session_id, kind, bot_id, updated_at
+        ) VALUES (?, ?, 'hs-aline', 'regular', ?, datetime('now'))
+      `,
+      )
+      .run(otherChatId, other.id, bot.id)
+
+    const response = await app!.inject({
+      method: 'DELETE',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+    expect(response.statusCode).toBe(204)
+
+    const ownMissing = await app!.inject({
+      method: 'GET',
+      url: `/conversations/${ownChatId}`,
+      headers: authHeaders(),
+    })
+    expect(ownMissing.statusCode).toBe(404)
+
+    const otherStill = app!.db
+      .prepare(`SELECT id, bot_id FROM conversations WHERE id = ?`)
+      .get(otherChatId) as { id: string; bot_id: string | null }
+    expect(otherStill.id).toBe(otherChatId)
+    expect(otherStill.bot_id).toBeNull()
   })
 })

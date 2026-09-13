@@ -15,4 +15,13 @@ describe('hermesProfilePath', () => {
     expect(hermesProfilePath('/api/sessions', 'travel')).toBe('/p/travel/api/sessions')
     expect(hermesProfilePath('v1/chat/completions', 'research')).toBe('/p/research/v1/chat/completions')
   })
+
+  it('prefixes namespaced user profile keys', () => {
+    expect(hermesProfilePath('/v1/chat/completions', 'user-aline/default')).toBe(
+      '/p/user-aline/default/v1/chat/completions',
+    )
+    expect(hermesProfilePath('/api/sessions', 'user-aline/travel')).toBe(
+      '/p/user-aline/travel/api/sessions',
+    )
+  })
 })

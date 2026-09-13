@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
-import { insertBot, getBotBySlug } from '../src/db/repos/bots.js'
+import { insertBot, ensureDefaultBotRow } from '../src/db/repos/bots.js'
 import {
   createConversation,
   createJobConversation,
@@ -25,6 +25,7 @@ function seedUser(db: Database.Database) {
 
 function seedTravel(db: Database.Database) {
   return insertBot(db, {
+    userId: 'u1',
     slug: 'travel',
     name: 'Travel',
     role: 'Flights',
@@ -50,7 +51,7 @@ describe('messageTeammate', () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedUser(db)
-    const hermes = getBotBySlug(db, 'default')!
+    const hermes = ensureDefaultBotRow(db, 'u1')
     const travel = seedTravel(db)
     const callerId = seedCallerTurn(db)
 
@@ -121,7 +122,7 @@ describe('messageTeammate', () => {
 
     const promptUser = hermesClient.requests[0]?.messages.find((message) => message.role === 'user')
     expect(promptUser?.content).toBe('Hermes (teammate) asks: Plan a trip to Lisbon')
-    expect(hermesClient.requests[0]?.profileSlug).toBe('travel')
+    expect(hermesClient.requests[0]?.profileSlug).toBe('u1/travel')
 
     const callerUpserts = events.filter(
       (event) =>
@@ -161,7 +162,7 @@ describe('messageTeammate', () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedUser(db)
-    const hermes = getBotBySlug(db, 'default')!
+    const hermes = ensureDefaultBotRow(db, 'u1')
     const travel = seedTravel(db)
     const callerId = seedCallerTurn(db, travel.id)
 
@@ -232,7 +233,7 @@ describe('messageTeammate', () => {
 
     const promptUser = hermesClient.requests[0]?.messages.find((message) => message.role === 'user')
     expect(promptUser?.content).toBe('Travel (teammate) asks: Help')
-    expect(hermesClient.requests[0]?.profileSlug).toBeUndefined()
+    expect(hermesClient.requests[0]?.profileSlug).toBe('u1/default')
 
     const callerUpserts = events.filter(
       (event) =>
@@ -331,8 +332,9 @@ describe('messageTeammate', () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedUser(db)
-    const hermes = getBotBySlug(db, 'default')!
+    const hermes = ensureDefaultBotRow(db, 'u1')
     const grokBot = insertBot(db, {
+      userId: 'u1',
       slug: 'grok',
       name: 'Grok',
       role: 'Mac agent',
@@ -412,7 +414,9 @@ describe('messageTeammate', () => {
     const db = new Database(':memory:')
     initSchema(db)
     seedUser(db)
+    ensureDefaultBotRow(db, 'u1')
     const grokBot = insertBot(db, {
+      userId: 'u1',
       slug: 'grok',
       name: 'Grok',
       role: 'Mac agent',

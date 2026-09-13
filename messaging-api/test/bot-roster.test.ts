@@ -2,12 +2,14 @@ import Database from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_BOT_RESPONSIBILITIES,
+  ensureDefaultBotRow,
   insertBot,
   listBotsForRoster,
   PATRIK_BOT_RESPONSIBILITIES,
   updateBot,
 } from '../src/db/repos/bots.js'
 import { initSchema } from '../src/db/schema.js'
+import { insertDbUser } from './helpers/users.js'
 import {
   buildBotRosterPrompt,
   MESSAGE_TEAMMATE_MUST_HANDOFF_INSTRUCTION,
@@ -184,20 +186,24 @@ describe('listBotsForRoster', () => {
   it('returns default first, then remaining bots by name, including newly created roles', () => {
     const db = new Database(':memory:')
     initSchema(db)
+    const user = insertDbUser(db)
+    ensureDefaultBotRow(db, user.id)
     insertBot(db, {
+      userId: user.id,
       slug: 'travel',
       name: 'Travel',
       role: 'Finds flights, bookings, and tickets.',
       soul: 'You book trips.',
     })
     insertBot(db, {
+      userId: user.id,
       slug: 'patrik',
       name: 'Patrik',
       role: 'Personal agent',
       soul: 'You are Patrik.',
     })
 
-    const rows = listBotsForRoster(db)
+    const rows = listBotsForRoster(db, user.id)
     expect(rows.map((bot) => bot.slug)).toEqual(['default', 'patrik', 'travel'])
     expect(rows.map((bot) => bot.role)).toEqual([
       'Default Companion assistant.',
@@ -213,7 +219,10 @@ describe('listBotsForRoster', () => {
   it('shows jobs on the roster after they are set', () => {
     const db = new Database(':memory:')
     initSchema(db)
+    const user = insertDbUser(db)
+    ensureDefaultBotRow(db, user.id)
     const travelRow = insertBot(db, {
+      userId: user.id,
       slug: 'travel',
       name: 'Travel',
       role: 'Finds flights, bookings, and tickets.',
@@ -223,7 +232,7 @@ describe('listBotsForRoster', () => {
       responsibilities: 'Flights, bookings, and tickets.',
     })
 
-    const prompt = buildBotRosterPrompt(listBotsForRoster(db), 'default')
+    const prompt = buildBotRosterPrompt(listBotsForRoster(db, user.id), 'default')
     expect(prompt).toContain('- Travel: Flights, bookings, and tickets.')
     expect(prompt).not.toContain('You book trips.')
   })

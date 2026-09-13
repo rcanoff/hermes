@@ -1,7 +1,28 @@
 import { randomUUID } from 'node:crypto'
+import type Database from 'better-sqlite3'
 import type { FastifyInstance } from 'fastify'
-import { createUser } from '../../src/db/repos/users.js'
+import { createUser, findUserById, type UserRow } from '../../src/db/repos/users.js'
 import { hashPassword } from '../../src/services/password.js'
+
+export function insertDbUser(
+  db: Database.Database,
+  username = 'operator',
+  id?: string,
+): UserRow {
+  if (id) {
+    db.prepare(`
+      INSERT INTO users (id, username, password_hash, password_changed_at)
+      VALUES (?, ?, 'hash', datetime('now'))
+    `).run(id, username)
+    return findUserById(db, id)!
+  }
+
+  return createUser(db, {
+    username,
+    passwordHash: 'hash',
+    passwordChangedAt: new Date().toISOString(),
+  })
+}
 
 export async function seedTestUser(
   app: FastifyInstance,

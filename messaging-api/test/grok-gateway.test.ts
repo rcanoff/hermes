@@ -437,6 +437,7 @@ describe('grok disabled when gateway URL is empty', () => {
 
   it('fails grok conversation create with grok_unavailable when the gateway is down', async () => {
     const bot = insertBot(app!.db, {
+      userId: userId,
       slug: 'grok',
       name: 'Grok',
       role: 'Mac agent',
@@ -455,6 +456,7 @@ describe('grok disabled when gateway URL is empty', () => {
 
   it('fails grok sends with grok_unavailable and never calls Hermes', async () => {
     const bot = insertBot(app!.db, {
+      userId: userId,
       slug: 'grok',
       name: 'Grok',
       role: 'Mac agent',

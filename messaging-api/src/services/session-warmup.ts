@@ -1,8 +1,7 @@
 import type Database from 'better-sqlite3'
-import { getBotById, listBotsForRoster } from '../db/repos/bots.js'
+import { getBotById, hermesProfileKeyForBot, listBotsForRoster } from '../db/repos/bots.js'
 import type { ConversationRow } from '../db/repos/conversations.js'
 import { buildBotRosterPrompt } from '../lib/bot-roster.js'
-import { DEFAULT_BOT_SLUG } from '../lib/hermes-profile.js'
 import { resolveJobConversationBootstrap } from '../lib/job-conversation.js'
 import type { HermesClient } from './hermes-client.js'
 import { buildHermesSystemPrompt } from './prompt-builder.js'
@@ -19,8 +18,9 @@ export function scheduleConversationSessionWarmup(input: {
     | 'schedule_display'
     | 'model'
     | 'provider'
-  > & { bot_id?: string | null }
+  > & { bot_id?: string | null; user_id?: string }
   db?: Database.Database
+  hermesHome?: string
   companionUsername?: string
   log?: (message: string, meta?: Record<string, unknown>) => void
 }): void {
@@ -28,14 +28,16 @@ export function scheduleConversationSessionWarmup(input: {
     ? resolveJobConversationBootstrap(input.conversation, input.companionUsername)
     : input.conversation.bootstrap_prompt
 
-  const botSlug =
+  const bot =
     input.db && input.conversation.bot_id
-      ? getBotById(input.db, input.conversation.bot_id)?.slug
+      ? getBotById(input.db, input.conversation.bot_id)
       : undefined
-  const profileSlug = botSlug && botSlug !== DEFAULT_BOT_SLUG ? botSlug : undefined
+  const botSlug = bot?.slug
+  const profileSlug = bot ? hermesProfileKeyForBot(bot, input.hermesHome) : undefined
+  const rosterUserId = input.conversation.user_id ?? bot?.user_id
   const rosterPrompt =
-    input.db && input.conversation.kind !== 'job' && botSlug
-      ? buildBotRosterPrompt(listBotsForRoster(input.db), botSlug)
+    input.db && input.conversation.kind !== 'job' && botSlug && rosterUserId
+      ? buildBotRosterPrompt(listBotsForRoster(input.db, rosterUserId), botSlug)
       : undefined
 
   const systemPrompt = buildHermesSystemPrompt({

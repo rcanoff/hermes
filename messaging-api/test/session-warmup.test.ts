@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
-import { insertBot } from '../src/db/repos/bots.js'
+import { ensureDefaultBotRow, insertBot } from '../src/db/repos/bots.js'
 import { initSchema } from '../src/db/schema.js'
 import {
   COMPANION_DEFAULT_MODEL,
@@ -61,7 +61,10 @@ describe('scheduleConversationSessionWarmup', () => {
   it('passes a non-default bot slug to ensureSession', async () => {
     const db = new Database(':memory:')
     initSchema(db)
+    db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash')`).run()
+    ensureDefaultBotRow(db, 'u1')
     const travel = insertBot(db, {
+      userId: 'u1',
       slug: 'travel',
       name: 'Travel',
       role: 'Flights',
@@ -73,6 +76,7 @@ describe('scheduleConversationSessionWarmup', () => {
       hermesClient,
       db,
       conversation: {
+        user_id: 'u1',
         hermes_session_id: 'sess-warm-3',
         bootstrap_prompt: null,
         model: COMPANION_DEFAULT_MODEL,
@@ -82,7 +86,7 @@ describe('scheduleConversationSessionWarmup', () => {
     })
 
     await waitFor(() => hermesClient.ensureSessionRequests.length === 1)
-    expect(hermesClient.ensureSessionRequests[0]?.profileSlug).toBe('travel')
+    expect(hermesClient.ensureSessionRequests[0]?.profileSlug).toBe('u1/travel')
     expect(hermesClient.ensureSessionRequests[0]?.systemPrompt).toContain('You are Travel. Specialty: Flights')
     expect(hermesClient.ensureSessionRequests[0]?.systemPrompt).toContain('set_my_responsibilities')
     expect(hermesClient.ensureSessionRequests[0]?.systemPrompt).toContain(
@@ -93,7 +97,9 @@ describe('scheduleConversationSessionWarmup', () => {
   it('omits roster text for job conversations', async () => {
     const db = new Database(':memory:')
     initSchema(db)
+    db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash')`).run()
     insertBot(db, {
+      userId: 'u1',
       slug: 'travel',
       name: 'Travel',
       role: 'Finds flights, bookings, and tickets.',

@@ -17,6 +17,7 @@ import { listAttachmentsForMessages } from '../db/repos/message-attachments.js'
 import { botSummariesForMessages } from '../lib/attachment-serializer.js'
 import {
   getBotById,
+  hermesProfileKeyForBot,
   listBotsForRoster,
   normalizeBotRuntime,
   soulForResponse,
@@ -30,7 +31,6 @@ import {
 import { buildBotRosterPrompt } from '../lib/bot-roster.js'
 import { createReplyAssembler, type ReplyAssembler } from '../lib/reply-assembler.js'
 import { DEFAULT_COMPANION_MODELS, type CuratedModelEntry } from '../lib/companion-models.js'
-import { DEFAULT_BOT_SLUG } from '../lib/hermes-profile.js'
 import { buildHermesMessages, mapDelegationForHermes } from './prompt-builder.js'
 import type { HermesClient } from './hermes-client.js'
 import {
@@ -195,7 +195,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
   try {
     const botSlug = getConversationBotSlug(input.db, input.conversationId)
     const rosterPrompt = botSlug
-      ? buildBotRosterPrompt(listBotsForRoster(input.db), botSlug)
+      ? buildBotRosterPrompt(listBotsForRoster(input.db, input.userId), botSlug)
       : undefined
     const currentBotId = getConversationForUser(
       input.db,
@@ -213,7 +213,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       currentBotId,
     })
 
-    const profileSlug = botSlug && botSlug !== DEFAULT_BOT_SLUG ? botSlug : undefined
+    const profileSlug = bot ? hermesProfileKeyForBot(bot, input.hermesHome) : undefined
 
     for await (const event of input.hermesClient.streamChat({
       hermesSessionId: input.hermesSessionId,
@@ -393,7 +393,7 @@ async function executeGrokAssistantRun(
   }
 
   try {
-    const rosterPrompt = buildBotRosterPrompt(listBotsForRoster(input.db), input.bot.slug)
+    const rosterPrompt = buildBotRosterPrompt(listBotsForRoster(input.db, input.userId), input.bot.slug)
     const soul = [soulForResponse(input.bot, input.hermesHome ?? ''), rosterPrompt]
       .filter((part) => part.trim())
       .join('\n\n')

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { getBotBySlug, insertBot } from '../src/db/repos/bots.js'
+import { ensureDefaultBotRow, getBotBySlug, insertBot } from '../src/db/repos/bots.js'
 import { createConversation } from '../src/db/repos/conversations.js'
 import { insertMessage, listMessages } from '../src/db/repos/messages.js'
 import { createRun } from '../src/db/repos/runs.js'
@@ -375,6 +375,7 @@ describe('companion MCP routes', () => {
     const seeded = await seedTestUser(app, 'operator', 'password123')
 
     insertBot(app.db, {
+      userId: seeded.id,
       slug: 'travel',
       name: 'Travel',
       role: 'Flights',
@@ -425,12 +426,14 @@ describe('companion MCP routes', () => {
   it('set_my_responsibilities updates the caller bot only', async () => {
     const seeded = await seedTestUser(app!, 'operator2', 'password123')
     const travel = insertBot(app!.db, {
+      userId: seeded.id,
       slug: 'travel',
       name: 'Travel',
       role: 'Flights',
       soul: 'You book trips.',
     })
     const other = insertBot(app!.db, {
+      userId: seeded.id,
       slug: 'notes',
       name: 'Notes',
       role: 'Takes notes',
@@ -468,11 +471,11 @@ describe('companion MCP routes', () => {
       slug: 'travel',
       responsibilities: 'Flights, bookings, and tickets.',
     })
-    expect(getBotBySlug(app!.db, 'travel')?.responsibilities).toBe(
+    expect(getBotBySlug(app!.db, seeded.id, 'travel')?.responsibilities).toBe(
       'Flights, bookings, and tickets.',
     )
-    expect(getBotBySlug(app!.db, 'notes')?.responsibilities).toBe('')
-    expect(getBotBySlug(app!.db, 'default')?.responsibilities).toBe(
+    expect(getBotBySlug(app!.db, seeded.id, 'notes')?.responsibilities).toBe('')
+    expect(ensureDefaultBotRow(app!.db, seeded.id).responsibilities).toBe(
       'Default Companion assistant; routes matching work to specialist teammates.',
     )
     expect(other.slug).toBe('notes')
@@ -484,6 +487,7 @@ describe('companion MCP routes', () => {
   it('set_my_responsibilities rejects empty or overlong jobs', async () => {
     const seeded = await seedTestUser(app!, 'operator3', 'password123')
     const travel = insertBot(app!.db, {
+      userId: seeded.id,
       slug: 'travel',
       name: 'Travel',
       role: 'Flights',
@@ -524,7 +528,7 @@ describe('companion MCP routes', () => {
       'at most 200 characters',
     )
 
-    expect(getBotBySlug(app!.db, 'travel')?.responsibilities).toBe('')
+    expect(getBotBySlug(app!.db, seeded.id, 'travel')?.responsibilities).toBe('')
 
     await transport.close()
     await client.close()

@@ -53,7 +53,7 @@ describe('conversation bot_id', () => {
 
     initSchema(db)
 
-    const defaultBot = getBotBySlug(db, 'default')
+    const defaultBot = getBotBySlug(db, 'u1', 'default')
     expect(defaultBot).toBeDefined()
     const row = db
       .prepare(`SELECT bot_id, kind FROM conversations WHERE id = 'c1'`)
@@ -70,7 +70,7 @@ describe('conversation bot_id', () => {
     })
 
     expect(create.statusCode).toBe(201)
-    const defaultBot = getBotBySlug(app!.db, 'default')
+    const defaultBot = getBotBySlug(app!.db, userId, 'default')
     expect(create.json()).toMatchObject({
       kind: 'regular',
       bot_id: defaultBot!.id,

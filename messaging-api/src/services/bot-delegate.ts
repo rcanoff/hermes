@@ -58,7 +58,7 @@ export async function messageTeammate(
   }
 
   const user = resolveUser(input.db, input.username)
-  const targetBot = resolveTeammate(input.db, name)
+  const targetBot = resolveTeammate(input.db, user.id, name)
   const callerRun = getLatestRunningRunForUser(input.db, user.id)
   if (!callerRun) {
     throw new Error('No running turn to delegate from')
@@ -180,14 +180,14 @@ function resolveUser(db: Database.Database, username: string): UserRow {
   return user
 }
 
-function resolveTeammate(db: Database.Database, name: string): BotRow {
+function resolveTeammate(db: Database.Database, userId: string, name: string): BotRow {
   const slug = name.toLowerCase()
-  const bySlug = getBotBySlug(db, slug)
+  const bySlug = getBotBySlug(db, userId, slug)
   if (bySlug) {
     return bySlug
   }
 
-  const match = listBotsForRoster(db).find((bot) => bot.name.toLowerCase() === slug)
+  const match = listBotsForRoster(db, userId).find((bot) => bot.name.toLowerCase() === slug)
   if (!match) {
     throw new Error(`Unknown teammate "${name}"`)
   }

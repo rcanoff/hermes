@@ -11,7 +11,8 @@ import {
   listRecentModelsForUser,
   updateConversationModel,
 } from '../src/db/repos/conversations.js'
-import { insertBot, getBotBySlug } from '../src/db/repos/bots.js'
+import { insertBot, getBotBySlug, ensureDefaultBotRow } from '../src/db/repos/bots.js'
+import { insertDbUser } from './helpers/users.js'
 import { insertMessage, listMessages } from '../src/db/repos/messages.js'
 import { denyToken, isTokenDenied } from '../src/db/repos/sessions.js'
 import { markRunCompleted, markRunFailed } from '../src/db/repos/runs.js'
@@ -88,29 +89,97 @@ describe('schema', () => {
     expect(names).toContain('color')
     expect(names).toContain('responsibilities')
     expect(names).toContain('runtime')
+    expect(names).toContain('user_id')
   })
 
   it('seeds default responsibilities; new bots start with empty jobs', () => {
     const db = new Database(':memory:')
     initSchema(db)
-    const defaultBot = getBotBySlug(db, 'default')
+    const user = insertDbUser(db)
+    const defaultBot = ensureDefaultBotRow(db, user.id)
     expect(defaultBot?.responsibilities).toBe(
       'Default Companion assistant; routes matching work to specialist teammates.',
     )
 
     insertBot(db, {
+      userId: user.id,
       slug: 'patrik',
       name: 'Patrik',
       role: 'Personal agent',
       soul: 'You are Patrik.',
     })
-    expect(getBotBySlug(db, 'patrik')?.responsibilities).toBe('')
+    expect(getBotBySlug(db, user.id, 'patrik')?.responsibilities).toBe('')
+  })
+
+  it('backfills existing bots to rcanoff and unique-grok is per user', () => {
+    const db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    db.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL
+      );
+      INSERT INTO users (id, username, password_hash) VALUES ('rcanoff-id', 'rcanoff', 'hash');
+      CREATE TABLE bots (
+        id TEXT PRIMARY KEY,
+        slug TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        soul TEXT NOT NULL,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO bots (id, slug, name, role, soul, is_default)
+      VALUES ('b1', 'default', 'Hermes', 'Default', 'You are Hermes', 1);
+    `)
+
+    initSchema(db)
+
+    const row = db
+      .prepare('SELECT user_id, slug FROM bots WHERE id = ?')
+      .get('b1') as { user_id: string; slug: string }
+    expect(row).toEqual({ user_id: 'rcanoff-id', slug: 'default' })
+
+    const aline = insertDbUser(db, 'AlineTusi')
+    insertBot(db, {
+      userId: aline.id,
+      slug: 'grok',
+      name: 'Grok',
+      role: 'Mac agent',
+      soul: 'You are Grok.',
+      runtime: 'grok',
+    })
+    insertBot(db, {
+      userId: 'rcanoff-id',
+      slug: 'grok',
+      name: 'Grok',
+      role: 'Mac agent',
+      soul: 'You are Grok.',
+      runtime: 'grok',
+    })
+    expect(() =>
+      insertBot(db, {
+        userId: aline.id,
+        slug: 'grok-two',
+        name: 'Grok Two',
+        role: 'Mac agent',
+        soul: 'You are Grok.',
+        runtime: 'grok',
+      }),
+    ).toThrow()
   })
 
   it('adds icon and color to legacy bots', () => {
     const db = new Database(':memory:')
     db.pragma('foreign_keys = ON')
     db.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL
+      );
+      INSERT INTO users (id, username, password_hash) VALUES ('rcanoff-id', 'rcanoff', 'hash');
       CREATE TABLE bots (
         id TEXT PRIMARY KEY,
         slug TEXT NOT NULL UNIQUE,
@@ -132,10 +201,16 @@ describe('schema', () => {
     expect(row).toEqual({ icon: 'message', color: 'blue' })
   })
 
-  it('adds runtime=hermes to legacy bots and allows one grok', () => {
+  it('adds runtime=hermes to legacy bots and allows one grok per user', () => {
     const db = new Database(':memory:')
     db.pragma('foreign_keys = ON')
     db.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL
+      );
+      INSERT INTO users (id, username, password_hash) VALUES ('rcanoff-id', 'rcanoff', 'hash');
       CREATE TABLE bots (
         id TEXT PRIMARY KEY,
         slug TEXT NOT NULL UNIQUE,
@@ -152,11 +227,13 @@ describe('schema', () => {
     initSchema(db)
 
     const defaultRow = db
-      .prepare('SELECT runtime FROM bots WHERE id = ?')
-      .get('b1') as { runtime: string }
+      .prepare('SELECT runtime, user_id FROM bots WHERE id = ?')
+      .get('b1') as { runtime: string; user_id: string }
     expect(defaultRow.runtime).toBe('hermes')
+    expect(defaultRow.user_id).toBe('rcanoff-id')
 
     insertBot(db, {
+      userId: 'rcanoff-id',
       slug: 'grok',
       name: 'Grok',
       role: 'Mac agent',
@@ -165,6 +242,7 @@ describe('schema', () => {
     })
     expect(() =>
       insertBot(db, {
+        userId: 'rcanoff-id',
         slug: 'grok-two',
         name: 'Grok Two',
         role: 'Mac agent',
@@ -178,6 +256,12 @@ describe('schema', () => {
     const db = new Database(':memory:')
     db.pragma('foreign_keys = ON')
     db.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL
+      );
+      INSERT INTO users (id, username, password_hash) VALUES ('rcanoff-id', 'rcanoff', 'hash');
       CREATE TABLE bots (
         id TEXT PRIMARY KEY,
         slug TEXT NOT NULL UNIQUE,
@@ -214,6 +298,12 @@ describe('schema', () => {
     const db = new Database(':memory:')
     db.pragma('foreign_keys = ON')
     db.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL
+      );
+      INSERT INTO users (id, username, password_hash) VALUES ('rcanoff-id', 'rcanoff', 'hash');
       CREATE TABLE bots (
         id TEXT PRIMARY KEY,
         slug TEXT NOT NULL UNIQUE,
@@ -556,8 +646,9 @@ describe('schema', () => {
     const db = new Database(':memory:')
     initSchema(db)
     db.exec(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash');`)
-    const hermes = getBotBySlug(db, 'default')!
+    const hermes = ensureDefaultBotRow(db, 'u1')
     const travel = insertBot(db, {
+      userId: 'u1',
       slug: 'travel',
       name: 'Travel',
       role: 'Flights',

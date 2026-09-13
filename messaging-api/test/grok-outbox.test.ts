@@ -251,6 +251,7 @@ describe('grok outbox drain', () => {
     initSchema(db)
     db.exec(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'operator', 'hash')`)
     const bot = insertBot(db, {
+      userId: 'u1',
       slug: 'grok',
       name: 'Grok',
       role: 'Mac agent',

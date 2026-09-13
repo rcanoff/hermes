@@ -18,6 +18,7 @@ describe('message routes', () => {
   let app: FastifyInstance | undefined
   let hermesClient: FakeHermesClient
   let operatorToken: string
+  let operatorId: string
   let otherUserToken: string
   let conversationId: string
 
@@ -28,6 +29,7 @@ describe('message routes', () => {
 
     const seeded = await seedTestUser(app, 'operator', 'password123')
     operatorToken = seeded.token
+    operatorId = seeded.id
 
     const otherUserId = randomUUID()
     app.db
@@ -79,8 +81,9 @@ describe('message routes', () => {
   })
 
   it('includes from_bot and to_bot summaries on bot_sent messages', async () => {
-    const hermes = getBotBySlug(app!.db, 'default')!
+    const hermes = getBotBySlug(app!.db, operatorId, 'default')!
     const travel = insertBot(app!.db, {
+      userId: operatorId,
       slug: 'travel',
       name: 'Travel',
       role: 'Flights',
@@ -235,6 +238,7 @@ describe('message routes', () => {
     expect(hermesClient.requests[0]).toEqual({
       hermesSessionId: expect.any(String),
       companionUserId: expect.any(String),
+      profileSlug: `${operatorId}/default`,
       messages: [
         {
           role: 'system',

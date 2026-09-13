@@ -1,5 +1,10 @@
 import type Database from 'better-sqlite3'
-import { getBotById, listBotsForRoster, normalizeBotRuntime } from '../db/repos/bots.js'
+import {
+  getBotById,
+  hermesProfileKeyForBot,
+  listBotsForRoster,
+  normalizeBotRuntime,
+} from '../db/repos/bots.js'
 import { listAttachmentsForMessages } from '../db/repos/message-attachments.js'
 import { botSummariesForMessages } from '../lib/attachment-serializer.js'
 import {
@@ -9,7 +14,6 @@ import {
   type ConversationRow,
 } from '../db/repos/conversations.js'
 import { buildBotRosterPrompt } from '../lib/bot-roster.js'
-import { DEFAULT_BOT_SLUG } from '../lib/hermes-profile.js'
 import { listMessages } from '../db/repos/messages.js'
 import { getActiveRun } from '../db/repos/runs.js'
 import {
@@ -53,6 +57,7 @@ export async function rewarmSessionTranscript(input: {
   attachmentsDir?: string
   visionHistoryMaxBytes?: number
   rebuildUserMessage?: string
+  hermesHome?: string
 }): Promise<void> {
   const history = listMessages(input.db, input.conversation.id)
   if (history.length === 0) {
@@ -78,7 +83,7 @@ export async function rewarmSessionTranscript(input: {
   const botSlug = getConversationBotSlug(input.db, input.conversation.id)
   const rosterPrompt =
     input.conversation.kind !== 'job' && botSlug
-      ? buildBotRosterPrompt(listBotsForRoster(input.db), botSlug)
+      ? buildBotRosterPrompt(listBotsForRoster(input.db, input.conversation.user_id), botSlug)
       : undefined
 
   const messages = await buildHermesMessages(historyWithAttachments, {
@@ -96,7 +101,10 @@ export async function rewarmSessionTranscript(input: {
     content: input.rebuildUserMessage ?? CONTEXT_REBUILD_PROVIDER_CHANGE_USER_MESSAGE,
   })
 
-  const profileSlug = botSlug && botSlug !== DEFAULT_BOT_SLUG ? botSlug : undefined
+  const bot = input.conversation.bot_id
+    ? getBotById(input.db, input.conversation.bot_id)
+    : undefined
+  const profileSlug = bot ? hermesProfileKeyForBot(bot, input.hermesHome) : undefined
 
   await input.hermesClient.completeChat({
     hermesSessionId: input.conversation.hermes_session_id,
@@ -117,6 +125,7 @@ export async function applyConversationModelChange(input: {
   companionUsername?: string
   attachmentsDir?: string
   visionHistoryMaxBytes?: number
+  hermesHome?: string
 }): Promise<ModelChangeResult> {
   const bot = input.conversation.bot_id ? getBotById(input.db, input.conversation.bot_id) : undefined
   if (bot && normalizeBotRuntime(bot.runtime) === 'grok') {
@@ -183,6 +192,7 @@ export async function applyConversationModelChange(input: {
     hermesClient: input.hermesClient,
     conversation: updated,
     db: input.db,
+    hermesHome: input.hermesHome,
     companionUsername: input.companionUsername,
   })
 
@@ -193,6 +203,7 @@ export async function applyConversationModelChange(input: {
     companionUsername: input.companionUsername,
     attachmentsDir: input.attachmentsDir,
     visionHistoryMaxBytes: input.visionHistoryMaxBytes,
+    hermesHome: input.hermesHome,
   })
 
   return {

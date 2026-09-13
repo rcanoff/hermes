@@ -10,7 +10,7 @@ import {
   type ConversationRow,
 } from '../db/repos/conversations.js'
 import { resolveDefaultModel } from '../db/repos/settings.js'
-import { getBotById, normalizeBotRuntime } from '../db/repos/bots.js'
+import { getBotByIdForUser, normalizeBotRuntime, seedDefaultBot } from '../db/repos/bots.js'
 import {
   GROK_TUI_PROVIDER,
   assertCuratedModel,
@@ -54,7 +54,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
       if (!isValidAnchor(query.bot_id)) {
         return reply.code(400).send({ error: 'invalid_request' })
       }
-      if (!getBotById(app.db, query.bot_id)) {
+      if (!getBotByIdForUser(app.db, request.userId, query.bot_id)) {
         return reply.code(404).send({ error: 'not_found' })
       }
       botId = query.bot_id
@@ -112,13 +112,13 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
         if (!isValidAnchor(request.body.bot_id)) {
           return reply.code(400).send({ error: 'invalid_request' })
         }
-        if (!getBotById(app.db, request.body.bot_id)) {
+        if (!getBotByIdForUser(app.db, request.userId, request.body.bot_id)) {
           return reply.code(404).send({ error: 'not_found' })
         }
         botId = request.body.bot_id
       }
 
-      const bot = botId ? getBotById(app.db, botId) : undefined
+      const bot = botId ? getBotByIdForUser(app.db, request.userId, botId) : undefined
       const isGrok = Boolean(bot && normalizeBotRuntime(bot.runtime) === 'grok')
       let grokCatalog = app.companionModels
       if (isGrok) {
@@ -151,6 +151,10 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
+    if (!botId) {
+      seedDefaultBot(app.db, request.userId, app.hermesHome)
+    }
+
     const conversationId = createConversation(
       app.db,
       request.userId,
@@ -173,6 +177,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
       hermesClient: app.hermesClient,
       conversation: conversation!,
       db: app.db,
+      hermesHome: app.hermesHome,
       companionUsername: request.username,
       log: (message, meta) => {
         app.log.info(meta ?? {}, message)
@@ -227,6 +232,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
           companionUsername: request.username,
           attachmentsDir: app.attachmentsDir,
           visionHistoryMaxBytes: app.visionHistoryMaxBytes,
+          hermesHome: app.hermesHome,
         })
 
         emitAccountConversationUpsert(app.db, request.userId, conversationId, app.companionModels)
@@ -319,7 +325,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (existing.bot_id) {
-      const bot = getBotById(app.db, existing.bot_id)
+      const bot = getBotByIdForUser(app.db, request.userId, existing.bot_id)
       if (bot && normalizeBotRuntime(bot.runtime) === 'grok') {
         try {
           await app.grokGatewayClient.deleteSession(conversationId)
