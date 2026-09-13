@@ -21,6 +21,7 @@ export function scheduleConversationSessionWarmup(input: {
   > & { bot_id?: string | null; user_id?: string }
   db?: Database.Database
   hermesHome?: string
+  companionUserId?: string
   companionUsername?: string
   log?: (message: string, meta?: Record<string, unknown>) => void
 }): void {
@@ -53,6 +54,8 @@ export function scheduleConversationSessionWarmup(input: {
       model: input.conversation.model,
       provider: input.conversation.provider,
       ...(profileSlug ? { profileSlug } : {}),
+      ...(input.companionUserId ? { companionUserId: input.companionUserId } : {}),
+      ...(input.companionUsername ? { companionUsername: input.companionUsername } : {}),
     })
     .catch((error) => {
       input.log?.('conversation session warmup failed', {

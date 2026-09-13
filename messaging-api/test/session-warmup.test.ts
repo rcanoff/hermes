@@ -22,6 +22,7 @@ describe('scheduleConversationSessionWarmup', () => {
         model: COMPANION_DEFAULT_MODEL,
         provider: COMPANION_DEFAULT_PROVIDER,
       },
+      companionUserId: '11111111-1111-4111-8111-111111111111',
       companionUsername: 'operator',
     })
 
@@ -32,6 +33,8 @@ describe('scheduleConversationSessionWarmup', () => {
       systemPrompt: expect.stringContaining(bootstrap),
       model: COMPANION_DEFAULT_MODEL,
       provider: COMPANION_DEFAULT_PROVIDER,
+      companionUserId: '11111111-1111-4111-8111-111111111111',
+      companionUsername: 'operator',
     })
   })
 

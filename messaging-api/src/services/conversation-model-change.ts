@@ -109,6 +109,8 @@ export async function rewarmSessionTranscript(input: {
   await input.hermesClient.completeChat({
     hermesSessionId: input.conversation.hermes_session_id,
     messages,
+    companionUserId: input.conversation.user_id,
+    ...(input.companionUsername ? { companionUsername: input.companionUsername } : {}),
     ...(profileSlug ? { profileSlug } : {}),
   })
 }
@@ -193,6 +195,7 @@ export async function applyConversationModelChange(input: {
     conversation: updated,
     db: input.db,
     hermesHome: input.hermesHome,
+    companionUserId: input.userId,
     companionUsername: input.companionUsername,
   })
 

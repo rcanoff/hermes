@@ -183,6 +183,8 @@ describe('generateConversationTitle', () => {
         messages: buildTitlePromptMessages('Add milk and eggs'),
       },
     ])
+    expect(hermesClient.completeRequests[0]).not.toHaveProperty('companionUserId')
+    expect(hermesClient.completeRequests[0]).not.toHaveProperty('companionUsername')
     expect(hermesClient.requests).toHaveLength(0)
   })
 

@@ -2,7 +2,7 @@
 OpenAI-compatible API server platform adapter.
 
 Exposes an HTTP server with endpoints:
-- POST /v1/chat/completions        — OpenAI Chat Completions format (stateless; opt-in session continuity via X-Hermes-Session-Id header; opt-in long-term memory scoping via X-Hermes-Session-Key header; companion user scoping via X-Companion-User-Id header)
+- POST /v1/chat/completions        — OpenAI Chat Completions format (stateless; opt-in session continuity via X-Hermes-Session-Id header; opt-in long-term memory scoping via X-Hermes-Session-Key header; companion user scoping via X-Companion-User-Id / X-Companion-Username headers)
 - POST /v1/responses               — OpenAI Responses API format (stateful via previous_response_id; X-Hermes-Session-Key supported)
 - GET  /v1/responses/{response_id} — Retrieve a stored response
 - DELETE /v1/responses/{response_id} — Delete a stored response
@@ -2284,6 +2284,9 @@ class APIServerAdapter(BasePlatformAdapter):
     _COMPANION_USER_ID_RE = re.compile(
         r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
     )
+    # Matches messaging-api ``isUsernameValid`` (3–32 alphanumerics, _ or -).
+    _COMPANION_USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,32}$")
+    _DEFAULT_HONCHO_USER_PEER = "rcanoff"
 
     def _parse_session_key_header(
         self, request: "web.Request"
@@ -2385,6 +2388,61 @@ class APIServerAdapter(BasePlatformAdapter):
             )
 
         return raw, None
+
+    def _parse_companion_username_header(
+        self, request: "web.Request"
+    ) -> tuple[Optional[str], Optional["web.Response"]]:
+        """Extract and validate ``X-Companion-Username`` for Honcho human peer.
+
+        messaging-api sends the stable Companion login on user-owned turns so
+        Honcho can isolate memory per human. Internal jobs (title-gen, cron
+        synthesis) omit the header; those turns fall back to peer ``rcanoff``.
+
+        Returns ``(username, None)`` on success (absent header → ``(None, None)``),
+        or ``(None, error_response)`` on validation failure.
+        """
+        raw = request.headers.get("X-Companion-Username", "").strip()
+        if not raw:
+            return None, None
+
+        if not self._api_key:
+            logger.warning(
+                "X-Companion-Username rejected: no API key configured. "
+                "Set API_SERVER_KEY to enable companion user scoping."
+            )
+            return None, web.json_response(
+                _openai_error(
+                    "X-Companion-Username requires API key authentication. "
+                    "Configure API_SERVER_KEY to enable this feature."
+                ),
+                status=403,
+            )
+
+        if re.search(r'[\r\n\x00]', raw):
+            return None, web.json_response(
+                {"error": {"message": "Invalid companion username", "type": "invalid_request_error"}},
+                status=400,
+            )
+
+        if len(raw) > self._MAX_SESSION_HEADER_LEN:
+            return None, web.json_response(
+                {"error": {"message": "Companion username too long", "type": "invalid_request_error"}},
+                status=400,
+            )
+
+        if not self._COMPANION_USERNAME_RE.match(raw):
+            return None, web.json_response(
+                {"error": {"message": "Invalid companion username", "type": "invalid_request_error"}},
+                status=400,
+            )
+
+        return raw, None
+
+    @classmethod
+    def _honcho_user_peer_name(cls, companion_username: Optional[str]) -> str:
+        """Honcho human peer: Companion username, else TUI/API fallback ``rcanoff``."""
+        cleaned = (companion_username or "").strip()
+        return cleaned or cls._DEFAULT_HONCHO_USER_PEER
 
 
     # ------------------------------------------------------------------
@@ -2865,6 +2923,7 @@ class APIServerAdapter(BasePlatformAdapter):
         tool_start_callback=None,
         tool_complete_callback=None,
         gateway_session_key: Optional[str] = None,
+        companion_username: Optional[str] = None,
         requested_model: Optional[str] = None,
         requested_provider: Optional[str] = None,
         model_options: Optional[Dict[str, Any]] = None,
@@ -3261,6 +3320,8 @@ class APIServerAdapter(BasePlatformAdapter):
             "fallback_model": fallback_model,
             "reasoning_config": reasoning_config,
             "gateway_session_key": gateway_session_key,
+            "user_id": self._honcho_user_peer_name(companion_username),
+            "user_name": self._honcho_user_peer_name(companion_username),
         }
         if request_service_tier is not _REQUEST_OPTION_MISSING:
             agent_kwargs["service_tier"] = request_service_tier
@@ -4442,6 +4503,12 @@ class APIServerAdapter(BasePlatformAdapter):
         auth_err = self._check_auth(request)
         if auth_err:
             return auth_err
+        _, companion_user_err = self._parse_companion_user_id_header(request)
+        if companion_user_err is not None:
+            return companion_user_err
+        _, companion_username_err = self._parse_companion_username_header(request)
+        if companion_username_err is not None:
+            return companion_username_err
         body, err = await self._read_json_body(request)
         if err:
             return err
@@ -5236,6 +5303,9 @@ class APIServerAdapter(BasePlatformAdapter):
         companion_user_id, companion_user_err = self._parse_companion_user_id_header(request)
         if companion_user_err is not None:
             return companion_user_err
+        companion_username, companion_username_err = self._parse_companion_username_header(request)
+        if companion_username_err is not None:
+            return companion_username_err
 
         # Allow caller to continue an existing session by passing X-Hermes-Session-Id.
         # When provided, history is loaded from state.db instead of from the request body.
@@ -5403,6 +5473,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 agent_ref=agent_ref,
                 gateway_session_key=gateway_session_key,
                 companion_user_id=companion_user_id,
+                companion_username=companion_username,
                 **agent_overrides,
                 route=route,
             ))
@@ -5425,6 +5496,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 session_id=session_id,
                 gateway_session_key=gateway_session_key,
                 companion_user_id=companion_user_id,
+                companion_username=companion_username,
                 **agent_overrides,
                 route=route,
             )
@@ -6367,6 +6439,9 @@ class APIServerAdapter(BasePlatformAdapter):
         companion_user_id, companion_user_err = self._parse_companion_user_id_header(request)
         if companion_user_err is not None:
             return companion_user_err
+        companion_username, companion_username_err = self._parse_companion_username_header(request)
+        if companion_username_err is not None:
+            return companion_username_err
 
         # Parse request body
         try:
@@ -6537,6 +6612,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 agent_ref=agent_ref,
                 gateway_session_key=gateway_session_key,
                 companion_user_id=companion_user_id,
+                companion_username=companion_username,
                 **agent_overrides,
                 route=route,
             ))
@@ -6573,6 +6649,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 session_id=session_id,
                 gateway_session_key=gateway_session_key,
                 companion_user_id=companion_user_id,
+                companion_username=companion_username,
                 **agent_overrides,
                 route=route,
             )
@@ -7350,6 +7427,7 @@ class APIServerAdapter(BasePlatformAdapter):
         session_key: str = "",
         session_id: str = "",
         user_id: str = "",
+        user_name: str = "",
         browser_control_principal: str = "",
         browser_control_transport_family: str = "",
     ) -> list:
@@ -7376,6 +7454,7 @@ class APIServerAdapter(BasePlatformAdapter):
             session_key=session_key,
             session_id=session_id,
             user_id=user_id,
+            user_name=user_name,
             browser_control_principal=browser_control_principal,
             browser_control_transport_family=browser_control_transport_family,
             async_delivery=False,
@@ -7404,6 +7483,7 @@ class APIServerAdapter(BasePlatformAdapter):
         route_source: str = "global",
         confirmed_runtime_lock: bool = False,
         companion_user_id: Optional[str] = None,
+        companion_username: Optional[str] = None,
     ) -> tuple:
         """
         Create an agent and run a conversation in a thread executor.
@@ -7455,6 +7535,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     session_key=gateway_session_key or session_id or "",
                     session_id=session_id or "",
                     user_id=companion_user_id or "",
+                    user_name=self._honcho_user_peer_name(companion_username),
                     browser_control_principal=request_browser_control_principal,
                     browser_control_transport_family=(
                         request_browser_control_transport_family
@@ -7470,6 +7551,7 @@ class APIServerAdapter(BasePlatformAdapter):
                         tool_start_callback=tool_start_callback,
                         tool_complete_callback=tool_complete_callback,
                         gateway_session_key=gateway_session_key,
+                        companion_username=companion_username,
                         requested_model=requested_model,
                         requested_provider=requested_provider,
                         model_options=model_options,

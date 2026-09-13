@@ -25,29 +25,38 @@ export function buildTitleGenerationSessionKey(conversationId: string): string {
   return `${COMPANION_TITLE_GENERATION_SESSION_KEY}:${conversationId}`
 }
 
+/** Per-user Companion session key so Honcho/providers do not mix humans. */
+export function companionAppSessionKey(companionUserId?: string): string {
+  const userId = companionUserId?.trim()
+  return userId ? `${COMPANION_APP_SESSION_KEY}:${userId}` : COMPANION_APP_SESSION_KEY
+}
+
 /** Stable Hermes session for companion cron prompt synthesis (non-agent completeChat). */
 export const COMPANION_CRON_PROMPT_SYNTHESIS_SESSION_KEY = 'companion-cron-prompt-synthesis'
 
-export interface StreamChatInput {
+export interface CompanionIdentity {
+  /** Companion conversation owner UUID; forwarded as X-Companion-User-Id. */
+  companionUserId?: string
+  /** Companion login; forwarded as X-Companion-Username (Honcho human peer). */
+  companionUsername?: string
+}
+
+export interface StreamChatInput extends CompanionIdentity {
   hermesSessionId: string
   messages: HermesPromptMessage[]
-  /** Companion conversation owner; forwarded as X-Companion-User-Id to Hermes. */
-  companionUserId?: string
   /** Hermes profile slug. Non-default values prefix `/p/<slug>` on gateway URLs. */
   profileSlug?: string
   signal?: AbortSignal
 }
 
-export interface CompleteChatInput {
+export interface CompleteChatInput extends CompanionIdentity {
   hermesSessionId: string
   messages: HermesPromptMessage[]
-  /** Companion conversation owner; forwarded as X-Companion-User-Id to Hermes. */
-  companionUserId?: string
   /** Hermes profile slug. Non-default values prefix `/p/<slug>` on gateway URLs. */
   profileSlug?: string
 }
 
-export interface EnsureSessionInput {
+export interface EnsureSessionInput extends CompanionIdentity {
   hermesSessionId: string
   systemPrompt?: string | null
   model?: string
@@ -235,15 +244,36 @@ export class OpenAiHermesClient implements HermesClient {
     }
   }
 
-  async ensureSession(input: EnsureSessionInput): Promise<void> {
+  private requestHeaders(input: CompanionIdentity & { hermesSessionId?: string; accept?: string }): Record<string, string> {
     const headers: Record<string, string> = {
       'content-type': 'application/json',
-      'x-hermes-session-key': COMPANION_APP_SESSION_KEY,
+      'x-hermes-session-key': companionAppSessionKey(input.companionUserId),
     }
 
+    if (input.accept) {
+      headers.accept = input.accept
+    }
+    if (input.hermesSessionId) {
+      headers['x-hermes-session-id'] = input.hermesSessionId
+    }
+    if (input.companionUserId) {
+      headers['x-companion-user-id'] = input.companionUserId
+    }
+    if (input.companionUsername) {
+      headers['x-companion-username'] = input.companionUsername
+    }
     if (this.apiKey) {
       headers.authorization = `Bearer ${this.apiKey}`
     }
+
+    return headers
+  }
+
+  async ensureSession(input: EnsureSessionInput): Promise<void> {
+    const headers = this.requestHeaders({
+      companionUserId: input.companionUserId,
+      companionUsername: input.companionUsername,
+    })
 
     const body: Record<string, string> = { id: input.hermesSessionId }
     const systemPrompt = input.systemPrompt?.trim()
@@ -303,19 +333,7 @@ export class OpenAiHermesClient implements HermesClient {
   }
 
   async completeChat(input: CompleteChatInput): Promise<string> {
-    const headers: Record<string, string> = {
-      'content-type': 'application/json',
-      'x-hermes-session-id': input.hermesSessionId,
-      'x-hermes-session-key': COMPANION_APP_SESSION_KEY,
-    }
-
-    if (input.companionUserId) {
-      headers['x-companion-user-id'] = input.companionUserId
-    }
-
-    if (this.apiKey) {
-      headers.authorization = `Bearer ${this.apiKey}`
-    }
+    const headers = this.requestHeaders(input)
 
     const response = await fetch(
       new URL(hermesProfilePath('/v1/chat/completions', input.profileSlug), this.baseUrl),
@@ -340,20 +358,7 @@ export class OpenAiHermesClient implements HermesClient {
   }
 
   async *streamChat(input: StreamChatInput): AsyncIterable<HermesStreamEvent> {
-    const headers: Record<string, string> = {
-      accept: 'text/event-stream',
-      'content-type': 'application/json',
-      'x-hermes-session-id': input.hermesSessionId,
-      'x-hermes-session-key': COMPANION_APP_SESSION_KEY,
-    }
-
-    if (input.companionUserId) {
-      headers['x-companion-user-id'] = input.companionUserId
-    }
-
-    if (this.apiKey) {
-      headers.authorization = `Bearer ${this.apiKey}`
-    }
+    const headers = this.requestHeaders({ ...input, accept: 'text/event-stream' })
 
     const response = await fetch(
       new URL(hermesProfilePath('/v1/chat/completions', input.profileSlug), this.baseUrl),

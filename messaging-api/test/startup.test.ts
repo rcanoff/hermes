@@ -241,8 +241,17 @@ describe('durable run execution', () => {
     expect(hermesClient.requests).toEqual([
       {
         hermesSessionId: 'hs1',
-        messages: [{ role: 'user', content: 'hello' }],
+        messages: [
+          {
+            role: 'system',
+            content: expect.stringContaining(
+              'authenticated companion user for this conversation is "operator"',
+            ),
+          },
+          { role: 'user', content: 'hello' },
+        ],
         companionUserId: 'u1',
+        companionUsername: 'operator',
       },
     ])
   })

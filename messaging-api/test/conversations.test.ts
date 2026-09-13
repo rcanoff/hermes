@@ -99,6 +99,8 @@ describe('conversation routes', () => {
       model: 'grok-composer-2.5-fast',
       provider: 'xai-oauth',
       profileSlug: `${seeded.id}/default`,
+      companionUserId: seeded.id,
+      companionUsername: 'operator',
     })
   })
 

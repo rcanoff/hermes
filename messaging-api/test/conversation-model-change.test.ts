@@ -173,8 +173,12 @@ describe('applyConversationModelChange', () => {
     expect(hermesClient.patchSessionModelRequests).toHaveLength(0)
     expect(hermesClient.ensureSessionRequests).toHaveLength(1)
     expect(hermesClient.ensureSessionRequests[0]?.hermesSessionId).toBe(result.hermesSessionId)
+    expect(hermesClient.ensureSessionRequests[0]?.companionUserId).toBe(userId)
+    expect(hermesClient.ensureSessionRequests[0]?.companionUsername).toBe('operator')
     expect(hermesClient.completeRequests).toHaveLength(1)
     expect(hermesClient.completeRequests[0]?.hermesSessionId).toBe(result.hermesSessionId)
+    expect(hermesClient.completeRequests[0]?.companionUserId).toBe(userId)
+    expect(hermesClient.completeRequests[0]?.companionUsername).toBe('operator')
     expect(hermesClient.completeRequests[0]?.messages.at(-1)).toEqual({
       role: 'user',
       content: expect.stringContaining('provider changed'),

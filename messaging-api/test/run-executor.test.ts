@@ -57,6 +57,7 @@ describe('executeAssistantRun process stream', () => {
     const assistantMessageId = await runPromise
 
     expect(hermes.requests[0]?.companionUserId).toBe('u1')
+    expect(hermes.requests[0]?.companionUsername).toBe('op')
 
     expect(events.map((e) => e.event)).toEqual([
       'tooling',

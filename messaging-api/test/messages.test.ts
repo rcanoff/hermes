@@ -239,6 +239,7 @@ describe('message routes', () => {
       hermesSessionId: expect.any(String),
       companionUserId: expect.any(String),
       profileSlug: `${operatorId}/default`,
+      companionUsername: 'operator',
       messages: [
         {
           role: 'system',

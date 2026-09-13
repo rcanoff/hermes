@@ -28,6 +28,7 @@ import {
   getConversationForUser,
   type ConversationRow,
 } from '../db/repos/conversations.js'
+import { findUserById } from '../db/repos/users.js'
 import { buildBotRosterPrompt } from '../lib/bot-roster.js'
 import { createReplyAssembler, type ReplyAssembler } from '../lib/reply-assembler.js'
 import { DEFAULT_COMPANION_MODELS, type CuratedModelEntry } from '../lib/companion-models.js'
@@ -203,9 +204,12 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       input.conversationId,
     )?.bot_id
 
+    const companionUsername =
+      input.companionUsername?.trim() || findUserById(input.db, input.userId)?.username
+
     const hermesMessages = await buildHermesMessages(historyWithAttachments, {
       bootstrapPrompt: input.bootstrapPrompt,
-      companionUsername: input.companionUsername,
+      companionUsername,
       rosterPrompt,
       attachmentsDir: input.attachmentsDir,
       userId: input.userId,
@@ -219,6 +223,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       hermesSessionId: input.hermesSessionId,
       messages: hermesMessages,
       companionUserId: input.userId,
+      ...(companionUsername ? { companionUsername } : {}),
       ...(profileSlug ? { profileSlug } : {}),
       ...(abortSignal ? { signal: abortSignal } : {}),
     })) {
@@ -301,12 +306,12 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       input.companionModels ?? DEFAULT_COMPANION_MODELS,
     )
 
-    if (input.cronJobsPath && input.companionUsername) {
+    if (input.cronJobsPath && companionUsername) {
       try {
         await autoLinkNewCompanionCronJobs({
           db: input.db,
           userId: input.userId,
-          username: input.companionUsername,
+          username: companionUsername,
           sourceConversationId: input.conversationId,
           cronJobsPath: input.cronJobsPath,
           knownJobIdsBefore,

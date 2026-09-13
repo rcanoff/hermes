@@ -26,6 +26,7 @@ services:
       - ${OBSIDIAN_VAULT_HOST_PATH:-${HERMES_DATA_DIR}/vault}:/opt/data/vault:cached
       - ./scripts/patches/api_server.py:/opt/hermes/gateway/platforms/api_server.py:ro
       - ./scripts/patches/mcp_tool.py:/opt/hermes/tools/mcp_tool.py:ro
+      - ./scripts/patches/memory_tool.py:/opt/hermes/tools/memory_tool.py:ro
     environment:
       HERMES_UID: ${HERMES_UID:-10000}
       HERMES_GID: ${HERMES_GID:-10000}

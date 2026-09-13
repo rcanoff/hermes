@@ -13,7 +13,7 @@ POWERSHELL_HERMES := powershell.exe -NoProfile -ExecutionPolicy Bypass -Command 
 ANSIBLE_DIR := ansible
 ANSIBLE := cd $(ANSIBLE_DIR) && ansible-playbook
 
-.PHONY: help env config up down ps logs restart sync-apple-calendar-mcp-token sync-apple-mcp-token sync-reminders-mcp-token deploy hermes-config hermes-config-edit hermes-setup hermes-model hermes-mcp-list hermes-gateway hermes-gateway-nosupervise hermes-shell messaging-api-logs messaging-api-shell honcho-health honcho-logs migrate-honcho-memory browser-daemon-install browser-daemon-dev browser-daemon-start browser-daemon-stop browser-daemon-login-install browser-daemon-login-uninstall browser-daemon-login-status brave-google-start brave-google-sync brave-google-url brave-google-stop
+.PHONY: help env config up down ps logs restart sync-apple-calendar-mcp-token sync-apple-mcp-token sync-reminders-mcp-token deploy hermes-config hermes-config-edit hermes-setup hermes-model hermes-mcp-list hermes-gateway hermes-gateway-nosupervise hermes-shell messaging-api-logs messaging-api-shell honcho-health honcho-logs migrate-honcho-memory migrate-honcho-memory-to-rcanoff browser-daemon-install browser-daemon-dev browser-daemon-start browser-daemon-stop browser-daemon-login-install browser-daemon-login-uninstall browser-daemon-login-status brave-google-start brave-google-sync brave-google-url brave-google-stop
 
 help:
 	@printf '%s\n' \
@@ -35,6 +35,7 @@ help:
 		'make honcho-health        Curl Honcho API /health on localhost:8000' \
 		'make honcho-logs          Tail honcho-api and honcho-deriver logs' \
 		'make migrate-honcho-memory  Post USER.md/MEMORY.md § records into Honcho' \
+		'make migrate-honcho-memory-to-rcanoff  Copy global roberto memory onto user rcanoff' \
 		'make deploy         Deploy this workspace to the Raspberry Pi via Ansible' \
 		'make sync-apple-calendar-mcp-token  Sync Apple Calendar MCP token into data/config.yaml' \
 		'make sync-apple-mcp-token  Sync Apple MCP token into data/config.yaml' \
@@ -148,6 +149,9 @@ honcho-logs:
 
 migrate-honcho-memory:
 	@./scripts/migrate-file-memory-to-honcho.sh
+
+migrate-honcho-memory-to-rcanoff:
+	@./scripts/migrate-global-memory-to-user.sh
 
 deploy:
 	@$(ANSIBLE) deploy.yml

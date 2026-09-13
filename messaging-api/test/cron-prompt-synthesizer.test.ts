@@ -377,6 +377,8 @@ Canonical URL: https://www.immobilienscout24.de/Suche/de/berlin/berlin/mitte/woh
     expect(classified?.prompt).toContain('amazon.de')
     expect(classified?.prompt).toContain('€19.22')
     expect(completeChat).toHaveBeenCalledOnce()
+    expect(completeChat.mock.calls[0]?.[0]?.companionUserId).toBeUndefined()
+    expect(completeChat.mock.calls[0]?.[0]?.companionUsername).toBeUndefined()
   })
 
   it('loads recent messages from the source conversation', async () => {

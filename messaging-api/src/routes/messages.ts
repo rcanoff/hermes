@@ -451,6 +451,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
             conversation: refreshed,
             db: app.db,
             hermesHome: app.hermesHome,
+            companionUserId: request.userId,
             companionUsername: request.username,
             log: (message, meta) => {
               app.log.info(meta ?? {}, message)

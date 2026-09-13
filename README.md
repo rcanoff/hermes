@@ -151,15 +151,18 @@ Honcho runs on the **same Docker Compose** as Hermes. This workspace does **not*
 
 There is **no** Honcho MCP container (port 3000 is `messaging-api`).
 
-`make up` starts Honcho with Hermes. `hermes-gateway` waits until `honcho-api` is healthy. Hermes reads `data/honcho.json` (`baseUrl: http://honcho-api:8000`, workspace `hermes`, peers `roberto` / `hermes`). Built-in `USER.md` / `MEMORY.md` stay on disk as backup.
+`make up` starts Honcho with Hermes. `hermes-gateway` waits until `honcho-api` is healthy. Hermes reads `data/honcho.json` (`baseUrl: http://honcho-api:8000`, workspace `hermes`). Long-term memory is **per Companion username** (Honcho human peer + `data/memories/users/<username>/`). Skills stay shared. TUI/CLI with no Companion header uses peer `rcanoff`.
 
 ```bash
 make honcho-health          # curl 127.0.0.1:8000/health
 make honcho-logs            # honcho-api + honcho-deriver
 make migrate-honcho-memory  # one-shot USER.md/MEMORY.md → session file-memory-migration
+make migrate-honcho-memory-to-rcanoff  # copy global roberto + root files onto user rcanoff
 ```
 
-Migrate copies originals to `data/memories/backup/` first, then posts `§` records (user peer `roberto`, AI peer `hermes`). Idempotent via `data/memories/.honcho-migrated`. Live files stay in place.
+`migrate-honcho-memory` copies originals to `data/memories/backup/` first, then posts `§` records (legacy user peer `roberto`, AI peer `hermes`). Idempotent via `data/memories/.honcho-migrated`.
+
+`migrate-honcho-memory-to-rcanoff` requires messaging-api user `rcanoff` in sqlite (does not create a login). It copies root `USER.md`/`MEMORY.md` to `data/memories/backup/per-user-rcanoff-<timestamp>/` **and** `data/memories/users/rcanoff/`, copies Honcho peer `roberto` messages onto peer `rcanoff` (session `peer-migration-rcanoff`), then empties the root files and sets `honcho.json` `peerName: rcanoff`, `pinUserPeer: false`. Idempotent via `data/memories/.per-user-rcanoff-migrated`. Restart the gateway after it so Hermes reloads `honcho.json`.
 
 ### LLM env (deriver / dialectic / embeddings)
 
@@ -257,19 +260,20 @@ Notes:
 
 `data/config.yaml` is the runtime config Hermes reads, but its `apple` bearer header is operator-synced from `APPLE_MCP_BEARER_TOKEN` (or `REMINDERS_MCP_BEARER_TOKEN` fallback) — update the env file, not that header by hand.
 
-### Companion user header (`X-Companion-User-Id`)
+### Companion user headers (`X-Companion-User-Id`, `X-Companion-Username`)
 
-Maps tools in **apple-mcp** resolve iPhone location by companion **user UUID** (`users.id`), not `username`. Hermes injects that identity automatically on companion conversation turns:
+Maps tools in **apple-mcp** resolve iPhone location by companion **user UUID** (`users.id`). Honcho long-term memory uses the **username**. Hermes injects both on companion conversation turns:
 
 | Layer | Role |
 |-------|------|
-| `messaging-api` | Sends `X-Companion-User-Id: <conversation.user_id>` on `/v1/chat/completions` for assistant runs (`run-executor`) |
-| `scripts/patches/api_server.py` | Parses the header → `HERMES_SESSION_USER_ID` session context for the agent turn |
+| `messaging-api` | `X-Hermes-Session-Key: companion-app:<userId>`, `X-Companion-User-Id`, `X-Companion-Username` on stream, complete, and `ensureSession` |
+| `scripts/patches/api_server.py` | UUID → `HERMES_SESSION_USER_ID` (Maps). Username → Honcho human peer (`rcanoff` if the username header is absent) |
 | `scripts/patches/mcp_tool.py` | Adds `X-Companion-User-Id` to each HTTP request to the `apple` MCP server when session context has a user id |
+| `scripts/patches/memory_tool.py` | File backup dir `memories/users/<username>/` (TUI fallback `rcanoff`) |
 
-Cron jobs, title generation, and other non-conversation Hermes calls **omit** the header — Maps location tools error with `companion_user_required`; Reminders tools are unaffected.
+Title generation and cron prompt synthesis keep their existing session keys and **omit** `X-Companion-Username`.
 
-Patches are mounted in `docker-compose.yml` over the Hermes image paths `/opt/hermes/gateway/platforms/api_server.py` and `/opt/hermes/tools/mcp_tool.py`. Restart the stack after editing them (`make down && make up`).
+Patches are mounted in `docker-compose.yml` over the Hermes image paths `/opt/hermes/gateway/platforms/api_server.py`, `/opt/hermes/tools/mcp_tool.py`, and `/opt/hermes/tools/memory_tool.py`. Restart the stack after editing them (`make down && make up`).
 
 Manual check (companion chat that calls an `apple` MCP tool):
 
