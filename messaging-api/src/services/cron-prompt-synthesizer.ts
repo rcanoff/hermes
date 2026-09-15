@@ -2,8 +2,10 @@ import type Database from 'better-sqlite3'
 import { listRecentMessages, type MessageRow } from '../db/repos/messages.js'
 import {
   type CompanionCronJobKind,
+  companionCronPromptMentionsObsidian,
   inferCompanionCronJobKindHeuristic,
   isExplicitHomeAssistantDigestJob,
+  withCompanionVaultConstraint,
 } from '../lib/companion-cron-prompt.js'
 import type { HermesCronJob } from '../lib/hermes-cron-jobs.js'
 import {
@@ -149,6 +151,7 @@ export interface CronPromptSynthesisInput {
   job: Pick<HermesCronJob, 'name' | 'prompt' | 'schedule_display'>
   messages: MessageRow[]
   userTriggerMessage?: string | null
+  companionUsername?: string | null
 }
 
 export function findUserTriggerMessage(messages: MessageRow[]): string | null {
@@ -312,6 +315,7 @@ export async function classifyAndSynthesizeCompanionCronPrompt(input: {
   synthesisLlm?: AuxiliaryLlmConfig | null
   messages: MessageRow[]
   job: Pick<HermesCronJob, 'name' | 'prompt' | 'schedule_display'>
+  companionUsername?: string | null
 }): Promise<ClassifiedCronPrompt | null> {
   if (input.messages.length === 0) {
     return null
@@ -328,6 +332,8 @@ export async function classifyAndSynthesizeCompanionCronPrompt(input: {
     draftPrompt.length > 0 && cronPromptTopicsConflict(authoritativeText, draftPrompt)
 
   const includeDraftInitially = !draftConflictsWithConversation
+  const pinVault = (classified: ClassifiedCronPrompt): ClassifiedCronPrompt =>
+    pinCompanionVaultOnClassifiedPrompt(classified, input.companionUsername)
 
   try {
     const classified = await completeCronPromptClassification(
@@ -342,7 +348,7 @@ export async function classifyAndSynthesizeCompanionCronPrompt(input: {
 
     if (classified && classified.prompt) {
       if (!cronPromptTopicsConflict(authoritativeText, classified.prompt)) {
-        return classified
+        return pinVault(classified)
       }
     } else if (classified?.kind === 'ha_digest') {
       return classified
@@ -360,7 +366,7 @@ export async function classifyAndSynthesizeCompanionCronPrompt(input: {
 
     if (conversationOnly?.prompt) {
       if (!cronPromptTopicsConflict(authoritativeText, conversationOnly.prompt)) {
-        return conversationOnly
+        return pinVault(conversationOnly)
       }
     } else if (conversationOnly?.kind === 'ha_digest') {
       return conversationOnly
@@ -386,10 +392,31 @@ export async function classifyAndSynthesizeCompanionCronPrompt(input: {
     kind,
   })
   if (fallbackPrompt && !cronPromptTopicsConflict(authoritativeText, fallbackPrompt)) {
-    return { kind, prompt: fallbackPrompt }
+    return pinVault({ kind, prompt: fallbackPrompt })
   }
 
   return { kind, prompt: null }
+}
+
+function pinCompanionVaultOnClassifiedPrompt(
+  classified: ClassifiedCronPrompt,
+  companionUsername?: string | null,
+): ClassifiedCronPrompt {
+  if (!classified.prompt || classified.kind === 'ha_digest') {
+    return classified
+  }
+
+  if (
+    classified.kind === 'monitoring' ||
+    companionCronPromptMentionsObsidian(classified.prompt)
+  ) {
+    return {
+      ...classified,
+      prompt: withCompanionVaultConstraint(classified.prompt, companionUsername),
+    }
+  }
+
+  return classified
 }
 
 export function buildConversationAnchoredCronPromptFallback(input: {
@@ -436,6 +463,7 @@ export async function classifyAndSynthesizeCompanionCronPromptFromConversation(i
   sourceConversationId: string
   job: Pick<HermesCronJob, 'name' | 'prompt' | 'schedule_display'>
   messageLimit?: number
+  companionUsername?: string | null
 }): Promise<ClassifiedCronPrompt | null> {
   const messages = listRecentMessages(
     input.db,
@@ -448,6 +476,7 @@ export async function classifyAndSynthesizeCompanionCronPromptFromConversation(i
     synthesisLlm: input.synthesisLlm,
     messages,
     job: input.job,
+    companionUsername: input.companionUsername,
   })
 }
 
@@ -457,6 +486,7 @@ export async function synthesizeCompanionCronPrompt(input: {
   synthesisLlm?: AuxiliaryLlmConfig | null
   messages: MessageRow[]
   job: Pick<HermesCronJob, 'name' | 'prompt' | 'schedule_display'>
+  companionUsername?: string | null
 }): Promise<string | null> {
   const classified = await classifyAndSynthesizeCompanionCronPrompt(input)
   return classified?.kind === 'reminder' || classified?.kind === 'monitoring'
@@ -472,6 +502,7 @@ export async function synthesizeCompanionCronPromptFromConversation(input: {
   sourceConversationId: string
   job: Pick<HermesCronJob, 'name' | 'prompt' | 'schedule_display'>
   messageLimit?: number
+  companionUsername?: string | null
 }): Promise<string | null> {
   const classified = await classifyAndSynthesizeCompanionCronPromptFromConversation(input)
   return classified?.kind === 'reminder' || classified?.kind === 'monitoring'

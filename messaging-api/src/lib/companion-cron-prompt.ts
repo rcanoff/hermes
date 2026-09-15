@@ -1,3 +1,8 @@
+import {
+  companionObsidianVaultPath,
+  companionVaultConstraint,
+} from './companion-obsidian-vault.js'
+
 export const HOME_ASSISTANT_DIGEST_PROMPT_MARKER = 'MANDATORY TOOL USE (do not skip)'
 
 export type CompanionCronJobKind = 'reminder' | 'ha_digest' | 'monitoring'
@@ -111,4 +116,33 @@ export function normalizeHomeAssistantDigestPrompt(input: {
   }
 
   return buildHomeAssistantDigestCronPrompt()
+}
+
+export function withCompanionVaultConstraint(
+  prompt: string,
+  username: string | null | undefined,
+): string {
+  const user = username?.trim()
+  if (!user) return prompt
+
+  let line: string
+  let vaultPath: string
+  try {
+    line = companionVaultConstraint(user)
+    vaultPath = companionObsidianVaultPath(user)
+  } catch {
+    return prompt
+  }
+
+  if (prompt.includes(line) || prompt.includes(vaultPath)) {
+    return prompt
+  }
+  const body = prompt.trimEnd()
+  return body ? `${body}\n\n${line}` : line
+}
+
+const OBSIDIAN_NOTES_PATTERN = /\b(obsidian|vault|notes)\b/i
+
+export function companionCronPromptMentionsObsidian(prompt: string): boolean {
+  return OBSIDIAN_NOTES_PATTERN.test(prompt)
 }
