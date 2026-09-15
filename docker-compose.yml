@@ -20,10 +20,9 @@ services:
         condition: service_healthy
     volumes:
       - ${HERMES_DATA_DIR}:/opt/data
-      # Host data/vault must be a real directory (not a symlink into iCloud), or
-      # this nested bind is skipped and realpath(/opt/data/vault) escapes the
-      # write-safe root, so write_file/patch are denied.
-      - ${OBSIDIAN_VAULT_HOST_PATH:-${HERMES_DATA_DIR}/vault}:/opt/data/vault:cached
+      # Host Documents must be a real directory (not a symlink). Nested bind
+      # so /opt/data/vaults/<username.lower()> stays under HERMES_WRITE_SAFE_ROOT.
+      - ${OBSIDIAN_VAULTS_HOST_PATH:-${HERMES_DATA_DIR}/vault}:/opt/data/vaults:cached
       - ./scripts/patches/api_server.py:/opt/hermes/gateway/platforms/api_server.py:ro
       - ./scripts/patches/mcp_tool.py:/opt/hermes/tools/mcp_tool.py:ro
       - ./scripts/patches/memory_tool.py:/opt/hermes/tools/memory_tool.py:ro
@@ -41,7 +40,7 @@ services:
       API_SERVER_KEY: ${HERMES_API_SERVER_KEY:-change-me}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      OBSIDIAN_VAULT_PATH: /opt/data/vault
+      OBSIDIAN_VAULTS_ROOT: /opt/data/vaults
       HERMES_WRITE_SAFE_ROOT: /opt/data
     ports:
       - ${HERMES_DASHBOARD_PORT:-9119}:9119
