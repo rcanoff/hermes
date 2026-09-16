@@ -1,13 +1,25 @@
+# Secrets and local env
 .env
+.env.*
+!.env.example
+
+# Runtime Hermes state. Companion skills under data/skills/ stay tracked.
 data/
-apple-caldav-mcp/node_modules/
-apple-caldav-mcp/dist/
-apple-caldav-mcp/.env
-messaging-api/node_modules/
-messaging-api/dist/
-messaging-api/.env
-browser-daemon/node_modules/
-browser-daemon/dist/
+data/config.yaml
+
+# Dependencies and build output
+node_modules/
+dist/
+
+# Coverage / profiler leftovers
+*.profraw
+default.profraw
+coverage/
+*.lcov
+
+# Logs and editor noise
+*.log
+npm-debug.log*
 .DS_Store
 .claude/
 .grok/
