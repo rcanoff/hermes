@@ -10,10 +10,10 @@ import {
   DEFAULT_BOT_SLUG,
   addHonchoHost,
   createBotProfile,
+  ensureSkillsOverlay,
   isOperatorOwner,
   profileRelativeKey,
   readSoulFile,
-  shareDefaultSkills,
   type BotProfileOwner,
 } from '../../lib/hermes-profile.js'
 import { enqueueConversationAttachments } from '../../services/attachment-cleanup.js'
@@ -155,7 +155,11 @@ function ensureUserDefaultProfile(
   row: BotRow,
 ): void {
   if (readSoulFile(hermesHome, owner, DEFAULT_BOT_SLUG) !== null) {
-    shareDefaultSkills(hermesHome, owner, DEFAULT_BOT_SLUG)
+    try {
+      ensureSkillsOverlay(hermesHome, owner, DEFAULT_BOT_SLUG)
+    } catch {
+      // best-effort backfill; listing/seeding must not fail on overlay FS errors
+    }
     return
   }
   createBotProfile({

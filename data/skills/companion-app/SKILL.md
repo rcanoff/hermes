@@ -1,7 +1,7 @@
 ---
 name: companion-app
 description: REQUIRED entry point for Companion App replies. iOS bootstrap tells Hermes to load this skill first. Routes intents to reply, block, and data skills. Does not own fence syntax.
-version: 1.2.10
+version: 1.2.12
 author: Hermes Agent
 metadata:
   hermes:
@@ -34,6 +34,19 @@ If a teammate’s jobs match the user’s request, the **main** assistant MUST c
 If `message_teammate` is not in your current tool list, call `tool_search("message_teammate")` then call it.
 
 If your own jobs are not set yet, ask 2–3 short questions, then call `set_my_responsibilities`. Do not do specialist work until jobs are set.
+
+## Bot-local skills (Hermes profiles)
+
+Each Hermes teammate has a **writable** profile `skills/` directory. Platform skills load
+automatically from the shared catalog via `skills.external_dirs` (`$HERMES_HOME/skills`).
+
+When you save or improve a reusable skill for **your** jobs:
+- Write under this profile’s `skills/<skill-name>/SKILL.md` (full Hermes skill layout allowed: references, scripts, etc.).
+- Do **not** write into the shared platform catalog (`$HERMES_HOME/skills` / the `external_dirs` source).
+- Do **not** create or overwrite any skill whose name starts with `companion-`.
+- Prefer updating an existing local skill when the workflow improves.
+
+Platform skills (`companion-app`, maps, replies, …) stay shared via external_dirs; only playbooks/tools you invent for this teammate belong in this profile’s `skills/`.
 
 ## Reply composition
 
