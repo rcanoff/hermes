@@ -16,6 +16,7 @@ import {
   shareDefaultSkills,
   type BotProfileOwner,
 } from '../../lib/hermes-profile.js'
+import { enqueueConversationAttachments } from '../../services/attachment-cleanup.js'
 import { findUserById } from './users.js'
 import type { ListPageAnchors } from './conversations.js'
 
@@ -429,6 +430,7 @@ export function deleteBot(db: Database.Database, id: string, userId: string): bo
       .all(userId, id, id) as Array<{ id: string }>
 
     for (const row of conversationIds) {
+      enqueueConversationAttachments(db, row.id)
       db.prepare('DELETE FROM message_runs WHERE conversation_id = ?').run(row.id)
       db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(row.id)
       db.prepare('DELETE FROM conversations WHERE id = ?').run(row.id)

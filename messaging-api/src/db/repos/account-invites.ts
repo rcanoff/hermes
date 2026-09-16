@@ -43,12 +43,17 @@ export function getInviteByTokenHash(db: Database.Database, tokenHash: string): 
     .get(tokenHash) as AccountInviteRow | undefined
 }
 
-export function markInviteUsed(db: Database.Database, id: string): void {
-  db.prepare(`
-    UPDATE account_invites
-    SET used_at = datetime('now')
-    WHERE id = ?
-  `).run(id)
+export function consumeInvite(db: Database.Database, id: string): boolean {
+  const result = db
+    .prepare(
+      `
+      UPDATE account_invites SET used_at = datetime('now')
+      WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL
+        AND julianday(expires_at) > julianday('now')
+    `,
+    )
+    .run(id)
+  return result.changes === 1
 }
 
 export function revokeInvite(db: Database.Database, id: string): boolean {

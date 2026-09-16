@@ -5,6 +5,7 @@ import {
   COMPANION_DEFAULT_PROVIDER,
 } from '../../lib/companion-models.js'
 import { buildJobConversationBootstrap } from '../../lib/job-conversation.js'
+import { enqueueConversationAttachments } from '../../services/attachment-cleanup.js'
 import { ensureDefaultBotRow } from './bots.js'
 
 export type ConversationKind = 'regular' | 'job'
@@ -555,6 +556,7 @@ export function deleteConversationForUser(
   }
 
   db.transaction(() => {
+    enqueueConversationAttachments(db, conversationId)
     db.prepare('DELETE FROM message_runs WHERE conversation_id = ?').run(conversationId)
     db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conversationId)
     db.prepare('DELETE FROM conversations WHERE id = ?').run(conversationId)

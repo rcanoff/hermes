@@ -71,6 +71,7 @@ describe('readConfig', () => {
       attachmentsDir: '/opt/data/attachments',
       attachmentMaxBytes: 20_971_520,
       attachmentOrphanTtlHours: 24,
+      attachmentCleanupIntervalMs: 30_000,
       visionMaxEdgePx: 1536,
       thumbMaxEdgePx: 200,
       visionHistoryMaxBytes: 8_388_608,

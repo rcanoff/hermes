@@ -16,6 +16,7 @@ import messageRoutes from './routes/messages.js'
 import attachmentRoutes from './routes/attachments.js'
 import { deleteExpiredOrphanAttachments } from './db/repos/message-attachments.js'
 import { removeAttachmentTree } from './lib/attachment-storage.js'
+import { drainAttachmentCleanup } from './services/attachment-cleanup.js'
 import eventsRoutes from './routes/events.js'
 import dataLocationRoutes from './routes/data-location.js'
 import dataHealthRoutes from './routes/data-health.js'
@@ -154,6 +155,29 @@ export function buildApp(options: AppOptions) {
   const expiredOrphans = deleteExpiredOrphanAttachments(app.db)
   for (const orphan of expiredOrphans) {
     removeAttachmentTree(options.attachmentsDir, orphan.user_id, orphan.id)
+  }
+
+  const cleanupIntervalMs = options.attachmentCleanupIntervalMs
+  if (cleanupIntervalMs > 0) {
+    const cleanupLog = (message: string, meta?: Record<string, unknown>) => {
+      app.log.warn(meta ?? {}, message)
+    }
+    void drainAttachmentCleanup(app.db, options.attachmentsDir, { log: cleanupLog }).catch(
+      (error) => {
+        app.log.error({ err: error }, 'attachment cleanup startup drain failed')
+      },
+    )
+    const timer = setInterval(() => {
+      void drainAttachmentCleanup(app.db, options.attachmentsDir, { log: cleanupLog }).catch(
+        (error) => {
+          app.log.error({ err: error }, 'attachment cleanup drain failed')
+        },
+      )
+    }, cleanupIntervalMs)
+    timer.unref?.()
+    app.addHook('onClose', async () => {
+      clearInterval(timer)
+    })
   }
 
   app.register(authPlugin)
