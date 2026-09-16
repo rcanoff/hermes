@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyPluginAsync } from 'fastify'
-import { markInviteUsed } from '../db/repos/account-invites.js'
+import { consumeInvite } from '../db/repos/account-invites.js'
 import { denyToken } from '../db/repos/sessions.js'
 import { createUser, findUserById, findUserByUsername, updateUserPassword } from '../db/repos/users.js'
 import {
@@ -9,6 +9,20 @@ import {
   validatePassword,
 } from '../services/invites.js'
 import { hashPassword, verifyPassword } from '../services/password.js'
+
+class InviteUnavailableError extends Error {
+  constructor() {
+    super('invalid_token')
+    this.name = 'InviteUnavailableError'
+  }
+}
+
+class UsernameTakenError extends Error {
+  constructor() {
+    super('username_taken')
+    this.name = 'UsernameTakenError'
+  }
+}
 
 const ONE_YEAR_IN_SECONDS = 60 * 60 * 24 * 365
 
@@ -81,15 +95,44 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
     const passwordHash = await hashPassword(password)
     const passwordChangedAt = new Date().toISOString()
-    const user = createUser(app.db, { username, passwordHash, passwordChangedAt })
-    markInviteUsed(app.db, lookup.invite.id)
 
-    const jwtToken = await reply.jwtSign(
-      { sub: user.id, username: user.username, jti: randomUUID() },
-      { sign: { expiresIn: ONE_YEAR_IN_SECONDS } },
-    )
+    try {
+      const user = app.db.transaction(() => {
+        const current = lookupInviteByRawToken(app.db, token)
+        if (!current.valid || current.invite.type !== 'activation') {
+          throw new InviteUnavailableError()
+        }
+        if (findUserByUsername(app.db, username)) {
+          throw new UsernameTakenError()
+        }
+        if (!consumeInvite(app.db, current.invite.id)) {
+          throw new InviteUnavailableError()
+        }
+        try {
+          return createUser(app.db, { username, passwordHash, passwordChangedAt })
+        } catch (error) {
+          if (isUniqueConstraint(error)) {
+            throw new UsernameTakenError()
+          }
+          throw error
+        }
+      })()
 
-    return { token: jwtToken }
+      const jwtToken = await reply.jwtSign(
+        { sub: user.id, username: user.username, jti: randomUUID() },
+        { sign: { expiresIn: ONE_YEAR_IN_SECONDS } },
+      )
+
+      return { token: jwtToken }
+    } catch (error) {
+      if (error instanceof InviteUnavailableError) {
+        return reply.code(400).send({ error: 'invalid_token' })
+      }
+      if (error instanceof UsernameTakenError) {
+        return reply.code(409).send({ error: 'username_taken' })
+      }
+      throw error
+    }
   })
 
   app.post('/auth/reset-password', async (request, reply) => {
@@ -111,24 +154,39 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     const passwordHash = await hashPassword(password)
     const passwordChangedAtSec = Math.floor(Date.now() / 1000) + 1
     const passwordChangedAt = new Date(passwordChangedAtSec * 1000).toISOString()
-    const userId = lookup.invite.user_id
-    updateUserPassword(app.db, userId, passwordHash, passwordChangedAt)
-    markInviteUsed(app.db, lookup.invite.id)
 
-    const user = findUserById(app.db, userId)
-    if (!user) {
-      return reply.code(400).send({ error: 'invalid_token' })
+    try {
+      const user = app.db.transaction(() => {
+        const current = lookupInviteByRawToken(app.db, token)
+        if (!current.valid || current.invite.type !== 'password_reset' || !current.invite.user_id) {
+          throw new InviteUnavailableError()
+        }
+        const existing = findUserById(app.db, current.invite.user_id)
+        if (!existing) {
+          throw new InviteUnavailableError()
+        }
+        if (!consumeInvite(app.db, current.invite.id)) {
+          throw new InviteUnavailableError()
+        }
+        updateUserPassword(app.db, existing.id, passwordHash, passwordChangedAt)
+        return existing
+      })()
+
+      const jwtToken = await app.jwt.sign(
+        { sub: user.id, username: user.username, jti: randomUUID() },
+        { expiresIn: ONE_YEAR_IN_SECONDS, iat: passwordChangedAtSec } as {
+          expiresIn: number
+          iat: number
+        },
+      )
+
+      return { token: jwtToken }
+    } catch (error) {
+      if (error instanceof InviteUnavailableError) {
+        return reply.code(400).send({ error: 'invalid_token' })
+      }
+      throw error
     }
-
-    const jwtToken = await app.jwt.sign(
-      { sub: user.id, username: user.username, jti: randomUUID() },
-      { expiresIn: ONE_YEAR_IN_SECONDS, iat: passwordChangedAtSec } as {
-        expiresIn: number
-        iat: number
-      },
-    )
-
-    return { token: jwtToken }
   })
 
   app.post('/auth/logout', { preHandler: app.authenticate }, async (request, reply) => {
@@ -177,5 +235,14 @@ function isResetPasswordBody(value: unknown): value is { token: string; password
     value !== null &&
     typeof (value as { token?: unknown }).token === 'string' &&
     typeof (value as { password?: unknown }).password === 'string'
+  )
+}
+
+function isUniqueConstraint(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code: string }).code === 'SQLITE_CONSTRAINT_UNIQUE'
   )
 }
