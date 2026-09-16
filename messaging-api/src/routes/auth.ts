@@ -155,8 +155,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
 export default authRoutes
 
-function isLoginBody(value: unknown): value is { username?: string; password?: string } {
-  return typeof value === 'object' && value !== null
+function isLoginBody(value: unknown): value is { username: string; password: string } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const body = value as Record<string, unknown>
+  return typeof body.username === 'string' && typeof body.password === 'string'
 }
 
 function isActivateBody(value: unknown): value is { token: string; username: string; password: string } {
