@@ -90,8 +90,12 @@ describe('/bots', () => {
     expect(body._links.self.href).toBe('/bots?limit=20')
     const defaultDir = extraProfileDir('default')
     expect(fs.existsSync(path.join(defaultDir, 'SOUL.md'))).toBe(true)
-    expect(fs.lstatSync(path.join(defaultDir, 'skills')).isSymbolicLink()).toBe(true)
-    expect(fs.readlinkSync(path.join(defaultDir, 'skills'))).toBe(path.join(hermesHome, 'skills'))
+    expect(fs.lstatSync(path.join(defaultDir, 'skills')).isSymbolicLink()).toBe(false)
+    expect(fs.statSync(path.join(defaultDir, 'skills')).isDirectory()).toBe(true)
+    expect(fs.readFileSync(path.join(defaultDir, 'config.yaml'), 'utf8')).toContain(
+      path.join(hermesHome, 'skills'),
+    )
+    expect(fs.existsSync(path.join(hermesHome, 'skills', 'companion-app', 'SKILL.md'))).toBe(true)
   })
 
   it('POST creates sqlite row and profile dir with SOUL.md containing role', async () => {
@@ -132,9 +136,44 @@ describe('/bots', () => {
     expect(fs.readFileSync(path.join(dir, '.env'), 'utf8')).toContain(
       'API_SERVER_KEY=test-gateway-key-32chars-minimum',
     )
-    expect(fs.lstatSync(path.join(dir, 'skills')).isSymbolicLink()).toBe(true)
-    expect(fs.readlinkSync(path.join(dir, 'skills'))).toBe(path.join(hermesHome, 'skills'))
-    expect(fs.existsSync(path.join(dir, 'skills', 'companion-app', 'SKILL.md'))).toBe(true)
+    expect(fs.lstatSync(path.join(dir, 'skills')).isSymbolicLink()).toBe(false)
+    expect(fs.statSync(path.join(dir, 'skills')).isDirectory()).toBe(true)
+    expect(fs.existsSync(path.join(hermesHome, 'skills', 'companion-app', 'SKILL.md'))).toBe(true)
+    expect(fs.readFileSync(path.join(dir, 'config.yaml'), 'utf8')).toContain(
+      path.join(hermesHome, 'skills'),
+    )
+  })
+
+  it('GET /bots/:id converts legacy symlink skills to real dir + external_dirs without wiping soul', async () => {
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Travel', role: 'Flights' },
+    })
+    expect(created.statusCode).toBe(201)
+    const bot = created.json() as BotBody
+    const dir = extraProfileDir('travel')
+    const soulPath = path.join(dir, 'SOUL.md')
+    const soulBefore = fs.readFileSync(soulPath, 'utf8')
+    const skillsPath = path.join(dir, 'skills')
+    const configPath = path.join(dir, 'config.yaml')
+
+    fs.rmSync(skillsPath, { recursive: true, force: true })
+    fs.symlinkSync(path.join(hermesHome, 'skills'), skillsPath)
+    fs.writeFileSync(configPath, 'model:\n  default: test-model\nskills:\n  external_dirs: []\n')
+    expect(fs.lstatSync(skillsPath).isSymbolicLink()).toBe(true)
+
+    const got = await app!.inject({
+      method: 'GET',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+    expect(got.statusCode).toBe(200)
+    expect(fs.lstatSync(skillsPath).isSymbolicLink()).toBe(false)
+    expect(fs.statSync(skillsPath).isDirectory()).toBe(true)
+    expect(fs.readFileSync(configPath, 'utf8')).toContain(path.join(hermesHome, 'skills'))
+    expect(fs.readFileSync(soulPath, 'utf8')).toBe(soulBefore)
   })
 
   it('POST returns 409 slug_taken for a duplicate name slug', async () => {

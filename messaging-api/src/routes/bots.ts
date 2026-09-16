@@ -39,6 +39,7 @@ import {
   createBotProfile,
   defaultSoulFromRole,
   deleteBotProfile,
+  ensureSkillsOverlay,
   slugifyBotName,
   writeProfileYaml,
   writeSoulFile,
@@ -191,6 +192,21 @@ const botRoutes: FastifyPluginAsync = async (app) => {
     const row = getBotByIdForUser(app.db, request.userId, id)
     if (!row) {
       return reply.code(404).send({ error: 'not_found' })
+    }
+
+    if (normalizeBotRuntime(row.runtime) !== 'grok') {
+      try {
+        ensureSkillsOverlay(app.hermesHome, botOwner(row), row.slug)
+      } catch (error) {
+        app.log.warn(
+          {
+            err: error instanceof Error ? error.message : String(error),
+            botId: row.id,
+            slug: row.slug,
+          },
+          'failed to ensure skills overlay for bot profile',
+        )
+      }
     }
 
     return toBotResponse(

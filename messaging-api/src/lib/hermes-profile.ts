@@ -4,6 +4,8 @@ import path from 'node:path'
 export const DEFAULT_BOT_SLUG = 'default'
 export const OPERATOR_USERNAME = 'rcanoff'
 export const BOT_SLUG_PATTERN = /^[a-z0-9-]{1,32}$/
+/** Shared platform catalog under `$HERMES_HOME/skills` (wired via `skills.external_dirs`). */
+export const SHARED_SKILLS_EXTERNAL = 'skills'
 
 const HONCHO_CONFIG_NAME = 'honcho.json'
 
@@ -131,7 +133,20 @@ export function writeProfileYaml(
   )
 }
 
-/** Point the profile `skills` dir at `$HERMES_HOME/skills` so multiplex profiles see default skills. */
+/** Absolute path to the shared skills catalog (`$HERMES_HOME/skills`). */
+export function sharedSkillsExternalDir(hermesHome: string): string {
+  return path.join(hermesHome, SHARED_SKILLS_EXTERNAL)
+}
+
+/** Bot-writable skills directory under the profile (or `$HERMES_HOME/skills` for operator default). */
+export function profileSkillsDir(hermesHome: string, owner: BotProfileOwner, slug: string): string {
+  return path.join(profileDir(hermesHome, owner, slug), SHARED_SKILLS_EXTERNAL)
+}
+
+/**
+ * Legacy helper: symlink profile `skills` → `$HERMES_HOME/skills`.
+ * Prefer `ensureSkillsOverlay` (real dir + `skills.external_dirs`) for new profiles.
+ */
 export function shareDefaultSkills(
   hermesHome: string,
   owner: BotProfileOwner,
@@ -142,7 +157,7 @@ export function shareDefaultSkills(
   }
 
   const dest = path.join(profileDir(hermesHome, owner, slug), 'skills')
-  const source = path.join(hermesHome, 'skills')
+  const source = sharedSkillsExternalDir(hermesHome)
 
   try {
     const stat = fs.lstatSync(dest)
@@ -165,6 +180,101 @@ export function shareDefaultSkills(
 
   fs.mkdirSync(path.dirname(dest), { recursive: true })
   fs.symlinkSync(source, dest)
+}
+
+/**
+ * Multiplex profiles: real writable `skills/` + `config.yaml` `skills.external_dirs`
+ * including the shared catalog. Operator home is the shared tree — no-op there.
+ */
+export function ensureSkillsOverlay(
+  hermesHome: string,
+  owner: BotProfileOwner,
+  slug: string,
+): void {
+  if (isOperatorHome(hermesHome, owner, slug)) {
+    return
+  }
+
+  const dir = profileDir(hermesHome, owner, slug)
+  fs.mkdirSync(dir, { recursive: true })
+  ensureRealProfileSkillsDir(dir)
+  ensureSharedExternalDirs(path.join(dir, 'config.yaml'), sharedSkillsExternalDir(hermesHome))
+}
+
+/** Convert symlink/`missing` → real `skills/`; leave an existing real directory alone. */
+function ensureRealProfileSkillsDir(profilePath: string): void {
+  const dest = path.join(profilePath, 'skills')
+  try {
+    const stat = fs.lstatSync(dest)
+    if (stat.isSymbolicLink()) {
+      fs.unlinkSync(dest)
+      fs.mkdirSync(dest, { recursive: true })
+      return
+    }
+    if (stat.isDirectory()) {
+      return
+    }
+    return
+  } catch (error) {
+    if (!isEnoent(error)) {
+      throw error
+    }
+  }
+  fs.mkdirSync(dest, { recursive: true })
+}
+
+/** Idempotently add `shared` to `skills.external_dirs` in profile `config.yaml`. */
+function ensureSharedExternalDirs(configPath: string, shared: string): void {
+  let text: string
+  try {
+    text = fs.readFileSync(configPath, 'utf8')
+  } catch (error) {
+    if (!isEnoent(error)) {
+      throw error
+    }
+    fs.mkdirSync(path.dirname(configPath), { recursive: true })
+    fs.writeFileSync(configPath, `skills:\n  external_dirs:\n    - ${shared}\n`)
+    return
+  }
+
+  if (externalDirsIncludes(text, shared)) {
+    return
+  }
+
+  const emptyMatch = text.match(/(^|\n)([ \t]*)external_dirs:[ \t]*\[[ \t]*\][ \t]*(?=\r?\n|$)/)
+  if (emptyMatch && emptyMatch.index !== undefined) {
+    const indent = emptyMatch[2] ?? ''
+    const start = emptyMatch.index + emptyMatch[1].length
+    const end = emptyMatch.index + emptyMatch[0].length
+    const replacement = `${indent}external_dirs:\n${indent}  - ${shared}`
+    fs.writeFileSync(configPath, `${text.slice(0, start)}${replacement}${text.slice(end)}`)
+    return
+  }
+
+  const listHeader = text.match(/(^|\n)([ \t]*)external_dirs:[ \t]*(?=\r?\n|$)/)
+  if (listHeader && listHeader.index !== undefined) {
+    const indent = listHeader[2] ?? ''
+    const afterHeader = listHeader.index + listHeader[0].length
+    const insertion = `\n${indent}  - ${shared}`
+    fs.writeFileSync(configPath, `${text.slice(0, afterHeader)}${insertion}${text.slice(afterHeader)}`)
+    return
+  }
+
+  const skillsHeader = text.match(/(^|\n)skills:[ \t]*(?=\r?\n|$)/)
+  if (skillsHeader && skillsHeader.index !== undefined) {
+    const afterSkills = skillsHeader.index + skillsHeader[0].length
+    const insertion = `\n  external_dirs:\n    - ${shared}`
+    fs.writeFileSync(configPath, `${text.slice(0, afterSkills)}${insertion}${text.slice(afterSkills)}`)
+    return
+  }
+
+  const suffix = text.endsWith('\n') ? '' : '\n'
+  fs.writeFileSync(configPath, `${text}${suffix}skills:\n  external_dirs:\n    - ${shared}\n`)
+}
+
+function externalDirsIncludes(text: string, shared: string): boolean {
+  const escaped = shared.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(^|\\n)[ \\t]*-[ \\t]*"?${escaped}"?[ \\t]*(?=\\r?\\n|$)`).test(text)
 }
 
 function isEnoent(error: unknown): boolean {
@@ -191,7 +301,6 @@ export function createBotProfile(input: {
 
   const dir = profileDir(input.hermesHome, input.owner, input.slug)
   fs.mkdirSync(dir, { recursive: true })
-  shareDefaultSkills(input.hermesHome, input.owner, input.slug)
 
   const sourceConfig = path.join(input.hermesHome, 'config.yaml')
   if (fs.existsSync(sourceConfig)) {
@@ -199,6 +308,7 @@ export function createBotProfile(input: {
   }
 
   syncProfileApiServerKey(input.hermesHome, input.owner, input.slug)
+  ensureSkillsOverlay(input.hermesHome, input.owner, input.slug)
   fs.writeFileSync(soulFilePath(input.hermesHome, input.owner, input.slug), input.soul)
   writeProfileYaml(input.hermesHome, input.owner, input.slug, {
     name: input.name,
