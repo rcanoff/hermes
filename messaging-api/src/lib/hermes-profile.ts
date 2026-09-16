@@ -127,7 +127,7 @@ export function writeProfileYaml(
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(
     profileYamlPath(hermesHome, owner, slug),
-    `display_name: ${yamlScalar(input.name)}\ndescription: ${yamlScalar(input.role)}\n`,
+    `display_name: ${yamlScalar(input.name)}\ndescription: ${yamlScalar(input.role)}\ncompanion_username: ${yamlScalar(owner.username)}\n`,
   )
 }
 

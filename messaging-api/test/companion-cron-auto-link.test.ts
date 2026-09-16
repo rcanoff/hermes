@@ -7,6 +7,7 @@ import {
   COMPANION_CRON_DEFAULT_MODEL,
   COMPANION_CRON_DEFAULT_PROVIDER,
 } from '../src/lib/companion-cron-model.js'
+import { companionVaultConstraint } from '../src/lib/companion-obsidian-vault.js'
 import {
   createJobConversation,
   findConversationByHermesJobId,
@@ -395,7 +396,9 @@ Output: link line then Kalt X · Warm Y · m² · Zi. · title, sorted cheapest 
     const patchedJob = jobsOnDisk.jobs.find((job) => job.id === 'prelinked-job')
     expect(patchedJob?.prompt).toContain('Mitte')
     expect(patchedJob?.prompt).not.toContain('friedrichshain-kreuzberg')
+    expect(patchedJob?.prompt).toContain(companionVaultConstraint('operator'))
     expect(completeChat).toHaveBeenCalledOnce()
+    expect(completeChat.mock.calls[0]?.[0]?.companionUsername).toBeUndefined()
 
     const jobConversations = app.db
       .prepare(`SELECT COUNT(*) AS count FROM conversations WHERE kind = 'job'`)

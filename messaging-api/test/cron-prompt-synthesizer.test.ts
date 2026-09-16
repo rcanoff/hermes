@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { insertMessage, listRecentMessages } from '../src/db/repos/messages.js'
+import { companionVaultConstraint } from '../src/lib/companion-obsidian-vault.js'
 import {
   buildConversationAnchoredCronPromptFallback,
   buildCronPromptSynthesisMessages,
@@ -376,9 +377,148 @@ Canonical URL: https://www.immobilienscout24.de/Suche/de/berlin/berlin/mitte/woh
     expect(classified?.kind).toBe('reminder')
     expect(classified?.prompt).toContain('amazon.de')
     expect(classified?.prompt).toContain('€19.22')
+    expect(classified?.prompt).not.toContain('/opt/data/vaults')
     expect(completeChat).toHaveBeenCalledOnce()
     expect(completeChat.mock.calls[0]?.[0]?.companionUserId).toBeUndefined()
     expect(completeChat.mock.calls[0]?.[0]?.companionUsername).toBeUndefined()
+  })
+
+  it('pins monitoring prompts to the companion vault without sending username to synthesis completeChat', async () => {
+    const monitoringPrompt = `Daily ImmoScout24 rental search (Companion App output only).
+
+Search apartments for rent in Mitte, Berlin.
+Respond [SILENT] only when there are zero new listings since the previous run.`
+    const completeChat = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        kind: 'monitoring',
+        prompt: monitoringPrompt,
+      }),
+    )
+    const hermesClient: HermesClient = {
+      completeChat,
+      async *streamChat() {},
+      ensureSession: async () => {},
+      patchSessionModel: async () => {},
+    }
+
+    const classified = await classifyAndSynthesizeCompanionCronPrompt({
+      hermesClient,
+      synthesisLlm: { apiKey: '', baseUrl: '', model: 'gpt-5.4', timeoutMs: 30_000 },
+      companionUsername: 'rcanoff',
+      job: {
+        name: 'mitte-immoscout-daily',
+        schedule_display: '0 7 * * *',
+        prompt: 'Daily ImmoScout24 rental search in Mitte.',
+      },
+      messages: [
+        {
+          id: '1',
+          conversation_id: 'c1',
+          role: 'assistant',
+          content:
+            'Mitte rentals: https://www.immobilienscout24.de/Suche/de/berlin/berlin/mitte/wohnung-mit-balkon-mieten',
+          created_at: '2026-06-23 03:00:00',
+        },
+        {
+          id: '2',
+          conversation_id: 'c1',
+          role: 'user',
+          content: 'make this a daily cron at 9am berlin',
+          created_at: '2026-06-23 03:01:00',
+        },
+      ],
+    })
+
+    const line = companionVaultConstraint('rcanoff')
+    expect(classified?.kind).toBe('monitoring')
+    expect(classified?.prompt).toContain('Mitte')
+    expect(classified?.prompt?.endsWith(line)).toBe(true)
+    expect(completeChat).toHaveBeenCalledOnce()
+    expect(completeChat.mock.calls[0]?.[0]?.companionUsername).toBeUndefined()
+  })
+
+  it('leaves reminder prompts vault-free even when companionUsername is provided', async () => {
+    const completeChat = vi.fn().mockResolvedValue(OFFLEY_CLASSIFIED_RESPONSE)
+    const hermesClient: HermesClient = {
+      completeChat,
+      async *streamChat() {},
+      ensureSession: async () => {},
+      patchSessionModel: async () => {},
+    }
+
+    const classified = await classifyAndSynthesizeCompanionCronPrompt({
+      hermesClient,
+      synthesisLlm: { apiKey: '', baseUrl: '', model: 'gpt-5.4', timeoutMs: 30_000 },
+      companionUsername: 'rcanoff',
+      job: {
+        name: 'Buy Offley Rosé reminder',
+        schedule_display: 'once at 2026-06-22 19:30',
+        prompt: 'Reminder: Buy Offley Rosé.',
+      },
+      messages: [
+        {
+          id: '1',
+          conversation_id: 'c1',
+          role: 'assistant',
+          content: 'Amazon.de €19.22 for Offley Rosé',
+          created_at: '2026-06-22 02:44:41',
+        },
+        {
+          id: '2',
+          conversation_id: 'c1',
+          role: 'user',
+          content: 'remind me to buy it at 7:30 pm',
+          created_at: '2026-06-22 02:46:07',
+        },
+      ],
+    })
+
+    expect(classified?.kind).toBe('reminder')
+    expect(classified?.prompt).toContain('Offley Rosé')
+    expect(classified?.prompt).not.toContain('/opt/data/vaults')
+  })
+
+  it('pins reminder prompts that already talk about Obsidian notes', async () => {
+    const reminderPrompt = `Scheduled reminder. Your entire response must be the user-facing reminder message only.
+
+Output exactly:
+
+Reminder: File the trip notes in Obsidian.`
+    const completeChat = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        kind: 'reminder',
+        prompt: reminderPrompt,
+      }),
+    )
+    const hermesClient: HermesClient = {
+      completeChat,
+      async *streamChat() {},
+      ensureSession: async () => {},
+      patchSessionModel: async () => {},
+    }
+
+    const classified = await classifyAndSynthesizeCompanionCronPrompt({
+      hermesClient,
+      synthesisLlm: { apiKey: '', baseUrl: '', model: 'gpt-5.4', timeoutMs: 30_000 },
+      companionUsername: 'rcanoff',
+      job: {
+        name: 'File trip notes',
+        schedule_display: 'once at 2026-06-22 19:30',
+        prompt: 'Reminder: File the trip notes in Obsidian.',
+      },
+      messages: [
+        {
+          id: '1',
+          conversation_id: 'c1',
+          role: 'user',
+          content: 'remind me later to file the trip notes in Obsidian',
+          created_at: '2026-06-22 02:46:07',
+        },
+      ],
+    })
+
+    expect(classified?.kind).toBe('reminder')
+    expect(classified?.prompt?.endsWith(companionVaultConstraint('rcanoff'))).toBe(true)
   })
 
   it('loads recent messages from the source conversation', async () => {

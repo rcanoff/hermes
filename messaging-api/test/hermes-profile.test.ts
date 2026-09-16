@@ -6,7 +6,9 @@ import {
   createBotProfile,
   profileDir,
   profileRelativeKey,
+  profileYamlPath,
   shareDefaultSkills,
+  writeProfileYaml,
   type BotProfileOwner,
 } from '../src/lib/hermes-profile.js'
 
@@ -160,5 +162,28 @@ describe('createBotProfile', () => {
     expect(fs.existsSync(path.join(dir, 'skills', 'companion-app', 'SKILL.md'))).toBe(true)
     expect(fs.lstatSync(path.join(dir, 'skills')).isSymbolicLink()).toBe(true)
     expect(fs.readlinkSync(path.join(dir, 'skills'))).toBe(path.join(hermesHome, 'skills'))
+    expect(fs.readFileSync(path.join(dir, 'profile.yaml'), 'utf8')).toContain(
+      'companion_username: "AlineTusi"',
+    )
+  })
+})
+
+describe('writeProfileYaml', () => {
+  let hermesHome: string
+
+  beforeEach(() => {
+    hermesHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-home-yaml-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(hermesHome, { recursive: true, force: true })
+  })
+
+  it('records the owner companion username with original casing', () => {
+    writeProfileYaml(hermesHome, aline, 'travel', { name: 'Travis', role: 'Travel agent' })
+
+    expect(fs.readFileSync(profileYamlPath(hermesHome, aline, 'travel'), 'utf8')).toBe(
+      'display_name: "Travis"\ndescription: "Travel agent"\ncompanion_username: "AlineTusi"\n',
+    )
   })
 })

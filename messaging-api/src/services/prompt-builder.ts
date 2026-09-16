@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import type { AttachmentRow } from '../db/repos/message-attachments.js'
 import type { MessageKind } from '../db/repos/messages.js'
 import { resolveAttachmentFile } from '../lib/attachment-storage.js'
+import { companionObsidianVaultPath, companionVaultConstraint } from '../lib/companion-obsidian-vault.js'
 import { isAcceptedImageMime } from './image-derivatives.js'
 
 export interface TranscriptMessage {
@@ -71,6 +72,18 @@ export function buildHermesSystemPrompt(options?: BuildHermesMessagesOptions): s
   const username = options?.companionUsername?.trim()
   if (username && !bootstrap?.includes(username)) {
     parts.push(USERNAME_SAFETY_TEMPLATE.replace('{username}', username))
+  }
+
+  if (username) {
+    try {
+      const vaultPath = companionObsidianVaultPath(username)
+      const soFar = parts.join(' ')
+      if (!soFar.includes(vaultPath)) {
+        parts.push(companionVaultConstraint(username))
+      }
+    } catch {
+      // Username does not map to a vault directory; keep the user line, omit the vault constraint.
+    }
   }
 
   const head = parts.join(' ')

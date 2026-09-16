@@ -1,7 +1,7 @@
 ---
 name: companion-app
 description: REQUIRED entry point for Companion App replies. iOS bootstrap tells Hermes to load this skill first. Routes intents to reply, block, and data skills. Does not own fence syntax.
-version: 1.2.9
+version: 1.2.10
 author: Hermes Agent
 metadata:
   hermes:
@@ -71,13 +71,13 @@ Do not write user-facing text before or between tool calls. After tools finish, 
 | Remind me / run every day / cron / job | `companion-cron` (load first, follow exactly) | Scheduled/deferred jobs only — not one-shot Apple Reminders; MCP create/link + `cronjob` with `deliver: local` — never `origin` |
 | Site search / listing links (ImmoScout, Kleinanzeigen, etc.) | `web-search-result-extraction` → `companion-replies` → `companion-links` | ImmoScout: `immoscout-apartment-search`. Kleinanzeigen/Nachmieter: same reply shape; see `references/kleinanzeigen-rental-extraction.md` |
 | Where to buy X locally (shops, butchers, no named site) | `web-search-result-extraction` → `companion-replies` → `companion-links` | See `references/local-retail-product-hunt.md`; verify on each merchant site |
-| Create / save / write / append a note | `obsidian` → `companion-replies` | "create a note with…", "save this to a note", "write a note", append to vault, etc. Vault writes use `/opt/data/vault` only (`OBSIDIAN_VAULT_PATH` in container) — never host macOS iCloud paths, never `/opt/data/notes/` |
+| Create / save / write / append a note | `obsidian` → `companion-replies` | "create a note with…", "save this to a note", "write a note", append to vault, etc. Vault writes use `/opt/data/vaults/<username.lower()>` only — never `/opt/data/vault`, never host macOS iCloud paths, never `/opt/data/notes/` |
 
 ## Note saving
 
-When the user asks to create, save, write, or append a note, load `obsidian` first and follow its vault workflow. Confirm with `companion-replies` after the write succeeds. All vault paths must resolve to `/opt/data/vault` inside the container — do not use the host iCloud path or `/opt/data/notes/`.
+When the user asks to create, save, write, or append a note, load `obsidian` first and follow its vault workflow. Confirm with `companion-replies` after the write succeeds. Vault writes use `/opt/data/vaults/<username.lower()>` only — do not use `/opt/data/vault`, the host iCloud path, or `/opt/data/notes/`. Missing username or missing vault dir: do not write; do not default to rcanoff.
 
-If the user says **“fix it”** immediately after vault/Obsidian access failed, treat that as **fix the vault mount** (`/opt/data/vault` symlink, `OBSIDIAN_VAULT_PATH`, iCloud sync) — not flight search, fares, or unrelated browser tasks. Load `hermes-obsidian-vault` with `obsidian`.
+If the user says **“fix it”** immediately after vault/Obsidian access failed, treat that as **fix the vault mount** (`/opt/data/vaults/<username.lower()>`, iCloud Documents bind) — not flight search, fares, or unrelated browser tasks. Load `hermes-obsidian-vault` with `obsidian`.
 
 ## Data → present pipeline (required)
 
@@ -114,5 +114,5 @@ For any vault data intent (live maps, location history, health):
 - Use `companion-user-location` for MapKit search, routing, ETA, or "where am I?" — use `companion-maps` (`maps_*` on **apple** MCP)
 - Call Home Assistant for companion user location
 - Route account invites from this skill
-- Save notes outside the Obsidian vault path (`/opt/data/vault`) — never host iCloud paths or `/opt/data/notes/`
+- Save notes outside the logged-in user's Obsidian vault (`/opt/data/vaults/<username.lower()>`). Never `/opt/data/vault`, never host iCloud paths, never `/opt/data/notes/`, never a sibling user's folder
 - Reply in German — English only on this channel for now

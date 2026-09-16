@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { companionVaultConstraint } from '../src/lib/companion-obsidian-vault.js'
 import {
   buildHomeAssistantDigestCronPrompt,
   HOME_ASSISTANT_DIGEST_PROMPT_MARKER,
@@ -6,6 +7,7 @@ import {
   isExplicitHomeAssistantDigestJob,
   needsHomeAssistantDigestPromptNormalization,
   normalizeHomeAssistantDigestPrompt,
+  withCompanionVaultConstraint,
 } from '../src/lib/companion-cron-prompt.js'
 
 describe('companion-cron-prompt', () => {
@@ -56,5 +58,32 @@ describe('companion-cron-prompt', () => {
         userTriggerMessage: 'remind me to look into that later at 7pm',
       }),
     ).toBe('reminder')
+  })
+})
+
+describe('withCompanionVaultConstraint', () => {
+  const prompt = 'Daily ImmoScout24 rental search in Mitte, Berlin. Respond [SILENT] when nothing new.'
+
+  it('leaves the prompt unchanged when username is empty or missing', () => {
+    expect(withCompanionVaultConstraint(prompt, null)).toBe(prompt)
+    expect(withCompanionVaultConstraint(prompt, undefined)).toBe(prompt)
+    expect(withCompanionVaultConstraint(prompt, '')).toBe(prompt)
+    expect(withCompanionVaultConstraint(prompt, '   ')).toBe(prompt)
+    expect(withCompanionVaultConstraint(prompt, 'rcanoff')).not.toBe(prompt)
+  })
+
+  it('appends the rcanoff vault constraint once', () => {
+    const pinned = withCompanionVaultConstraint(prompt, 'rcanoff')
+    const line = companionVaultConstraint('rcanoff')
+
+    expect(pinned).toBe(`${prompt}\n\n${line}`)
+    expect(pinned.endsWith(line)).toBe(true)
+    expect(withCompanionVaultConstraint(pinned, 'rcanoff')).toBe(pinned)
+  })
+
+  it('keeps HA digest templates vault-free', () => {
+    const digest = buildHomeAssistantDigestCronPrompt()
+    expect(withCompanionVaultConstraint(digest, '')).toBe(digest)
+    expect(digest).not.toContain('/opt/data/vaults')
   })
 })

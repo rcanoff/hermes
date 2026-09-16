@@ -472,17 +472,21 @@ Safe read-first verification:
 
 ## Trip records vault
 
-Hermes keeps a centralized memory of personal records — currently trips — in an
-Obsidian-compatible markdown vault at `data/vault/` (mounted in the container at
-`/opt/data/vault`, resolved by skills via `OBSIDIAN_VAULT_PATH`).
+Hermes keeps a centralized memory of personal records — currently trips — in
+per-user Obsidian-compatible markdown vaults. The host bind is the iCloud
+Obsidian **Documents parent** (`OBSIDIAN_VAULTS_HOST_PATH`). Inside the
+container the live root is `/opt/data/vaults/<username.lower()>` (rcanoff →
+`/opt/data/vaults/rcanoff`, AlineTusi → `/opt/data/vaults/alinetusi`). Skills
+resolve that folder; do **not** use `/opt/data/vault` as the live root.
 
-On macOS, set `OBSIDIAN_VAULT_HOST_PATH` to the iCloud Hermes folder and keep
-`data/vault` as a **real empty directory** (the nested bind mount point). If
-`data/vault` is a symlink into iCloud, Docker follows it: inside the container
-`/opt/data/vault` stays a symlink, `realpath` leaves `/opt/data`, and
-`write_file`/`patch` are denied (`HERMES_WRITE_SAFE_ROOT=/opt/data`). Do not
-copy the vault into `data/vault`; live notes stay in iCloud. After replacing a
-symlink with a directory, recreate `hermes-gateway` so the nested bind applies.
+On macOS, set `OBSIDIAN_VAULTS_HOST_PATH` to the iCloud Obsidian `Documents`
+directory (the parent of per-user vault folders). Keep `data/vault` as a
+**real empty directory** so old nested-bind leftovers cannot become a
+symlink; live notes are not there. If the host path is a symlink into iCloud,
+Docker follows it and `write_file`/`patch` may be denied
+(`HERMES_WRITE_SAFE_ROOT=/opt/data`). Do not copy live notes into `data/vault`.
+After replacing a symlink with a directory, recreate `hermes-gateway` so the
+nested bind applies.
 
 One note per trip lives in `Trips/` (named `YYYY-MM Origin-Destination.md`) and holds
 canonical booking facts: trip span, flight numbers, confirmation codes, lodging and
@@ -495,9 +499,10 @@ which composes the existing `note-taking/obsidian` and
 `productivity/travel-bookings-to-calendar` skills. Design spec:
 `docs/history/implemented/specs/2026-06-12-obsidian-trip-records-vault-design.md`.
 
-The vault is plain markdown — open the folder in Obsidian later for browsing on
-Mac/iPhone (sync is deferred; the vault is local-only on the Pi for now). It is part
-of `data/`, so the existing backup procedure covers it.
+The vault is plain markdown. Open the per-user folder in Obsidian on Mac/iPhone
+(`Documents/rcanoff` or `Documents/alinetusi`). Drive `Obsidian/Hermes` is the
+rcanoff vault only; Aline is iCloud-only. Live notes stay in iCloud, not in
+`data/`.
 
 ## macOS validation steps
 

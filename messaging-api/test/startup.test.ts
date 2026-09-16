@@ -59,6 +59,14 @@ describe('prompt builder', () => {
 
     expect(system).toContain(sampleBootstrap)
     expect(system).toContain('authenticated companion user for this conversation is "roberto"')
+    expect(system).toContain('/opt/data/vaults/roberto')
+  })
+
+  it('names the per-user Obsidian vault in the system prompt', () => {
+    const system = buildHermesSystemPrompt({ companionUsername: 'rcanoff' })
+
+    expect(system).toContain('authenticated companion user for this conversation is "rcanoff"')
+    expect(system).toContain('/opt/data/vaults/rcanoff')
   })
 
   it('does not duplicate username when bootstrap already includes it', () => {
@@ -68,7 +76,22 @@ describe('prompt builder', () => {
       companionUsername: 'roberto',
     })
 
-    expect(system).toBe(bootstrap)
+    expect(system.match(/authenticated companion user for this conversation is "roberto"/g)).toHaveLength(1)
+    expect(system).toContain('/opt/data/vaults/roberto')
+  })
+
+  it('omits vault constraint when companionUsername is missing', () => {
+    const system = buildHermesSystemPrompt({ bootstrapPrompt: sampleBootstrap })
+
+    expect(system).toBe(sampleBootstrap)
+    expect(system).not.toContain('/opt/data/vaults')
+  })
+
+  it('omits vault constraint when companionUsername is invalid', () => {
+    const system = buildHermesSystemPrompt({ companionUsername: 'op' })
+
+    expect(system).toContain('authenticated companion user for this conversation is "op"')
+    expect(system).not.toContain('/opt/data/vaults')
   })
 
   it('appends roster after bootstrap and username', () => {
@@ -81,6 +104,7 @@ describe('prompt builder', () => {
 
     expect(system).toContain(sampleBootstrap)
     expect(system).toContain('authenticated companion user for this conversation is "roberto"')
+    expect(system).toContain('/opt/data/vaults/roberto')
     expect(system).toContain(roster)
     expect(system.indexOf(sampleBootstrap)).toBeLessThan(system.indexOf(roster))
   })

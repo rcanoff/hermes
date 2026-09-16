@@ -176,6 +176,7 @@ async function normalizeCompanionJobRecord(
       synthesisLlm: input.cronPromptSynthesisLlm,
       sourceConversationId: input.sourceConversationId,
       job,
+      companionUsername: input.username,
     })
 
     if (classified) {

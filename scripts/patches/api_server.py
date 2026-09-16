@@ -2111,6 +2111,9 @@ class APIServerAdapter(BasePlatformAdapter):
             gateway does not serve (handler/middleware returns 404).
         """
         profile = (request.match_info.get("profile") or "").strip()
+        namespace = (request.match_info.get("ns") or "").strip()
+        if namespace and profile:
+            profile = f"{namespace}/{profile}"
         if not profile:
             return None
         runner = getattr(self, "gateway_runner", None)
@@ -7992,6 +7995,10 @@ class APIServerAdapter(BasePlatformAdapter):
             for method, path, handler in self._http_route_table():
                 self._app.router.add_route(method, path, handler)
                 self._app.router.add_route(method, f"/p/{{profile}}{path}", handler)
+                # Companion per-user bots: /p/<userId>/<slug>/…
+                self._app.router.add_route(
+                    method, f"/p/{{ns}}/{{profile}}{path}", handler
+                )
             # Store the adapter after native routes are registered. Local Hermes-Relay
             # bootstrap shims use this key as a feature-detection hook; registering
             # native routes first lets those shims no-op instead of shadowing the
