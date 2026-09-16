@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { MessageWithAttachments } from '../lib/attachment-serializer.js'
 import type { ConversationSyncEntryPayload } from '../db/repos/chat-sync-events.js'
 import type { ToolingLine, ToolingPhase } from '../db/repos/process.js'
@@ -70,24 +71,43 @@ export type SessionStreamEvent =
 type SessionListener = (event: SessionStreamEvent) => void
 type LegacyListener = (event: LegacyStreamEvent) => void
 
+type SessionConnection = {
+  identity: string
+  listener: SessionListener
+  closeTransport?: () => void
+}
+
 export class StreamHub {
-  private readonly sessionListeners = new Map<string, SessionListener>()
+  private readonly sessionConnections = new Map<string, SessionConnection>()
   private readonly legacyListeners = new Map<string, Set<LegacyListener>>()
   private readonly pendingRewinds = new Map<string, string[]>()
   private readonly userSessions = new Map<string, Set<string>>()
   private readonly sessionUser = new Map<string, string>()
 
   subscribeSession(sessionId: string, listener: SessionListener): () => void {
-    this.sessionListeners.set(sessionId, listener)
-    return () => {
-      if (this.sessionListeners.get(sessionId) === listener) {
-        this.sessionListeners.delete(sessionId)
-      }
+    const identity = randomUUID()
+    this.sessionConnections.set(sessionId, { identity, listener })
+    return () => this.releaseConnection(sessionId, identity, false)
+  }
+
+  connectUserSession(
+    userId: string,
+    sessionId: string,
+    listener: SessionListener,
+    closeTransport: () => void,
+  ): () => void {
+    const identity = randomUUID()
+    const previous = this.sessionConnections.get(sessionId)
+    this.sessionConnections.set(sessionId, { identity, listener, closeTransport })
+    this.registerUserSession(userId, sessionId)
+    if (previous && previous.identity !== identity) {
+      previous.closeTransport?.()
     }
+    return () => this.releaseConnection(sessionId, identity, true)
   }
 
   hasSessionListener(sessionId: string): boolean {
-    return this.sessionListeners.has(sessionId)
+    return this.sessionConnections.has(sessionId)
   }
 
   registerUserSession(userId: string, sessionId: string): void {
@@ -112,7 +132,7 @@ export class StreamHub {
     const sessions = this.userSessions.get(userId)
     if (!sessions) return false
     for (const sessionId of sessions) {
-      if (this.sessionListeners.has(sessionId)) return true
+      if (this.sessionConnections.has(sessionId)) return true
     }
     return false
   }
@@ -126,7 +146,7 @@ export class StreamHub {
     if (!sessions) return 0
     let count = 0
     for (const sessionId of sessions) {
-      if (this.sessionListeners.has(sessionId)) count++
+      if (this.sessionConnections.has(sessionId)) count++
     }
     return count
   }
@@ -140,9 +160,10 @@ export class StreamHub {
   }
 
   replaceSessionConnection(sessionId: string, listener: SessionListener): () => void {
-    const previous = this.sessionListeners.get(sessionId)
+    const previous = this.sessionConnections.get(sessionId)
     if (previous) {
-      this.sessionListeners.delete(sessionId)
+      this.sessionConnections.delete(sessionId)
+      previous.closeTransport?.()
     }
     return this.subscribeSession(sessionId, listener)
   }
@@ -152,14 +173,28 @@ export class StreamHub {
   }
 
   private deliverSessionEvent(sessionId: string, event: SessionStreamEvent): void {
-    const listener = this.sessionListeners.get(sessionId)
-    if (!listener) {
+    const connection = this.sessionConnections.get(sessionId)
+    if (!connection) {
       return
     }
     try {
-      listener(event)
+      connection.listener(event)
     } catch {
-      this.sessionListeners.delete(sessionId)
+      const current = this.sessionConnections.get(sessionId)
+      if (current?.identity === connection.identity) {
+        this.sessionConnections.delete(sessionId)
+      }
+    }
+  }
+
+  private releaseConnection(sessionId: string, identity: string, unregisterUser: boolean): void {
+    const current = this.sessionConnections.get(sessionId)
+    if (current?.identity !== identity) {
+      return
+    }
+    this.sessionConnections.delete(sessionId)
+    if (unregisterUser) {
+      this.unregisterUserSession(sessionId)
     }
   }
 

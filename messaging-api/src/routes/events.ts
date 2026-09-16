@@ -8,16 +8,6 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
 
     const sessionId = request.sessionId
     const userId = request.userId
-    app.streamHub.registerUserSession(userId, sessionId)
-    request.log.info(
-      {
-        userId,
-        sessionId,
-        registeredSessions: app.streamHub.countUserSessions(userId),
-        connectedSessions: app.streamHub.countUserSessionsWithListeners(userId),
-      },
-      'SSE session stream connected',
-    )
 
     reply.sseInit()
 
@@ -28,29 +18,49 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
       }
     }, 30_000)
 
-    const unsubscribe = app.streamHub.replaceSessionConnection(sessionId, (event) => {
-      if (!closed) {
-        reply.sseSend(event.event, event.data)
-      }
-    })
-
-    const closeStream = () => {
+    const closeTransport = () => {
       if (closed) {
         return
       }
       closed = true
       clearInterval(pingInterval)
-      app.streamHub.unregisterUserSession(sessionId)
       request.log.info({ userId, sessionId }, 'SSE session stream disconnected')
-      unsubscribe()
       reply.sseEnd()
     }
 
+    const unsubscribe = app.streamHub.connectUserSession(
+      userId,
+      sessionId,
+      (event) => {
+        if (!closed) {
+          reply.sseSend(event.event, event.data)
+        }
+      },
+      closeTransport,
+    )
+
+    request.log.info(
+      {
+        userId,
+        sessionId,
+        registeredSessions: app.streamHub.countUserSessions(userId),
+        connectedSessions: app.streamHub.countUserSessionsWithListeners(userId),
+      },
+      'SSE session stream connected',
+    )
+
+    const closeStream = () => {
+      closeTransport()
+      unsubscribe()
+    }
+
     await new Promise<void>((resolve) => {
-      request.raw.on('close', () => {
+      const onClose = () => {
         closeStream()
         resolve()
-      })
+      }
+      request.raw.on('close', onClose)
+      request.raw.on('error', onClose)
     })
   })
 }
