@@ -31,6 +31,7 @@ export interface AppOptions {
   attachmentsDir: string
   attachmentMaxBytes: number
   attachmentOrphanTtlHours: number
+  attachmentCleanupIntervalMs: number
   visionMaxEdgePx: number
   thumbMaxEdgePx: number
   visionHistoryMaxBytes: number

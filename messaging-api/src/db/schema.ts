@@ -161,6 +161,18 @@ export function initSchema(db: Database.Database): void {
   ensurePushDevices(db)
   ensureDeviceSyncState(db)
   ensureCompanionSettings(db)
+  ensureAttachmentCleanup(db)
+}
+
+function ensureAttachmentCleanup(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS attachment_cleanup (
+      user_id TEXT NOT NULL,
+      attachment_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, attachment_id)
+    );
+  `)
 }
 
 function ensureConversationBotId(db: Database.Database): void {
