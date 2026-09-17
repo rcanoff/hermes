@@ -162,5 +162,8 @@ export function readConfig(env: NodeJS.ProcessEnv): AppOptions {
     hermesHome: env.HERMES_HOME?.trim() || env.HERMES_DATA_DIR?.trim() || '/opt/data',
     grokGatewayUrl: env.GROK_GATEWAY_URL?.trim() || '',
     grokGatewayToken: env.GROK_GATEWAY_TOKEN?.trim() || '',
+    hermesDashboardUrl: env.HERMES_DASHBOARD_URL?.trim() || 'http://hermes-gateway:9119',
+    hermesDashboardUsername: env.HERMES_DASHBOARD_BASIC_AUTH_USERNAME ?? '',
+    hermesDashboardPassword: env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD ?? '',
   }
 }

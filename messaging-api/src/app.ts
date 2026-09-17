@@ -32,6 +32,7 @@ import { createApnsClient } from './services/apns-client.js'
 import { CronOutputBridge } from './services/cron-output-bridge.js'
 import { createGrokGatewayClient, type GrokGatewayClient } from './services/grok-gateway-client.js'
 import { drainGrokOutboxesOnStartup } from './services/grok-outbox-drain.js'
+import { HermesDashboardClient, type HermesDashboard } from './lib/hermes-dashboard.js'
 import { OpenAiHermesClient } from './services/hermes-client.js'
 import { PushNotificationService } from './services/push-notifications.js'
 import { RunAbortRegistry } from './services/run-abort-registry.js'
@@ -46,6 +47,7 @@ declare module 'fastify' {
   interface FastifyInstance {
     db: Database.Database
     hermesClient: HermesClient
+    hermesDashboard: HermesDashboard
     grokGatewayClient: GrokGatewayClient
     streamHub: StreamHub
     addressEnrichmentQueue: AddressEnrichmentQueueType
@@ -89,6 +91,15 @@ export function buildApp(options: AppOptions) {
         options.hermesApiKey,
         options.hermesStateDbPath,
       ),
+  )
+  app.decorate(
+    'hermesDashboard',
+    options.hermesDashboard ??
+      new HermesDashboardClient({
+        baseUrl: options.hermesDashboardUrl,
+        username: options.hermesDashboardUsername,
+        password: options.hermesDashboardPassword,
+      }),
   )
   app.decorate(
     'grokGatewayClient',

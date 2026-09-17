@@ -79,6 +79,9 @@ describe('readConfig', () => {
       hermesHome: '/opt/data',
       grokGatewayUrl: '',
       grokGatewayToken: '',
+      hermesDashboardUrl: 'http://hermes-gateway:9119',
+      hermesDashboardUsername: '',
+      hermesDashboardPassword: '',
     })
   })
 

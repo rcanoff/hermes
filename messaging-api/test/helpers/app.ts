@@ -4,6 +4,7 @@ import path from 'node:path'
 import { buildApp } from '../../src/app.js'
 import { DEFAULT_COMPANION_MODELS } from '../../src/lib/companion-models.js'
 import type { AppOptions } from '../../src/types.js'
+import { createFakeHermesDashboard } from './fake-hermes-dashboard.js'
 
 const defaultAttachmentsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-attachments-'))
 
@@ -58,6 +59,14 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
     hermesHome: '/tmp/hermes-home-test',
     grokGatewayUrl: '',
     grokGatewayToken: '',
+    hermesDashboardUrl: 'http://hermes-gateway:9119',
+    hermesDashboardUsername: '',
+    hermesDashboardPassword: '',
     ...overrides,
+    hermesDashboard:
+      overrides.hermesDashboard ??
+      (overrides.hermesHome !== undefined
+        ? createFakeHermesDashboard(overrides.hermesHome)
+        : undefined),
   })
 }
