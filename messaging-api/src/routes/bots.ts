@@ -21,6 +21,7 @@ import {
   type BotRuntime,
 } from '../db/repos/bots.js'
 import { listConversationsReferencingBot } from '../db/repos/conversations.js'
+import { findUserById } from '../db/repos/users.js'
 import { removeHermesCronJob } from '../lib/hermes-cron-jobs.js'
 import { emitConversationDeleted } from '../services/chat-sync-emitter.js'
 import { publishConversationDeleted } from '../streams/sse-mutation-publisher.js'
@@ -33,15 +34,19 @@ import {
   type BotColor,
   type BotIcon,
 } from '../lib/bot-appearance.js'
+import { HermesDashboardError } from '../lib/hermes-dashboard.js'
 import {
   DEFAULT_BOT_SLUG,
   addHonchoHost,
-  createBotProfile,
   defaultSoulFromRole,
   deleteBotProfile,
   ensureSkillsOverlay,
   hermesNameForOwner,
+  hermesProfileName,
+  profileDir,
   slugifyBotName,
+  stripClonedApiServer,
+  syncProfileApiServerKey,
   writeProfileYaml,
   writeSoulFile,
 } from '../lib/hermes-profile.js'
@@ -135,8 +140,54 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(409).send({ error: 'grok_bot_exists' })
     }
 
+    const user = findUserById(app.db, request.userId)
+    if (!user) {
+      return reply.code(401).send({ error: 'unauthorized' })
+    }
+
+    let hermesName: string | null = null
+    if (body.runtime !== 'grok') {
+      const named = hermesProfileName(user.username, body.slug)
+      if (!named.ok) {
+        return reply.code(400).send({
+          error: named.error === 'reserved' ? 'invalid_request' : named.error,
+        })
+      }
+      hermesName = named.name
+      if (hermesName !== null) {
+        const existingProfile = await app.hermesDashboard.getProfile(hermesName)
+        if (existingProfile) {
+          return reply.code(409).send({ error: 'hermes_profile_taken' })
+        }
+        try {
+          await app.hermesDashboard.createProfile({
+            name: hermesName,
+            description: body.name,
+          })
+        } catch (error) {
+          if (error instanceof HermesDashboardError && error.code === 'hermes_profile_taken') {
+            return reply.code(409).send({ error: 'hermes_profile_taken' })
+          }
+          throw error
+        }
+      }
+    }
+
     let row: BotRow
     try {
+      if (body.runtime !== 'grok' && hermesName !== null) {
+        const dir = profileDir(app.hermesHome, hermesName)
+        stripClonedApiServer(dir)
+        syncProfileApiServerKey(app.hermesHome, hermesName)
+        writeSoulFile(app.hermesHome, hermesName, body.soul)
+        ensureSkillsOverlay(app.hermesHome, hermesName)
+        writeProfileYaml(app.hermesHome, hermesName, {
+          name: body.name,
+          role: body.role,
+          companionUsername: user.username,
+        })
+      }
+
       row = insertBot(app.db, {
         userId: request.userId,
         slug: body.slug,
@@ -146,8 +197,13 @@ const botRoutes: FastifyPluginAsync = async (app) => {
         icon: body.icon,
         color: body.color,
         runtime: body.runtime,
+        hermesProfileName: body.runtime === 'grok' ? null : hermesName,
       })
     } catch (error) {
+      if (body.runtime !== 'grok' && hermesName !== null) {
+        await app.hermesDashboard.deleteProfile(hermesName)
+        throw error
+      }
       if (isUniqueConstraint(error)) {
         if (body.runtime === 'grok' && getGrokBot(app.db, request.userId)) {
           return reply.code(409).send({ error: 'grok_bot_exists' })
@@ -157,22 +213,8 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       throw error
     }
 
-    if (row.runtime !== 'grok') {
-      try {
-        createBotProfile({
-          hermesHome: app.hermesHome,
-          owner: botOwner(row),
-          slug: row.slug,
-          name: row.name,
-          role: row.role,
-          soul: row.soul,
-        })
-      } catch (error) {
-        deleteBot(app.db, row.id, request.userId)
-        throw error
-      }
-
-      addHonchoHost(app.hermesHome, hermesNameForOwner(botOwner(row), row.slug))
+    if (body.runtime !== 'grok') {
+      addHonchoHost(app.hermesHome, hermesName)
     }
 
     return reply.code(201).send(
@@ -365,6 +407,7 @@ function toBotResponse(
     icon: normalizeBotIcon(row.icon),
     color: row.color,
     runtime: normalizeBotRuntime(row.runtime),
+    hermes_profile_name: row.hermes_profile_name,
     notifications_enabled: notificationsEnabled,
     last_message_at: lastActivity.last_message_at,
     last_message: lastActivity.last_message,

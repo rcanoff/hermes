@@ -323,6 +323,10 @@ function ensureBots(db: Database.Database): void {
       ON bots (user_id)
       WHERE runtime = 'grok';
 
+    CREATE UNIQUE INDEX IF NOT EXISTS bots_hermes_profile_name_idx
+      ON bots (hermes_profile_name)
+      WHERE hermes_profile_name IS NOT NULL;
+
     CREATE INDEX IF NOT EXISTS bots_list_idx
       ON bots (user_id, is_default DESC, created_at DESC, id DESC);
   `)
@@ -400,6 +404,7 @@ function rebuildBotsIfNeeded(db: Database.Database): void {
   db.exec(`
     DROP INDEX IF EXISTS bots_one_default_idx;
     DROP INDEX IF EXISTS bots_one_grok_idx;
+    DROP INDEX IF EXISTS bots_hermes_profile_name_idx;
     DROP INDEX IF EXISTS bots_list_idx;
     DROP INDEX IF EXISTS bots_user_slug_idx;
 

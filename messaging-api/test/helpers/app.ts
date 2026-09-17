@@ -19,6 +19,8 @@ const defaultApns = {
 }
 
 export async function createTestApp(overrides: Partial<AppOptions> = {}) {
+  const hermesHome =
+    overrides.hermesHome ?? fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-home-test-'))
   return buildApp({
     dbPath: ':memory:',
     jwtSecret: 'test-secret',
@@ -56,17 +58,14 @@ export async function createTestApp(overrides: Partial<AppOptions> = {}) {
     thumbMaxEdgePx: 200,
     visionHistoryMaxBytes: 8_388_608,
     companionModels: DEFAULT_COMPANION_MODELS,
-    hermesHome: '/tmp/hermes-home-test',
+    hermesHome,
     grokGatewayUrl: '',
     grokGatewayToken: '',
     hermesDashboardUrl: 'http://hermes-gateway:9119',
     hermesDashboardUsername: '',
     hermesDashboardPassword: '',
     ...overrides,
-    hermesDashboard:
-      overrides.hermesDashboard ??
-      (overrides.hermesHome !== undefined
-        ? createFakeHermesDashboard(overrides.hermesHome)
-        : undefined),
+    hermesHome,
+    hermesDashboard: overrides.hermesDashboard ?? createFakeHermesDashboard(hermesHome),
   })
 }
