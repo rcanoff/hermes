@@ -4,8 +4,37 @@ import path from 'node:path'
 export const DEFAULT_BOT_SLUG = 'default'
 export const OPERATOR_USERNAME = 'rcanoff'
 export const BOT_SLUG_PATTERN = /^[a-z0-9-]{1,32}$/
+export const HERMES_PROFILE_NAME_MAX = 64
+export const HERMES_RESERVED_PROFILE_NAMES = new Set([
+  'default',
+  'hermes',
+  'test',
+  'tmp',
+  'root',
+  'sudo',
+])
 /** Shared platform catalog under `$HERMES_HOME/skills` (wired via `skills.external_dirs`). */
 export const SHARED_SKILLS_EXTERNAL = 'skills'
+
+export type HermesProfileNameResult =
+  | { ok: true; name: string | null }
+  | { ok: false; error: 'invalid_request' | 'reserved' }
+
+export function hermesProfileName(username: string, slug: string): HermesProfileNameResult {
+  const user = username.trim().toLowerCase()
+  const s = slug.trim().toLowerCase()
+  if (user === OPERATOR_USERNAME && s === DEFAULT_BOT_SLUG) {
+    return { ok: true, name: null }
+  }
+  const name = `${user}-${s}`
+  if (name.length > HERMES_PROFILE_NAME_MAX || name.length < 1) {
+    return { ok: false, error: 'invalid_request' }
+  }
+  if (HERMES_RESERVED_PROFILE_NAMES.has(name)) {
+    return { ok: false, error: 'reserved' }
+  }
+  return { ok: true, name }
+}
 
 const HONCHO_CONFIG_NAME = 'honcho.json'
 
