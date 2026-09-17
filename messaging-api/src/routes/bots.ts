@@ -13,7 +13,6 @@ import {
   listBotsPage,
   MAX_BOT_RESPONSIBILITIES_CHARS,
   normalizeBotRuntime,
-  seedDefaultBot,
   soulForResponse,
   updateBot,
   upsertBotNotificationsEnabled,
@@ -22,6 +21,7 @@ import {
 } from '../db/repos/bots.js'
 import { listConversationsReferencingBot } from '../db/repos/conversations.js'
 import { findUserById } from '../db/repos/users.js'
+import { ensureDefaultHermesBot } from '../services/bot-provision.js'
 import { removeHermesCronJob } from '../lib/hermes-cron-jobs.js'
 import { emitConversationDeleted } from '../services/chat-sync-emitter.js'
 import { publishConversationDeleted } from '../streams/sse-mutation-publisher.js'
@@ -89,7 +89,16 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    seedDefaultBot(app.db, request.userId, app.hermesHome)
+    const user = findUserById(app.db, request.userId)
+    if (!user) {
+      return reply.code(401).send({ error: 'unauthorized' })
+    }
+    await ensureDefaultHermesBot({
+      db: app.db,
+      user,
+      hermesHome: app.hermesHome,
+      dashboard: app.hermesDashboard,
+    })
 
     const page = listBotsPage(app.db, request.userId, limit, anchors)
     if (!page) {
@@ -130,7 +139,16 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    seedDefaultBot(app.db, request.userId, app.hermesHome)
+    const user = findUserById(app.db, request.userId)
+    if (!user) {
+      return reply.code(401).send({ error: 'unauthorized' })
+    }
+    await ensureDefaultHermesBot({
+      db: app.db,
+      user,
+      hermesHome: app.hermesHome,
+      dashboard: app.hermesDashboard,
+    })
 
     if (body.slug === DEFAULT_BOT_SLUG || getBotBySlug(app.db, request.userId, body.slug)) {
       return reply.code(409).send({ error: 'slug_taken' })
@@ -138,11 +156,6 @@ const botRoutes: FastifyPluginAsync = async (app) => {
 
     if (body.runtime === 'grok' && getGrokBot(app.db, request.userId)) {
       return reply.code(409).send({ error: 'grok_bot_exists' })
-    }
-
-    const user = findUserById(app.db, request.userId)
-    if (!user) {
-      return reply.code(401).send({ error: 'unauthorized' })
     }
 
     let hermesName: string | null = null

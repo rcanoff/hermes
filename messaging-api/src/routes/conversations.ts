@@ -10,7 +10,9 @@ import {
   type ConversationRow,
 } from '../db/repos/conversations.js'
 import { resolveDefaultModel } from '../db/repos/settings.js'
-import { getBotByIdForUser, normalizeBotRuntime, seedDefaultBot } from '../db/repos/bots.js'
+import { getBotByIdForUser, normalizeBotRuntime } from '../db/repos/bots.js'
+import { findUserById } from '../db/repos/users.js'
+import { ensureDefaultHermesBot } from '../services/bot-provision.js'
 import {
   GROK_TUI_PROVIDER,
   assertCuratedModel,
@@ -152,7 +154,16 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (!botId) {
-      seedDefaultBot(app.db, request.userId, app.hermesHome)
+      const user = findUserById(app.db, request.userId)
+      if (!user) {
+        return reply.code(401).send({ error: 'unauthorized' })
+      }
+      await ensureDefaultHermesBot({
+        db: app.db,
+        user,
+        hermesHome: app.hermesHome,
+        dashboard: app.hermesDashboard,
+      })
     }
 
     const conversationId = createConversation(

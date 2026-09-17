@@ -71,7 +71,11 @@ describe('POST /bots official Hermes profiles', () => {
 
     expect(created.statusCode).toBe(201)
     expect((created.json() as { hermes_profile_name: string | null }).hermes_profile_name).toBeNull()
-    expect(createProfile).not.toHaveBeenCalled()
+    expect(createProfile).toHaveBeenCalledWith({
+      name: 'alice-default',
+      description: 'Hermes',
+    })
+    expect(createProfile.mock.calls.some((call) => call[0]?.name === 'alice-grok')).toBe(false)
   })
 
   it('returns 409 hermes_profile_taken when the official profile already exists', async () => {
@@ -107,5 +111,86 @@ describe('POST /bots official Hermes profiles', () => {
 
     expect(created.statusCode).toBe(500)
     expect(fs.existsSync(path.join(hermesHome, 'profiles', 'alice-travel'))).toBe(false)
+  })
+})
+
+describe('GET /bots official default seed', () => {
+  let app: FastifyInstance | undefined
+  let hermesHome: string
+
+  beforeEach(async () => {
+    hermesHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-home-official-default-'))
+    fs.writeFileSync(
+      path.join(hermesHome, 'config.yaml'),
+      'platforms:\n  api_server:\n    extra:\n      port: 8642\nmodel:\n  default: test-model\n',
+    )
+    fs.mkdirSync(path.join(hermesHome, 'skills', 'companion-app'), { recursive: true })
+    fs.writeFileSync(path.join(hermesHome, 'skills', 'companion-app', 'SKILL.md'), '# companion-app\n')
+    app = await createTestApp({ hermesHome })
+    await app.ready()
+  })
+
+  afterEach(async () => {
+    await app?.close()
+    app = undefined
+    fs.rmSync(hermesHome, { recursive: true, force: true })
+  })
+
+  it('GET /bots for AlineTusi seeds alinetusi-default via dashboard', async () => {
+    const seeded = await seedTestUser(app!, 'AlineTusi', 'password123')
+    const createProfile = vi.spyOn(app!.hermesDashboard, 'createProfile')
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/bots',
+      headers: { authorization: `Bearer ${seeded.token}` },
+    })
+
+    expect(response.statusCode).toBe(200)
+    const body = response.json() as {
+      bots: Array<{ slug: string; hermes_profile_name: string | null }>
+    }
+    expect(body.bots).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          slug: 'default',
+          hermes_profile_name: 'alinetusi-default',
+        }),
+      ]),
+    )
+    expect(createProfile).toHaveBeenCalledWith({
+      name: 'alinetusi-default',
+      description: 'Hermes',
+    })
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', 'alinetusi-default', 'SOUL.md'))).toBe(
+      true,
+    )
+  })
+
+  it('GET /bots for operator keeps hermes_profile_name null and never POSTs default', async () => {
+    const seeded = await seedTestUser(app!, 'rcanoff', 'password123')
+    const createProfile = vi.spyOn(app!.hermesDashboard, 'createProfile')
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/bots',
+      headers: { authorization: `Bearer ${seeded.token}` },
+    })
+
+    expect(response.statusCode).toBe(200)
+    const body = response.json() as {
+      bots: Array<{ slug: string; hermes_profile_name: string | null }>
+    }
+    expect(body.bots).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          slug: 'default',
+          hermes_profile_name: null,
+        }),
+      ]),
+    )
+    expect(createProfile).not.toHaveBeenCalled()
+    expect(createProfile.mock.calls.some((call) => call[0]?.name === 'default')).toBe(false)
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', 'default'))).toBe(false)
   })
 })
