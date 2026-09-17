@@ -347,8 +347,10 @@ export function createBotProfile(input: {
 }
 
 /**
- * Remove cloned `platforms.api_server` so multiplex serves the profile.
- * Line-scans YAML: skip the `api_server:` mapping under `platforms:` until the next same-indent key.
+ * Remove cloned top-level `platforms.api_server` so multiplex serves the profile.
+ * Block YAML only: skip the direct-child `api_server:` mapping under a root
+ * `platforms:` key until the next same-indent key. Leaves `display.platforms`,
+ * nested `api_server` keys, and inline `platforms: { ... }` unchanged.
  */
 export function stripClonedApiServer(profilePath: string): void {
   const configPath = path.join(profilePath, 'config.yaml')
@@ -364,8 +366,8 @@ export function stripClonedApiServer(profilePath: string): void {
 
   const lines = text.split('\n')
   const out: string[] = []
-  let inPlatforms = false
-  let platformsIndent = 0
+  let inTopLevelPlatforms = false
+  let platformsChildIndent: number | null = null
   let skippingApiServer = false
   let apiServerIndent = 0
 
@@ -383,28 +385,38 @@ export function stripClonedApiServer(profilePath: string): void {
       const indent = keyMatch[1].length
       const key = keyMatch[2].trim()
 
-      if (inPlatforms && indent <= platformsIndent) {
-        inPlatforms = false
+      if (inTopLevelPlatforms && indent <= 0) {
+        inTopLevelPlatforms = false
+        platformsChildIndent = null
       }
 
-      if (!inPlatforms && key === 'platforms') {
-        inPlatforms = true
-        platformsIndent = indent
+      if (key === 'platforms' && indent === 0) {
+        inTopLevelPlatforms = true
+        platformsChildIndent = null
         out.push(line)
         continue
       }
 
-      if (inPlatforms && key === 'api_server' && indent > platformsIndent) {
-        skippingApiServer = true
-        apiServerIndent = indent
-        continue
+      if (inTopLevelPlatforms && indent > 0) {
+        if (platformsChildIndent === null) {
+          platformsChildIndent = indent
+        }
+        if (key === 'api_server' && indent === platformsChildIndent) {
+          skippingApiServer = true
+          apiServerIndent = indent
+          continue
+        }
       }
     }
 
     out.push(line)
   }
 
-  fs.writeFileSync(configPath, out.join('\n'))
+  const next = out.join('\n')
+  if (next === text) {
+    return
+  }
+  fs.writeFileSync(configPath, next)
 }
 
 /** Multiplex `/p/<key>` auth requires a profile-scoped API_SERVER_KEY; it does not inherit default. */

@@ -263,16 +263,59 @@ describe('stripClonedApiServer', () => {
     fs.rmSync(hermesHome, { recursive: true, force: true })
   })
 
-  it('strips platforms.api_server from cloned config', () => {
+  function profileDirWithConfig(yaml: string): string {
     const dir = path.join(hermesHome, 'profiles', aliceTravel)
     fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(
-      path.join(dir, 'config.yaml'),
+    fs.writeFileSync(path.join(dir, 'config.yaml'), yaml)
+    return dir
+  }
+
+  it('strips platforms.api_server from cloned config', () => {
+    const dir = profileDirWithConfig(
       'platforms:\n  api_server:\n    extra:\n      port: 8642\n  telegram:\n    enabled: true\n',
     )
     stripClonedApiServer(dir)
     const text = fs.readFileSync(path.join(dir, 'config.yaml'), 'utf8')
     expect(text).not.toMatch(/api_server/)
+    expect(text).toContain('telegram:\n    enabled: true')
+  })
+
+  it('preserves telegram and other sibling platform keys', () => {
+    const dir = profileDirWithConfig(
+      'platforms:\n  api_server:\n    extra:\n      port: 8642\n  telegram:\n    enabled: true\n  discord:\n    enabled: false\n',
+    )
+    stripClonedApiServer(dir)
+    const text = fs.readFileSync(path.join(dir, 'config.yaml'), 'utf8')
+    expect(text).not.toMatch(/api_server/)
+    expect(text).toContain('telegram:')
+    expect(text).toContain('discord:')
+  })
+
+  it('does not throw when config.yaml is missing', () => {
+    const dir = path.join(hermesHome, 'profiles', aliceTravel)
+    fs.mkdirSync(dir, { recursive: true })
+    expect(() => stripClonedApiServer(dir)).not.toThrow()
+    expect(fs.existsSync(path.join(dir, 'config.yaml'))).toBe(false)
+  })
+
+  it('leaves an already stripped config unchanged', () => {
+    const yaml = 'model:\n  default: test-model\nplatforms:\n  telegram:\n    enabled: true\n'
+    const dir = profileDirWithConfig(yaml)
+    stripClonedApiServer(dir)
+    stripClonedApiServer(dir)
+    expect(fs.readFileSync(path.join(dir, 'config.yaml'), 'utf8')).toBe(yaml)
+  })
+
+  it('does not strip nested display.platforms.api_server', () => {
+    const yaml =
+      'display:\n  platforms:\n    api_server:\n      extra: true\nplatforms:\n  api_server:\n    extra:\n      port: 8642\n  telegram:\n    enabled: true\n'
+    const dir = profileDirWithConfig(yaml)
+    stripClonedApiServer(dir)
+    const text = fs.readFileSync(path.join(dir, 'config.yaml'), 'utf8')
+    expect(text).toContain('display:\n  platforms:\n    api_server:\n      extra: true')
+    expect(text).toContain('telegram:')
+    expect(text).not.toMatch(/^platforms:\n  api_server:/m)
+    expect(text.match(/api_server:/g)).toEqual(['api_server:'])
   })
 })
 
