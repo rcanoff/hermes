@@ -151,6 +151,11 @@ export class HermesDashboardClient implements HermesDashboard {
     await this.loginPromise
   }
 
+  private clearSession(): void {
+    this.cookie = null
+    this.loginPromise = null
+  }
+
   private async login(): Promise<void> {
     let response: Response
     try {
@@ -180,8 +185,22 @@ export class HermesDashboardClient implements HermesDashboard {
     this.cookie = cookie
   }
 
-  private async request(path: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  private async request(
+    path: string,
+    init: RequestInit,
+    timeoutMs: number,
+    retried = false,
+  ): Promise<Response> {
     await this.ensureSession()
+    const response = await this.fetchOnce(path, init, timeoutMs)
+    if (retried || !(await isSessionExpired(response))) {
+      return response
+    }
+    this.clearSession()
+    return this.request(path, init, timeoutMs, true)
+  }
+
+  private async fetchOnce(path: string, init: RequestInit, timeoutMs: number): Promise<Response> {
     const headers: Record<string, string> = {
       'content-type': 'application/json',
       ...(init.headers as Record<string, string> | undefined),
@@ -223,12 +242,22 @@ export class HermesDashboardClient implements HermesDashboard {
 function cookieFromResponse(response: Response): string | null {
   const headers = response.headers
   const listed = typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : []
-  const raw = listed[0] ?? headers.get('set-cookie')
-  if (!raw) {
-    return null
+  const rawCookies = listed.length > 0 ? listed : [headers.get('set-cookie')]
+  const pairs = rawCookies
+    .map((raw) => (raw ? raw.split(';')[0]?.trim() : ''))
+    .filter((pair): pair is string => Boolean(pair) && pair.includes('='))
+  return pairs.length > 0 ? pairs.join('; ') : null
+}
+
+async function isSessionExpired(response: Response): Promise<boolean> {
+  if (response.status === 401) {
+    return true
   }
-  const pair = raw.split(';')[0]?.trim()
-  return pair || null
+  if (response.ok) {
+    return false
+  }
+  const text = await response.clone().text().catch(() => '')
+  return /session_expired/i.test(text)
 }
 
 function unavailableFrom(error: unknown): HermesDashboardError {

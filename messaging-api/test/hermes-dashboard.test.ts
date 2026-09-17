@@ -257,6 +257,89 @@ describe('HermesDashboardClient', () => {
     await client.deleteProfile('alice-travel')
     expect(timeoutSpy).toHaveBeenCalledWith(15_000)
   })
+
+  it('sends every Set-Cookie name=value pair', async () => {
+    let sentCookie: unknown
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.endsWith('/auth/password-login')) {
+          const headers = new Headers()
+          headers.append('set-cookie', 'hermes_session_at=at; Path=/; HttpOnly')
+          headers.append('set-cookie', 'hermes_session_rt=rt; Path=/; HttpOnly')
+          return new Response(JSON.stringify({ ok: true }), { status: 200, headers })
+        }
+        sentCookie = (init?.headers as Record<string, string> | undefined)?.cookie
+        return jsonResponse({ ok: true, name: 'alice-travel' })
+      },
+    )
+
+    await testClient().createProfile({ name: 'alice-travel', description: 'Travel' })
+    expect(sentCookie).toBe('hermes_session_at=at; hermes_session_rt=rt')
+  })
+
+  it('re-logins once and retries the request on 401', async () => {
+    const calls: string[] = []
+    let profilePosts = 0
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        calls.push(`${init?.method ?? 'GET'} ${url}`)
+        if (url.endsWith('/auth/password-login')) {
+          return loginResponse()
+        }
+        if (url.endsWith('/api/profiles') && init?.method === 'POST') {
+          profilePosts += 1
+          if (profilePosts === 1) {
+            return jsonResponse({ error: 'session_expired' }, 401)
+          }
+          expect(init.headers).toEqual(
+            expect.objectContaining({ cookie: expect.stringContaining('session=abc') }),
+          )
+          return jsonResponse({ ok: true, name: 'alice-travel' })
+        }
+        throw new Error(url)
+      },
+    )
+
+    const created = await testClient().createProfile({
+      name: 'alice-travel',
+      description: 'Travel',
+    })
+    expect(created.name).toBe('alice-travel')
+    expect(calls.filter((call) => call.includes('/auth/password-login'))).toHaveLength(2)
+    expect(profilePosts).toBe(2)
+  })
+
+  it('does not retry 401 forever', async () => {
+    let logins = 0
+    let profilePosts = 0
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.endsWith('/auth/password-login')) {
+          logins += 1
+          return loginResponse()
+        }
+        if (url.endsWith('/api/profiles') && init?.method === 'POST') {
+          profilePosts += 1
+          return jsonResponse({ error: 'session_expired' }, 401)
+        }
+        throw new Error(url)
+      },
+    )
+
+    const error = await testClient()
+      .createProfile({ name: 'alice-travel', description: 'Travel' })
+      .catch((err: unknown) => err)
+    expect(error).toBeInstanceOf(HermesDashboardError)
+    expect(error).toMatchObject({ status: 401, code: 'unavailable' })
+    expect(logins).toBe(2)
+    expect(profilePosts).toBe(2)
+  })
 })
 
 function testClient(): HermesDashboardClient {
