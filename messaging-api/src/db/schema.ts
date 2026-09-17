@@ -8,7 +8,7 @@ import {
   COMPANION_DEFAULT_MODEL,
   COMPANION_DEFAULT_PROVIDER,
 } from '../lib/companion-models.js'
-import { OPERATOR_USERNAME } from '../lib/hermes-profile.js'
+import { DEFAULT_BOT_SLUG, OPERATOR_USERNAME } from '../lib/hermes-profile.js'
 import { backfillAccountSyncEvents } from './repos/chat-sync-events.js'
 import { ensureDefaultBotRow, seedKnownBotResponsibilities } from './repos/bots.js'
 
@@ -274,6 +274,7 @@ function ensureBots(db: Database.Database): void {
       runtime TEXT NOT NULL DEFAULT 'hermes' CHECK (runtime IN ('hermes', 'grok')),
       is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      hermes_profile_name TEXT,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       UNIQUE (user_id, slug)
     );
@@ -303,6 +304,10 @@ function ensureBots(db: Database.Database): void {
     db.exec(`ALTER TABLE bots ADD COLUMN user_id TEXT`)
   }
 
+  if (!columns.some((column) => column.name === 'hermes_profile_name')) {
+    db.exec(`ALTER TABLE bots ADD COLUMN hermes_profile_name TEXT`)
+  }
+
   backfillBotsUserId(db)
   rebuildBotsIfNeeded(db)
 
@@ -324,6 +329,7 @@ function ensureBots(db: Database.Database): void {
 
   rewriteRetiredBotIcons(db)
   seedKnownBotResponsibilities(db)
+  backfillHermesProfileNames(db)
 }
 
 function backfillBotsUserId(db: Database.Database): void {
@@ -339,6 +345,24 @@ function backfillBotsUserId(db: Database.Database): void {
     SET user_id = ?
     WHERE user_id IS NULL OR user_id = ''
   `).run(operator.id)
+}
+
+function backfillHermesProfileNames(db: Database.Database): void {
+  const rows = db
+    .prepare(`
+      SELECT bots.id, users.username, bots.slug, bots.runtime
+      FROM bots JOIN users ON users.id = bots.user_id
+      WHERE bots.hermes_profile_name IS NULL AND bots.runtime = 'hermes'
+    `)
+    .all() as Array<{ id: string; username: string; slug: string; runtime: string }>
+
+  const update = db.prepare(`UPDATE bots SET hermes_profile_name = ? WHERE id = ?`)
+  for (const row of rows) {
+    if (row.username === OPERATOR_USERNAME && row.slug === DEFAULT_BOT_SLUG) {
+      continue
+    }
+    update.run(`${row.username.toLowerCase()}-${row.slug}`, row.id)
+  }
 }
 
 function rebuildBotsIfNeeded(db: Database.Database): void {
@@ -392,15 +416,16 @@ function rebuildBotsIfNeeded(db: Database.Database): void {
       runtime TEXT NOT NULL DEFAULT 'hermes' CHECK (runtime IN ('hermes', 'grok')),
       is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      hermes_profile_name TEXT,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       UNIQUE (user_id, slug)
     );
 
     INSERT INTO bots_new (
-      id, user_id, slug, name, role, soul, responsibilities, icon, color, runtime, is_default, created_at
+      id, user_id, slug, name, role, soul, responsibilities, icon, color, runtime, is_default, created_at, hermes_profile_name
     )
     SELECT
-      id, user_id, slug, name, role, soul, responsibilities, icon, color, runtime, is_default, created_at
+      id, user_id, slug, name, role, soul, responsibilities, icon, color, runtime, is_default, created_at, hermes_profile_name
     FROM bots;
 
     DROP TABLE bots;

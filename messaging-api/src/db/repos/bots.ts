@@ -34,7 +34,7 @@ export const BOT_RUNTIMES = ['hermes', 'grok'] as const
 export type BotRuntime = (typeof BOT_RUNTIMES)[number]
 export const DEFAULT_BOT_RUNTIME: BotRuntime = 'hermes'
 
-const BOT_COLUMNS = `bots.id, bots.user_id, bots.slug, bots.name, bots.role, bots.soul, bots.responsibilities, bots.icon, bots.color, bots.runtime, bots.is_default, bots.created_at, users.username AS owner_username`
+const BOT_COLUMNS = `bots.id, bots.user_id, bots.slug, bots.name, bots.role, bots.soul, bots.responsibilities, bots.icon, bots.color, bots.runtime, bots.hermes_profile_name, bots.is_default, bots.created_at, users.username AS owner_username`
 const BOT_FROM = `bots INNER JOIN users ON users.id = bots.user_id`
 
 export interface BotRow {
@@ -48,6 +48,7 @@ export interface BotRow {
   icon: string
   color: string
   runtime: BotRuntime
+  hermes_profile_name: string | null
   is_default: number
   created_at: string
   owner_username: string
@@ -69,6 +70,7 @@ export interface CreateBotInput {
   icon?: BotIcon
   color?: BotColor
   runtime?: BotRuntime
+  hermesProfileName?: string | null
   isDefault?: boolean
 }
 
@@ -177,8 +179,8 @@ export function insertBot(db: Database.Database, input: CreateBotInput): BotRow 
   const id = randomUUID()
   const runtime = input.runtime ?? DEFAULT_BOT_RUNTIME
   db.prepare(`
-    INSERT INTO bots (id, user_id, slug, name, role, soul, responsibilities, icon, color, runtime, is_default)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO bots (id, user_id, slug, name, role, soul, responsibilities, icon, color, runtime, hermes_profile_name, is_default)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     input.userId,
@@ -190,6 +192,7 @@ export function insertBot(db: Database.Database, input: CreateBotInput): BotRow 
     input.icon ?? DEFAULT_BOT_ICON,
     input.color ?? DEFAULT_BOT_COLOR,
     runtime,
+    input.hermesProfileName ?? null,
     input.isDefault ? 1 : 0,
   )
 
