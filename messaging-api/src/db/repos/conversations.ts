@@ -5,10 +5,8 @@ import {
   COMPANION_DEFAULT_PROVIDER,
 } from '../../lib/companion-models.js'
 import { buildJobConversationBootstrap } from '../../lib/job-conversation.js'
-import { DEFAULT_BOT_SLUG, isOperatorOwner } from '../../lib/hermes-profile.js'
 import { enqueueConversationAttachments } from '../../services/attachment-cleanup.js'
-import { ensureDefaultBotRow, getBotBySlug } from './bots.js'
-import { findUserById } from './users.js'
+import { ensureDefaultBotRow } from './bots.js'
 
 export type ConversationKind = 'regular' | 'job'
 
@@ -568,17 +566,7 @@ export function deleteConversationForUser(
 }
 
 function defaultBotId(db: Database.Database, userId: string): string {
-  const existing = getBotBySlug(db, userId, DEFAULT_BOT_SLUG)
-  if (existing) {
-    return existing.id
-  }
-
-  const user = findUserById(db, userId)
-  if (user && isOperatorOwner({ userId: user.id, username: user.username })) {
-    return ensureDefaultBotRow(db, user.id).id
-  }
-
-  throw new Error('default_bot_missing')
+  return ensureDefaultBotRow(db, userId).id
 }
 
 function conversationFilterSql(filter: ListConversationsFilter): {

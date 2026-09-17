@@ -32,6 +32,7 @@ function seedTravel(db: Database.Database) {
     soul: 'You book trips.',
     icon: 'map',
     color: 'green',
+    hermesProfileName: 'operator-travel',
   })
 }
 
@@ -122,7 +123,7 @@ describe('messageTeammate', () => {
 
     const promptUser = hermesClient.requests[0]?.messages.find((message) => message.role === 'user')
     expect(promptUser?.content).toBe('Hermes (teammate) asks: Plan a trip to Lisbon')
-    expect(hermesClient.requests[0]?.profileSlug).toBe('u1/travel')
+    expect(hermesClient.requests[0]?.profileSlug).toBe('operator-travel')
 
     const callerUpserts = events.filter(
       (event) =>
@@ -233,7 +234,7 @@ describe('messageTeammate', () => {
 
     const promptUser = hermesClient.requests[0]?.messages.find((message) => message.role === 'user')
     expect(promptUser?.content).toBe('Travel (teammate) asks: Help')
-    expect(hermesClient.requests[0]?.profileSlug).toBe('u1/default')
+    expect(hermesClient.requests[0]?.profileSlug).toBeUndefined()
 
     const callerUpserts = events.filter(
       (event) =>
