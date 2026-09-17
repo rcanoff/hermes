@@ -22,6 +22,7 @@ interface BotBody {
   notifications_enabled: boolean
   last_message_at: string | null
   last_message: string | null
+  bot_chat_id: string | null
   is_default: boolean
   created_at: string
 }
@@ -101,9 +102,21 @@ describe('/bots', () => {
       color: 'blue',
       runtime: 'hermes',
       notifications_enabled: true,
-      last_message_at: null,
     })
     expect(bot.soul).toContain('Finds flights, bookings, and tickets.')
+    expect(bot.bot_chat_id).toEqual(expect.any(String))
+    const chat = await app!.inject({
+      method: 'GET',
+      url: `/conversations/${bot.bot_chat_id}`,
+      headers: authHeaders(),
+    })
+    expect(chat.statusCode).toBe(200)
+    expect(chat.json()).toMatchObject({
+      id: bot.bot_chat_id,
+      bot_id: bot.id,
+      title: 'Bot Chat',
+      kind: 'regular',
+    })
 
     const dir = extraProfileDir('travel')
     expect(fs.existsSync(path.join(dir, 'SOUL.md'))).toBe(true)
@@ -261,7 +274,7 @@ describe('/bots', () => {
     expect(missingChat.statusCode).toBe(404)
   })
 
-  it('last_message_at is null when this user has no regular chats with the bot', async () => {
+  it('last_message is null when this user has no messages with the bot', async () => {
     const created = await app!.inject({
       method: 'POST',
       url: '/bots',
@@ -269,7 +282,8 @@ describe('/bots', () => {
       payload: { name: 'Travel', role: 'Flights' },
     })
     const bot = created.json() as BotBody
-    expect(bot.last_message_at).toBeNull()
+    expect(bot.bot_chat_id).toEqual(expect.any(String))
+    expect(bot.last_message).toBeNull()
 
     const got = await app!.inject({
       method: 'GET',
@@ -277,15 +291,7 @@ describe('/bots', () => {
       headers: authHeaders(),
     })
     expect(got.statusCode).toBe(200)
-    expect((got.json() as BotBody).last_message_at).toBeNull()
-
-    const listed = await app!.inject({
-      method: 'GET',
-      url: '/bots',
-      headers: authHeaders(),
-    })
-    const listedBot = (listed.json() as { bots: BotBody[] }).bots.find((row) => row.id === bot.id)
-    expect(listedBot?.last_message_at).toBeNull()
+    expect((got.json() as BotBody).last_message).toBeNull()
   })
 
   it('last_message_at is max regular conversation updated_at for this user', async () => {
@@ -314,6 +320,7 @@ describe('/bots', () => {
     const olderId = (older.json() as { id: string }).id
     const newerId = (newer.json() as { id: string }).id
     const latest = '2026-09-10 12:00:00'
+    app!.db.prepare(`UPDATE conversations SET updated_at = '2026-09-01 00:00:00' WHERE id = ?`).run(bot.bot_chat_id)
     app!.db.prepare(`UPDATE conversations SET updated_at = '2026-09-01 00:00:00' WHERE id = ?`).run(olderId)
     app!.db.prepare(`UPDATE conversations SET updated_at = ? WHERE id = ?`).run(latest, newerId)
 
@@ -384,7 +391,7 @@ describe('/bots', () => {
       headers: authHeaders(),
     })
     expect(asOwner.statusCode).toBe(200)
-    expect((asOwner.json() as BotBody).last_message_at).toBeNull()
+    expect((asOwner.json() as BotBody).last_message).toBeNull()
 
     const asOther = await app!.inject({
       method: 'GET',

@@ -10,6 +10,8 @@ import { ensureDefaultBotRow } from './bots.js'
 
 export type ConversationKind = 'regular' | 'job'
 
+export const BOT_CHAT_TITLE = 'Bot Chat'
+
 export interface ConversationRow {
   id: string
   user_id: string
@@ -567,6 +569,37 @@ export function deleteConversationForUser(
 
 function defaultBotId(db: Database.Database, userId: string): string {
   return ensureDefaultBotRow(db, userId).id
+}
+
+export function getBotChatIdsByBot(
+  db: Database.Database,
+  userId: string,
+  botIds: string[],
+): Map<string, string> {
+  const ids = new Map<string, string>()
+  if (botIds.length === 0) {
+    return ids
+  }
+  const placeholders = botIds.map(() => '?').join(', ')
+  const rows = db
+    .prepare(
+      `
+      SELECT bot_id, id
+      FROM conversations
+      WHERE user_id = ?
+        AND kind = 'regular'
+        AND title = ?
+        AND bot_id IN (${placeholders})
+      ORDER BY created_at ASC, id ASC
+    `,
+    )
+    .all(userId, BOT_CHAT_TITLE, ...botIds) as Array<{ bot_id: string; id: string }>
+  for (const row of rows) {
+    if (row.bot_id && !ids.has(row.bot_id)) {
+      ids.set(row.bot_id, row.id)
+    }
+  }
+  return ids
 }
 
 function conversationFilterSql(filter: ListConversationsFilter): {

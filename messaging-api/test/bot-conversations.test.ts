@@ -146,9 +146,11 @@ describe('conversation bot_id', () => {
       conversations: Array<{ id: string; bot_id: string }>
       _links: { self: { href: string } }
     }
-    expect(body.conversations).toHaveLength(1)
-    expect(body.conversations[0]!.id).toBe((travelChat.json() as { id: string }).id)
-    expect(body.conversations[0]!.bot_id).toBe(travelId)
+    const travelChatId = (travelChat.json() as { id: string }).id
+    const ids = body.conversations.map((row) => row.id)
+    expect(ids).toContain(travelChatId)
+    expect(body.conversations.every((row) => row.bot_id === travelId)).toBe(true)
+    expect(body.conversations.length).toBeGreaterThanOrEqual(2)
     expect(body._links.self.href).toBe(`/conversations?limit=20&bot_id=${travelId}`)
 
     const unfiltered = await app!.inject({

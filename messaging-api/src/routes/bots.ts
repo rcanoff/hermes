@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { FastifyPluginAsync } from 'fastify'
 import {
   botOwner,
@@ -19,8 +20,19 @@ import {
   type BotRow,
   type BotRuntime,
 } from '../db/repos/bots.js'
-import { listConversationsReferencingBot } from '../db/repos/conversations.js'
+import {
+  BOT_CHAT_TITLE,
+  createConversation,
+  getBotChatIdsByBot,
+  getConversationForUser,
+  listConversationsReferencingBot,
+  updateConversationTitle,
+} from '../db/repos/conversations.js'
+import { resolveDefaultModel } from '../db/repos/settings.js'
 import { findUserById } from '../db/repos/users.js'
+import { emitAccountConversationUpsert } from '../services/chat-sync-emitter.js'
+import { scheduleConversationSessionWarmup } from '../services/session-warmup.js'
+import { publishAccountConversationUpsert } from '../streams/sse-mutation-publisher.js'
 
 import { removeHermesCronJob } from '../lib/hermes-cron-jobs.js'
 import { emitConversationDeleted } from '../services/chat-sync-emitter.js'
@@ -104,6 +116,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
     const botIds = page.bots.map((row) => row.id)
     const notifications = getBotNotificationsEnabledMap(app.db, request.userId, botIds)
     const lastActivity = getBotLastActivityMap(app.db, request.userId, botIds)
+    const botChats = getBotChatIdsByBot(app.db, request.userId, botIds)
 
     return {
       bots: page.bots.map((row) =>
@@ -112,6 +125,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
           app.hermesHome,
           notifications.get(row.id) ?? true,
           lastActivity.get(row.id) ?? { last_message_at: null, last_message: null },
+          botChats.get(row.id) ?? null,
         ),
       ),
       _links: buildHalLinks({
@@ -218,6 +232,38 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       addHonchoHost(app.hermesHome, hermesName)
     }
 
+    const conversationId = createConversation(
+      app.db,
+      request.userId,
+      randomUUID(),
+      null,
+      resolveDefaultModel(app.db, app.hermesHome),
+      row.id,
+    )
+    updateConversationTitle(app.db, conversationId, BOT_CHAT_TITLE)
+    emitAccountConversationUpsert(app.db, request.userId, conversationId, app.companionModels)
+    publishAccountConversationUpsert(
+      app.streamHub,
+      app.db,
+      request.userId,
+      conversationId,
+      app.companionModels,
+    )
+    const conversation = getConversationForUser(app.db, request.userId, conversationId)
+    if (conversation) {
+      scheduleConversationSessionWarmup({
+        hermesClient: app.hermesClient,
+        conversation,
+        db: app.db,
+        hermesHome: app.hermesHome,
+        companionUserId: request.userId,
+        companionUsername: request.username,
+        log: (message, meta) => {
+          app.log.info(meta ?? {}, message)
+        },
+      })
+    }
+
     return reply.code(201).send(
       toBotResponse(
         row,
@@ -227,6 +273,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
           last_message_at: null,
           last_message: null,
         },
+        conversationId,
       ),
     )
   })
@@ -261,6 +308,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
         last_message_at: null,
         last_message: null,
       },
+      getBotChatIdsByBot(app.db, request.userId, [row.id]).get(row.id) ?? null,
     )
   })
 
@@ -324,6 +372,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
         last_message_at: null,
         last_message: null,
       },
+      getBotChatIdsByBot(app.db, request.userId, [updated.id]).get(updated.id) ?? null,
     )
   })
 
@@ -410,6 +459,7 @@ function toBotResponse(
   hermesHome: string,
   notificationsEnabled: boolean,
   lastActivity: { last_message_at: string | null; last_message: string | null },
+  botChatId: string | null,
 ) {
   return {
     id: row.id,
@@ -423,6 +473,7 @@ function toBotResponse(
     color: row.color,
     runtime: normalizeBotRuntime(row.runtime),
     hermes_profile_name: row.hermes_profile_name,
+    bot_chat_id: botChatId,
     notifications_enabled: notificationsEnabled,
     last_message_at: lastActivity.last_message_at,
     last_message: lastActivity.last_message,
