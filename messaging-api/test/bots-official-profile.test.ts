@@ -201,6 +201,34 @@ describe('GET /bots official default seed', () => {
     )
   })
 
+  it('sets hermes_profile_name when sqlite default is null and profile dir already exists', async () => {
+    const seeded = await seedTestUser(app!, 'AlineTusi', 'password123')
+    const row = ensureDefaultBotRow(app!.db, seeded.id)
+    expect(row.hermes_profile_name).toBeNull()
+    fs.mkdirSync(path.join(hermesHome, 'profiles', 'alinetusi-default'), { recursive: true })
+    const createProfile = vi.spyOn(app!.hermesDashboard, 'createProfile')
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/bots',
+      headers: { authorization: `Bearer ${seeded.token}` },
+    })
+
+    expect(response.statusCode).toBe(200)
+    const body = response.json() as {
+      bots: Array<{ slug: string; hermes_profile_name: string | null }>
+    }
+    expect(body.bots).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          slug: 'default',
+          hermes_profile_name: 'alinetusi-default',
+        }),
+      ]),
+    )
+    expect(createProfile).not.toHaveBeenCalled()
+  })
+
   it('rolls back dashboard profile if default sqlite insert fails', async () => {
     const seeded = await seedTestUser(app!, 'alice', 'password123')
     insertBot(app!.db, {

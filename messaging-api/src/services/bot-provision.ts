@@ -98,14 +98,13 @@ export async function ensureDefaultHermesBot(input: EnsureDefaultHermesBotInput)
       soul: existing.soul,
       writeYaml: false,
     })
-    if (existing.hermes_profile_name === null) {
-      db.prepare(
-        `UPDATE bots SET hermes_profile_name = ? WHERE id = ? AND hermes_profile_name IS NULL`,
-      ).run(hermesName, existing.id)
-    }
-    return getBotBySlug(db, user.id, DEFAULT_BOT_SLUG)!
   }
 
+  if (existing.hermes_profile_name === null) {
+    db.prepare(
+      `UPDATE bots SET hermes_profile_name = ? WHERE id = ? AND hermes_profile_name IS NULL`,
+    ).run(hermesName, existing.id)
+  }
   return getBotBySlug(db, user.id, DEFAULT_BOT_SLUG)!
 }
 
