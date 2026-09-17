@@ -9,7 +9,6 @@ import {
 import {
   DEFAULT_BOT_SLUG,
   hermesNameForOwner,
-  profileRelativeKey,
   readSoulFile,
   type BotProfileOwner,
 } from '../../lib/hermes-profile.js'
@@ -496,8 +495,8 @@ export function soulForResponse(row: BotRow, hermesHome: string): string {
   return readSoulFile(hermesHome, hermesNameForOwner(botOwner(row), row.slug)) ?? row.soul
 }
 
-export function hermesProfileKeyForBot(row: BotRow, hermesHome?: string): string | undefined {
-  return profileRelativeKey(botOwner(row), row.slug, hermesHome) ?? undefined
+export function hermesProfileKeyForBot(row: BotRow, _hermesHome?: string): string | undefined {
+  return row.hermes_profile_name ?? undefined
 }
 
 function buildBotPage(db: Database.Database, userId: string, bots: BotRow[]): BotPage {

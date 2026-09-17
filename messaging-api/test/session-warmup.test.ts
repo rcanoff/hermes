@@ -72,6 +72,7 @@ describe('scheduleConversationSessionWarmup', () => {
       name: 'Travel',
       role: 'Flights',
       soul: 'You book trips.',
+      hermesProfileName: 'operator-travel',
     })
     const hermesClient = new FakeHermesClient()
 
@@ -89,7 +90,7 @@ describe('scheduleConversationSessionWarmup', () => {
     })
 
     await waitFor(() => hermesClient.ensureSessionRequests.length === 1)
-    expect(hermesClient.ensureSessionRequests[0]?.profileSlug).toBe('u1/travel')
+    expect(hermesClient.ensureSessionRequests[0]?.profileSlug).toBe('operator-travel')
     expect(hermesClient.ensureSessionRequests[0]?.systemPrompt).toContain('You are Travel. Specialty: Flights')
     expect(hermesClient.ensureSessionRequests[0]?.systemPrompt).toContain('set_my_responsibilities')
     expect(hermesClient.ensureSessionRequests[0]?.systemPrompt).toContain(

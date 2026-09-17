@@ -367,6 +367,7 @@ describe('executeAssistantRun process stream', () => {
       name: 'Travel',
       role: 'Flights',
       soul: 'You book trips.',
+      hermesProfileName: 'op-travel',
     })
     db.prepare(`UPDATE conversations SET bot_id = ? WHERE id = 'c1'`).run(travel.id)
 
@@ -389,7 +390,7 @@ describe('executeAssistantRun process stream', () => {
     hermes.closeWithoutDone()
     await runPromise
 
-    expect(hermes.requests[0]?.profileSlug).toBe('u1/travel')
+    expect(hermes.requests[0]?.profileSlug).toBe('op-travel')
     const system = hermes.requests[0]?.messages[0]
     expect(system).toMatchObject({ role: 'system' })
     expect(system?.content).toContain('You are Travel. Specialty: Flights')
