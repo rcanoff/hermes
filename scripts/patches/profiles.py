@@ -336,20 +336,6 @@ def normalize_profile_name(name: str) -> str:
     return stripped.lower()
 
 
-def _validate_profile_id_part(part: str, *, label: str = "profile name") -> None:
-    if not _PROFILE_ID_RE.match(part):
-        raise ValueError(
-            f"Invalid {label} {part!r}. Must match "
-            f"[a-z0-9][a-z0-9_-]{{0,63}}"
-        )
-    if part in _RESERVED_NAMES:
-        raise ValueError(
-            f"Profile name {part!r} is reserved — it collides with either "
-            f"the Hermes installation itself or a common system binary.  "
-            f"Pick a different name."
-        )
-
-
 def validate_profile_name(name: str) -> None:
     """Raise ``ValueError`` if *name* is not a valid profile identifier.
 
@@ -364,23 +350,20 @@ def validate_profile_name(name: str) -> None:
     collisions (a ``hermes`` profile inside ``~/.hermes/``) or get refused
     at alias-creation time anyway. ``default`` is a special pass-through —
     it's a valid alias for the built-in root profile.
-
-    Companion per-user bots live at ``profiles/<userId>/<slug>/`` and are
-    addressed as ``<userId>/<slug>``.
     """
     if name == "default":
         return  # special alias for ~/.hermes
-    if "/" in name:
-        parts = name.split("/")
-        if len(parts) != 2 or not parts[0] or not parts[1]:
-            raise ValueError(
-                f"Invalid profile name {name!r}. Namespaced profiles must be "
-                f"<namespace>/<slug>."
-            )
-        _validate_profile_id_part(parts[0], label="profile namespace")
-        _validate_profile_id_part(parts[1], label="profile name")
-        return
-    _validate_profile_id_part(name)
+    if not _PROFILE_ID_RE.match(name):
+        raise ValueError(
+            f"Invalid profile name {name!r}. Must match "
+            f"[a-z0-9][a-z0-9_-]{{0,63}}"
+        )
+    if name in _RESERVED_NAMES:
+        raise ValueError(
+            f"Profile name {name!r} is reserved — it collides with either "
+            f"the Hermes installation itself or a common system binary.  "
+            f"Pick a different name."
+        )
 
 
 def validate_alias_name(name: str) -> None:
@@ -1131,26 +1114,6 @@ def _is_live_profile_id_dir(entry: Path, *, allow_default: bool = False) -> bool
     return not named_profile_is_deleted(entry)
 
 
-def _nested_bot_profile_dirs(ns_dir: Path) -> List[Path]:
-    """Child bot homes under a per-user namespace directory.
-
-    Companion stores non-operator bots at ``profiles/<userId>/<slug>/``.
-    A namespace is detected when at least one child looks like a named
-    profile (valid id + ``profile.yaml`` or ``config.yaml``).
-    """
-    children: List[Path] = []
-    try:
-        entries = sorted(ns_dir.iterdir())
-    except OSError:
-        return children
-    for child in entries:
-        if not _is_live_profile_id_dir(child, allow_default=True):
-            continue
-        if (child / "profile.yaml").is_file() or (child / "config.yaml").is_file():
-            children.append(child)
-    return children
-
-
 def profiles_to_serve(
     multiplex: bool,
     profile_allowlist: Optional[List[str]] = None,
@@ -1199,14 +1162,6 @@ def profiles_to_serve(
     if profiles_root.is_dir():
         for entry in sorted(profiles_root.iterdir()):
             if not _is_live_profile_id_dir(entry):
-                continue
-            nested = _nested_bot_profile_dirs(entry)
-            if nested:
-                for child in nested:
-                    name = f"{entry.name}/{child.name}"
-                    if allowed is not None and name not in allowed:
-                        continue
-                    serve.append((name, child))
                 continue
             name = entry.name
             if allowed is not None and name not in allowed:
