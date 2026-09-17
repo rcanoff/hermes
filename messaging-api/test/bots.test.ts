@@ -3,7 +3,6 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
-import { DEFAULT_BOT_RESPONSIBILITIES } from '../src/db/repos/bots.js'
 import { createJobConversation } from '../src/db/repos/conversations.js'
 import { insertMessage } from '../src/db/repos/messages.js'
 import { createTestApp } from './helpers/app.js'
@@ -61,11 +60,12 @@ describe('/bots', () => {
     return path.join(hermesHome, 'profiles', `${username}-${slug}`)
   }
 
-  it('GET seeds the default Hermes bot', async () => {
+  it('GET returns no bots for a new user', async () => {
+    const seeded = await seedTestUser(app!, 'empty-user', 'password123', { seedDefaultBot: false })
     const response = await app!.inject({
       method: 'GET',
       url: '/bots',
-      headers: authHeaders(),
+      headers: { authorization: `Bearer ${seeded.token}` },
     })
 
     expect(response.statusCode).toBe(200)
@@ -73,29 +73,8 @@ describe('/bots', () => {
       bots: BotBody[]
       _links: { self: { href: string } }
     }
-    expect(body.bots).toHaveLength(1)
-    expect(body.bots[0]).toMatchObject({
-      user_id: userId,
-      slug: 'default',
-      name: 'Hermes',
-      is_default: true,
-      icon: 'message',
-      color: 'blue',
-      runtime: 'hermes',
-      notifications_enabled: true,
-      last_message_at: null,
-      last_message: null,
-      responsibilities: DEFAULT_BOT_RESPONSIBILITIES,
-    })
+    expect(body.bots).toEqual([])
     expect(body._links.self.href).toBe('/bots?limit=20')
-    const defaultDir = extraProfileDir('default')
-    expect(fs.existsSync(path.join(defaultDir, 'SOUL.md'))).toBe(true)
-    expect(fs.lstatSync(path.join(defaultDir, 'skills')).isSymbolicLink()).toBe(false)
-    expect(fs.statSync(path.join(defaultDir, 'skills')).isDirectory()).toBe(true)
-    expect(fs.readFileSync(path.join(defaultDir, 'config.yaml'), 'utf8')).toContain(
-      path.join(hermesHome, 'skills'),
-    )
-    expect(fs.existsSync(path.join(hermesHome, 'skills', 'companion-app', 'SKILL.md'))).toBe(true)
   })
 
   it('POST creates sqlite row and profile dir with SOUL.md containing role', async () => {

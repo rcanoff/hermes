@@ -98,7 +98,6 @@ describe('conversation routes', () => {
       systemPrompt: expect.stringContaining('companion-app'),
       model: 'grok-composer-2.5-fast',
       provider: 'xai-oauth',
-      profileSlug: 'operator-default',
       companionUserId: seeded.id,
       companionUsername: 'operator',
     })

@@ -21,7 +21,7 @@ import {
 } from '../db/repos/bots.js'
 import { listConversationsReferencingBot } from '../db/repos/conversations.js'
 import { findUserById } from '../db/repos/users.js'
-import { ensureDefaultHermesBot } from '../services/bot-provision.js'
+
 import { removeHermesCronJob } from '../lib/hermes-cron-jobs.js'
 import { emitConversationDeleted } from '../services/chat-sync-emitter.js'
 import { publishConversationDeleted } from '../streams/sse-mutation-publisher.js'
@@ -93,12 +93,6 @@ const botRoutes: FastifyPluginAsync = async (app) => {
     if (!user) {
       return reply.code(401).send({ error: 'unauthorized' })
     }
-    await ensureDefaultHermesBot({
-      db: app.db,
-      user,
-      hermesHome: app.hermesHome,
-      dashboard: app.hermesDashboard,
-    })
 
     const page = listBotsPage(app.db, request.userId, limit, anchors)
     if (!page) {
@@ -143,12 +137,6 @@ const botRoutes: FastifyPluginAsync = async (app) => {
     if (!user) {
       return reply.code(401).send({ error: 'unauthorized' })
     }
-    await ensureDefaultHermesBot({
-      db: app.db,
-      user,
-      hermesHome: app.hermesHome,
-      dashboard: app.hermesDashboard,
-    })
 
     if (body.slug === DEFAULT_BOT_SLUG || getBotBySlug(app.db, request.userId, body.slug)) {
       return reply.code(409).send({ error: 'slug_taken' })
