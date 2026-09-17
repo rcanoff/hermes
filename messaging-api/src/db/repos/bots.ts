@@ -11,6 +11,7 @@ import {
   addHonchoHost,
   createBotProfile,
   ensureSkillsOverlay,
+  hermesNameForOwner,
   isOperatorOwner,
   profileRelativeKey,
   readSoulFile,
@@ -142,7 +143,7 @@ export function seedDefaultBot(
   }
 
   const soul = isOperatorOwner(owner)
-    ? (readSoulFile(hermesHome, owner, DEFAULT_BOT_SLUG) ?? DEFAULT_BOT_SOUL)
+    ? (readSoulFile(hermesHome, hermesNameForOwner(owner, DEFAULT_BOT_SLUG)) ?? DEFAULT_BOT_SOUL)
     : DEFAULT_BOT_SOUL
   const row = ensureDefaultBotRow(db, userId, soul)
   if (!isOperatorOwner(owner)) {
@@ -156,9 +157,10 @@ function ensureUserDefaultProfile(
   owner: BotProfileOwner,
   row: BotRow,
 ): void {
-  if (readSoulFile(hermesHome, owner, DEFAULT_BOT_SLUG) !== null) {
+  const hermesName = hermesNameForOwner(owner, DEFAULT_BOT_SLUG)
+  if (readSoulFile(hermesHome, hermesName) !== null) {
     try {
-      ensureSkillsOverlay(hermesHome, owner, DEFAULT_BOT_SLUG)
+      ensureSkillsOverlay(hermesHome, hermesName)
     } catch {
       // best-effort backfill; listing/seeding must not fail on overlay FS errors
     }
@@ -172,7 +174,7 @@ function ensureUserDefaultProfile(
     role: row.role,
     soul: row.soul,
   })
-  addHonchoHost(hermesHome, owner, DEFAULT_BOT_SLUG)
+  addHonchoHost(hermesHome, hermesName)
 }
 
 export function insertBot(db: Database.Database, input: CreateBotInput): BotRow {
@@ -551,7 +553,7 @@ export function soulForResponse(row: BotRow, hermesHome: string): string {
   if (normalizeBotRuntime(row.runtime) === 'grok') {
     return row.soul
   }
-  return readSoulFile(hermesHome, botOwner(row), row.slug) ?? row.soul
+  return readSoulFile(hermesHome, hermesNameForOwner(botOwner(row), row.slug)) ?? row.soul
 }
 
 export function hermesProfileKeyForBot(row: BotRow, hermesHome?: string): string | undefined {

@@ -40,6 +40,7 @@ import {
   defaultSoulFromRole,
   deleteBotProfile,
   ensureSkillsOverlay,
+  hermesNameForOwner,
   slugifyBotName,
   writeProfileYaml,
   writeSoulFile,
@@ -171,7 +172,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
         throw error
       }
 
-      addHonchoHost(app.hermesHome, botOwner(row), row.slug)
+      addHonchoHost(app.hermesHome, hermesNameForOwner(botOwner(row), row.slug))
     }
 
     return reply.code(201).send(
@@ -196,7 +197,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
 
     if (normalizeBotRuntime(row.runtime) !== 'grok') {
       try {
-        ensureSkillsOverlay(app.hermesHome, botOwner(row), row.slug)
+        ensureSkillsOverlay(app.hermesHome, hermesNameForOwner(botOwner(row), row.slug))
       } catch (error) {
         app.log.warn(
           {
@@ -250,16 +251,21 @@ const botRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (body.soul !== undefined && updated.runtime !== 'grok') {
-      writeSoulFile(app.hermesHome, botOwner(updated), updated.slug, updated.soul)
+      writeSoulFile(
+        app.hermesHome,
+        hermesNameForOwner(botOwner(updated), updated.slug),
+        updated.soul,
+      )
     }
 
     if (
       (body.name !== undefined || body.role !== undefined) &&
       updated.runtime !== 'grok'
     ) {
-      writeProfileYaml(app.hermesHome, botOwner(updated), updated.slug, {
+      writeProfileYaml(app.hermesHome, hermesNameForOwner(botOwner(updated), updated.slug), {
         name: updated.name,
         role: updated.role,
+        companionUsername: updated.owner_username,
       })
     }
 
@@ -331,7 +337,10 @@ const botRoutes: FastifyPluginAsync = async (app) => {
 
     deleteBot(app.db, existing.id, request.userId)
     if (existing.runtime !== 'grok') {
-      deleteBotProfile(app.hermesHome, botOwner(existing), existing.slug)
+      deleteBotProfile(
+        app.hermesHome,
+        hermesNameForOwner(botOwner(existing), existing.slug),
+      )
     }
     return reply.code(204).send()
   })

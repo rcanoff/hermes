@@ -57,8 +57,8 @@ describe('/bots', () => {
     return { authorization: `Bearer ${token}` }
   }
 
-  function extraProfileDir(slug: string) {
-    return path.join(hermesHome, 'profiles', userId, slug)
+  function extraProfileDir(slug: string, username = 'operator') {
+    return path.join(hermesHome, 'profiles', `${username}-${slug}`)
   }
 
   it('GET seeds the default Hermes bot', async () => {
@@ -869,9 +869,8 @@ describe('/bots', () => {
       payload: { name: 'Travel', role: 'Flights' },
     })
     expect(created.statusCode).toBe(201)
-    expect(fs.existsSync(path.join(hermesHome, 'profiles', rcanoff.id, 'travel', 'SOUL.md'))).toBe(
-      true,
-    )
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', 'rcanoff-travel', 'SOUL.md'))).toBe(true)
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', rcanoff.id, 'travel'))).toBe(false)
     expect(fs.existsSync(path.join(hermesHome, 'profiles', 'travel'))).toBe(false)
   })
 

@@ -3,20 +3,22 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
+  addHonchoHost,
   createBotProfile,
   ensureSkillsOverlay,
   profileDir,
-  profileRelativeKey,
   profileSkillsDir,
   profileYamlPath,
+  removeHonchoHost,
   shareDefaultSkills,
   sharedSkillsExternalDir,
+  stripClonedApiServer,
   writeProfileYaml,
   type BotProfileOwner,
 } from '../src/lib/hermes-profile.js'
 
-const operator: BotProfileOwner = { userId: 'user-rcanoff', username: 'rcanoff' }
 const aline: BotProfileOwner = { userId: 'user-aline', username: 'AlineTusi' }
+const aliceTravel = 'alice-travel'
 
 describe('shareDefaultSkills', () => {
   let hermesHome: string
@@ -37,69 +39,59 @@ describe('shareDefaultSkills', () => {
 
   it('no-ops for the operator default home', () => {
     seedCompanionAppSkill()
-    shareDefaultSkills(hermesHome, operator, 'default')
+    shareDefaultSkills(hermesHome, null)
     expect(fs.lstatSync(path.join(hermesHome, 'skills')).isSymbolicLink()).toBe(false)
   })
 
   it('symlinks profile skills so companion-app is visible', () => {
     seedCompanionAppSkill()
-    fs.mkdirSync(path.join(hermesHome, 'profiles', 'patrik'), { recursive: true })
-    shareDefaultSkills(hermesHome, operator, 'patrik')
+    fs.mkdirSync(path.join(hermesHome, 'profiles', aliceTravel), { recursive: true })
+    shareDefaultSkills(hermesHome, aliceTravel)
 
-    const dest = path.join(hermesHome, 'profiles', 'patrik', 'skills')
-    expect(fs.lstatSync(dest).isSymbolicLink()).toBe(true)
-    expect(fs.readlinkSync(dest)).toBe(path.join(hermesHome, 'skills'))
-    expect(fs.existsSync(path.join(dest, 'companion-app', 'SKILL.md'))).toBe(true)
-  })
-
-  it('symlinks namespaced default profiles to $HERMES_HOME/skills', () => {
-    seedCompanionAppSkill()
-    shareDefaultSkills(hermesHome, aline, 'default')
-
-    const dest = path.join(hermesHome, 'profiles', aline.userId, 'default', 'skills')
+    const dest = path.join(hermesHome, 'profiles', aliceTravel, 'skills')
     expect(fs.lstatSync(dest).isSymbolicLink()).toBe(true)
     expect(fs.readlinkSync(dest)).toBe(path.join(hermesHome, 'skills'))
     expect(fs.existsSync(path.join(dest, 'companion-app', 'SKILL.md'))).toBe(true)
   })
 
   it('returns if dest is already a symlink', () => {
-    const dest = path.join(hermesHome, 'profiles', 'patrik', 'skills')
+    const dest = path.join(hermesHome, 'profiles', aliceTravel, 'skills')
     const other = path.join(hermesHome, 'other-skills')
     fs.mkdirSync(path.dirname(dest), { recursive: true })
     fs.mkdirSync(other)
     fs.symlinkSync(other, dest)
 
-    shareDefaultSkills(hermesHome, operator, 'patrik')
+    shareDefaultSkills(hermesHome, aliceTravel)
     expect(fs.readlinkSync(dest)).toBe(other)
   })
 
   it('replaces an empty skills directory with the share', () => {
     seedCompanionAppSkill()
-    const dest = path.join(hermesHome, 'profiles', 'patrik', 'skills')
+    const dest = path.join(hermesHome, 'profiles', aliceTravel, 'skills')
     fs.mkdirSync(dest, { recursive: true })
 
-    shareDefaultSkills(hermesHome, operator, 'patrik')
+    shareDefaultSkills(hermesHome, aliceTravel)
     expect(fs.lstatSync(dest).isSymbolicLink()).toBe(true)
     expect(fs.existsSync(path.join(dest, 'companion-app', 'SKILL.md'))).toBe(true)
   })
 
   it('leaves a non-empty skills directory in place', () => {
     seedCompanionAppSkill()
-    const dest = path.join(hermesHome, 'profiles', 'patrik', 'skills')
+    const dest = path.join(hermesHome, 'profiles', aliceTravel, 'skills')
     fs.mkdirSync(path.join(dest, 'local-skill'), { recursive: true })
     fs.writeFileSync(path.join(dest, 'local-skill', 'SKILL.md'), '# local\n')
 
-    shareDefaultSkills(hermesHome, operator, 'patrik')
+    shareDefaultSkills(hermesHome, aliceTravel)
     expect(fs.lstatSync(dest).isSymbolicLink()).toBe(false)
     expect(fs.existsSync(path.join(dest, 'local-skill', 'SKILL.md'))).toBe(true)
     expect(fs.existsSync(path.join(dest, 'companion-app', 'SKILL.md'))).toBe(false)
   })
 
   it('creates a dangling symlink when default skills do not exist yet', () => {
-    const dest = path.join(hermesHome, 'profiles', 'patrik', 'skills')
+    const dest = path.join(hermesHome, 'profiles', aliceTravel, 'skills')
     fs.mkdirSync(path.dirname(dest), { recursive: true })
 
-    shareDefaultSkills(hermesHome, operator, 'patrik')
+    shareDefaultSkills(hermesHome, aliceTravel)
     expect(fs.lstatSync(dest).isSymbolicLink()).toBe(true)
     expect(fs.readlinkSync(dest)).toBe(path.join(hermesHome, 'skills'))
   })
@@ -116,23 +108,14 @@ describe('profile paths', () => {
     fs.rmSync(hermesHome, { recursive: true, force: true })
   })
 
-  it('keeps rcanoff default at $HERMES_HOME', () => {
-    expect(profileRelativeKey(operator, 'default', hermesHome)).toBeNull()
-    expect(profileDir(hermesHome, operator, 'default')).toBe(hermesHome)
+  it('keeps operator default at $HERMES_HOME', () => {
+    expect(profileDir(hermesHome, null)).toBe(hermesHome)
   })
 
-  it('keeps existing rcanoff extras at profiles/<slug>', () => {
-    fs.mkdirSync(path.join(hermesHome, 'profiles', 'patrik'), { recursive: true })
-    expect(profileRelativeKey(operator, 'patrik', hermesHome)).toBe('patrik')
-    expect(profileDir(hermesHome, operator, 'patrik')).toBe(
-      path.join(hermesHome, 'profiles', 'patrik'),
+  it('uses the hermes name string for named profiles', () => {
+    expect(profileDir(hermesHome, aliceTravel)).toBe(
+      path.join(hermesHome, 'profiles', aliceTravel),
     )
-  })
-
-  it('namespaces new rcanoff extras and all non-operator bots', () => {
-    expect(profileRelativeKey(operator, 'travel', hermesHome)).toBe(`${operator.userId}/travel`)
-    expect(profileRelativeKey(aline, 'default', hermesHome)).toBe(`${aline.userId}/default`)
-    expect(profileRelativeKey(aline, 'patrik', hermesHome)).toBe(`${aline.userId}/patrik`)
   })
 })
 
@@ -161,8 +144,9 @@ describe('createBotProfile', () => {
       soul: 'You book trips.',
     })
 
-    const dir = path.join(hermesHome, 'profiles', aline.userId, 'travel')
+    const dir = path.join(hermesHome, 'profiles', 'alinetusi-travel')
     const skills = path.join(dir, 'skills')
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', aline.userId, 'travel'))).toBe(false)
     expect(fs.lstatSync(skills).isSymbolicLink()).toBe(false)
     expect(fs.statSync(skills).isDirectory()).toBe(true)
     expect(fs.existsSync(path.join(hermesHome, 'skills', 'companion-app', 'SKILL.md'))).toBe(true)
@@ -188,9 +172,9 @@ describe('skills overlay', () => {
     fs.rmSync(hermesHome, { recursive: true, force: true })
   })
 
-  it('profileSkillsDir is profileDir/skills for aline/travel', () => {
-    expect(profileSkillsDir(hermesHome, aline, 'travel')).toBe(
-      path.join(profileDir(hermesHome, aline, 'travel'), 'skills'),
+  it('profileSkillsDir is profileDir/skills for alice-travel', () => {
+    expect(profileSkillsDir(hermesHome, aliceTravel)).toBe(
+      path.join(profileDir(hermesHome, aliceTravel), 'skills'),
     )
   })
 
@@ -199,12 +183,12 @@ describe('skills overlay', () => {
   })
 
   it('ensureSkillsOverlay converts symlink skills to a real dir and sets external_dirs', () => {
-    const dir = profileDir(hermesHome, aline, 'travel')
+    const dir = profileDir(hermesHome, aliceTravel)
     fs.mkdirSync(dir, { recursive: true })
     fs.symlinkSync(path.join(hermesHome, 'skills'), path.join(dir, 'skills'))
     fs.writeFileSync(path.join(dir, 'config.yaml'), 'skills:\n  external_dirs: []\n')
 
-    ensureSkillsOverlay(hermesHome, aline, 'travel')
+    ensureSkillsOverlay(hermesHome, aliceTravel)
 
     const skills = path.join(dir, 'skills')
     expect(fs.lstatSync(skills).isSymbolicLink()).toBe(false)
@@ -215,7 +199,7 @@ describe('skills overlay', () => {
   })
 
   it('ensureSkillsOverlay is idempotent and preserves local skill files', () => {
-    const dir = profileDir(hermesHome, aline, 'travel')
+    const dir = profileDir(hermesHome, aliceTravel)
     const playbook = path.join(dir, 'skills', 'my-playbook')
     fs.mkdirSync(playbook, { recursive: true })
     fs.writeFileSync(path.join(playbook, 'SKILL.md'), '# my-playbook\n')
@@ -224,8 +208,8 @@ describe('skills overlay', () => {
       `skills:\n  external_dirs:\n    - ${sharedSkillsExternalDir(hermesHome)}\n`,
     )
 
-    ensureSkillsOverlay(hermesHome, aline, 'travel')
-    ensureSkillsOverlay(hermesHome, aline, 'travel')
+    ensureSkillsOverlay(hermesHome, aliceTravel)
+    ensureSkillsOverlay(hermesHome, aliceTravel)
 
     expect(fs.readFileSync(path.join(playbook, 'SKILL.md'), 'utf8')).toBe('# my-playbook\n')
     const config = fs.readFileSync(path.join(dir, 'config.yaml'), 'utf8')
@@ -236,7 +220,7 @@ describe('skills overlay', () => {
     const shared = path.join(hermesHome, 'skills')
     expect(fs.existsSync(path.join(shared, 'companion-app', 'SKILL.md'))).toBe(true)
 
-    ensureSkillsOverlay(hermesHome, operator, 'default')
+    ensureSkillsOverlay(hermesHome, null)
 
     expect(fs.lstatSync(shared).isSymbolicLink()).toBe(false)
     expect(fs.existsSync(path.join(shared, 'companion-app', 'SKILL.md'))).toBe(true)
@@ -256,10 +240,68 @@ describe('writeProfileYaml', () => {
   })
 
   it('records the owner companion username with original casing', () => {
-    writeProfileYaml(hermesHome, aline, 'travel', { name: 'Travis', role: 'Travel agent' })
+    writeProfileYaml(hermesHome, 'alinetusi-travel', {
+      name: 'Travis',
+      role: 'Travel agent',
+      companionUsername: aline.username,
+    })
 
-    expect(fs.readFileSync(profileYamlPath(hermesHome, aline, 'travel'), 'utf8')).toBe(
+    expect(fs.readFileSync(profileYamlPath(hermesHome, 'alinetusi-travel'), 'utf8')).toBe(
       'display_name: "Travis"\ndescription: "Travel agent"\ncompanion_username: "AlineTusi"\n',
     )
+  })
+})
+
+describe('stripClonedApiServer', () => {
+  let hermesHome: string
+
+  beforeEach(() => {
+    hermesHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-home-strip-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(hermesHome, { recursive: true, force: true })
+  })
+
+  it('strips platforms.api_server from cloned config', () => {
+    const dir = path.join(hermesHome, 'profiles', aliceTravel)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(
+      path.join(dir, 'config.yaml'),
+      'platforms:\n  api_server:\n    extra:\n      port: 8642\n  telegram:\n    enabled: true\n',
+    )
+    stripClonedApiServer(dir)
+    const text = fs.readFileSync(path.join(dir, 'config.yaml'), 'utf8')
+    expect(text).not.toMatch(/api_server/)
+  })
+})
+
+describe('honcho hosts', () => {
+  let hermesHome: string
+
+  beforeEach(() => {
+    hermesHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-home-honcho-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(hermesHome, { recursive: true, force: true })
+  })
+
+  it('addHonchoHost keys hermes.{profileName}', () => {
+    fs.writeFileSync(path.join(hermesHome, 'honcho.json'), JSON.stringify({ hosts: { hermes: {} } }))
+    addHonchoHost(hermesHome, aliceTravel)
+    const hosts = JSON.parse(fs.readFileSync(path.join(hermesHome, 'honcho.json'), 'utf8')).hosts
+    expect(hosts['hermes.alice-travel']).toEqual({ aiPeer: 'alice-travel' })
+  })
+
+  it('removeHonchoHost deletes both dotted and underscored keys', () => {
+    fs.writeFileSync(
+      path.join(hermesHome, 'honcho.json'),
+      JSON.stringify({ hosts: { 'hermes.alice-travel': { aiPeer: 'x' }, hermes_alice_travel: { aiPeer: 'x' } } }),
+    )
+    removeHonchoHost(hermesHome, aliceTravel)
+    const hosts = JSON.parse(fs.readFileSync(path.join(hermesHome, 'honcho.json'), 'utf8')).hosts
+    expect(hosts['hermes.alice-travel']).toBeUndefined()
+    expect(hosts.hermes_alice_travel).toBeUndefined()
   })
 })
