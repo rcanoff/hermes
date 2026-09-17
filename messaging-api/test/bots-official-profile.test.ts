@@ -249,3 +249,135 @@ describe('GET /bots official default seed', () => {
     expect(fs.existsSync(path.join(hermesHome, 'profiles', 'default'))).toBe(false)
   })
 })
+
+describe('DELETE /bots official Hermes profiles', () => {
+  let app: FastifyInstance | undefined
+  let hermesHome: string
+  let token: string
+
+  beforeEach(async () => {
+    hermesHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-home-official-delete-'))
+    fs.writeFileSync(
+      path.join(hermesHome, 'config.yaml'),
+      'platforms:\n  api_server:\n    extra:\n      port: 8642\nmodel:\n  default: test-model\n',
+    )
+    fs.mkdirSync(path.join(hermesHome, 'skills', 'companion-app'), { recursive: true })
+    fs.writeFileSync(path.join(hermesHome, 'skills', 'companion-app', 'SKILL.md'), '# companion-app\n')
+    app = await createTestApp({ hermesHome })
+    await app.ready()
+    const seeded = await seedTestUser(app, 'alice', 'password123')
+    token = seeded.token
+  })
+
+  afterEach(async () => {
+    await app?.close()
+    app = undefined
+    fs.rmSync(hermesHome, { recursive: true, force: true })
+  })
+
+  function authHeaders() {
+    return { authorization: `Bearer ${token}` }
+  }
+
+  it('deletes official profile dir and honcho host', async () => {
+    const honchoPath = path.join(hermesHome, 'honcho.json')
+    fs.writeFileSync(
+      honchoPath,
+      `${JSON.stringify({ hosts: { hermes: {} } }, null, 2)}\n`,
+    )
+
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Travel', role: 'Flights' },
+    })
+    expect(created.statusCode).toBe(201)
+    const bot = created.json() as { id: string; hermes_profile_name: string | null }
+    expect(bot.hermes_profile_name).toBe('alice-travel')
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', 'alice-travel'))).toBe(true)
+    const hostsBefore = JSON.parse(fs.readFileSync(honchoPath, 'utf8')) as {
+      hosts: Record<string, unknown>
+    }
+    expect(hostsBefore.hosts['hermes.alice-travel']).toEqual({ aiPeer: 'alice-travel' })
+
+    const response = await app!.inject({
+      method: 'DELETE',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+
+    expect(response.statusCode).toBe(204)
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', 'alice-travel'))).toBe(false)
+    const hostsAfter = JSON.parse(fs.readFileSync(honchoPath, 'utf8')) as {
+      hosts: Record<string, unknown>
+    }
+    expect(hostsAfter.hosts['hermes.alice-travel']).toBeUndefined()
+  })
+
+  it('returns 204 when dashboard 404 (dir already gone)', async () => {
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Travel', role: 'Flights' },
+    })
+    expect(created.statusCode).toBe(201)
+    const bot = created.json() as { id: string; hermes_profile_name: string | null }
+    expect(bot.hermes_profile_name).toBe('alice-travel')
+    fs.rmSync(path.join(hermesHome, 'profiles', 'alice-travel'), { recursive: true, force: true })
+    const deleteProfile = vi.spyOn(app!.hermesDashboard, 'deleteProfile')
+
+    const response = await app!.inject({
+      method: 'DELETE',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+
+    expect(response.statusCode).toBe(204)
+    expect(deleteProfile).toHaveBeenCalledWith('alice-travel')
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', 'alice-travel'))).toBe(false)
+  })
+
+  it('returns 409 default_bot', async () => {
+    const list = await app!.inject({
+      method: 'GET',
+      url: '/bots',
+      headers: authHeaders(),
+    })
+    expect(list.statusCode).toBe(200)
+    const defaultId = (list.json() as { bots: Array<{ id: string; is_default: boolean }> }).bots.find(
+      (row) => row.is_default,
+    )!.id
+
+    const response = await app!.inject({
+      method: 'DELETE',
+      url: `/bots/${defaultId}`,
+      headers: authHeaders(),
+    })
+
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toEqual({ error: 'default_bot' })
+  })
+
+  it('does not call deleteProfile for grok bots', async () => {
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: authHeaders(),
+      payload: { name: 'Grok', role: 'Mac agent', runtime: 'grok' },
+    })
+    expect(created.statusCode).toBe(201)
+    const bot = created.json() as { id: string }
+
+    const deleteProfile = vi.spyOn(app!.hermesDashboard, 'deleteProfile')
+    const response = await app!.inject({
+      method: 'DELETE',
+      url: `/bots/${bot.id}`,
+      headers: authHeaders(),
+    })
+
+    expect(response.statusCode).toBe(204)
+    expect(deleteProfile).not.toHaveBeenCalled()
+  })
+})

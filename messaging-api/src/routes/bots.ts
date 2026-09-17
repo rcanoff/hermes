@@ -39,11 +39,11 @@ import {
   DEFAULT_BOT_SLUG,
   addHonchoHost,
   defaultSoulFromRole,
-  deleteBotProfile,
   ensureSkillsOverlay,
   hermesNameForOwner,
   hermesProfileName,
   profileDir,
+  removeHonchoHost,
   slugifyBotName,
   stripClonedApiServer,
   syncProfileApiServerKey,
@@ -391,11 +391,25 @@ const botRoutes: FastifyPluginAsync = async (app) => {
     }
 
     deleteBot(app.db, existing.id, request.userId)
-    if (existing.runtime !== 'grok') {
-      deleteBotProfile(
-        app.hermesHome,
-        hermesNameForOwner(botOwner(existing), existing.slug),
-      )
+    if (existing.runtime !== 'grok' && existing.hermes_profile_name) {
+      try {
+        const result = await app.hermesDashboard.deleteProfile(existing.hermes_profile_name)
+        if (result.settlementPending) {
+          app.log.warn(
+            { profile: existing.hermes_profile_name },
+            'hermes profile identity settlement pending',
+          )
+        }
+      } catch (error) {
+        app.log.warn(
+          {
+            err: error instanceof Error ? error.message : String(error),
+            profile: existing.hermes_profile_name,
+          },
+          'hermes profile delete failed; continuing companion delete',
+        )
+      }
+      removeHonchoHost(app.hermesHome, existing.hermes_profile_name)
     }
     return reply.code(204).send()
   })
