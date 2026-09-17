@@ -8,17 +8,12 @@ import {
 } from '../../lib/bot-appearance.js'
 import {
   DEFAULT_BOT_SLUG,
-  addHonchoHost,
-  createBotProfile,
-  ensureSkillsOverlay,
   hermesNameForOwner,
-  isOperatorOwner,
   profileRelativeKey,
   readSoulFile,
   type BotProfileOwner,
 } from '../../lib/hermes-profile.js'
 import { enqueueConversationAttachments } from '../../services/attachment-cleanup.js'
-import { findUserById } from './users.js'
 import type { ListPageAnchors } from './conversations.js'
 
 export const DEFAULT_BOT_NAME = 'Hermes'
@@ -120,61 +115,6 @@ export function seedKnownBotResponsibilities(db: Database.Database): void {
     SET responsibilities = ?
     WHERE slug = ? AND TRIM(responsibilities) = ''
   `).run(PATRIK_BOT_RESPONSIBILITIES, PATRIK_BOT_SLUG)
-}
-
-export function seedDefaultBot(
-  db: Database.Database,
-  userId: string,
-  hermesHome: string,
-): BotRow {
-  const user = findUserById(db, userId)
-  if (!user) {
-    throw new Error('user_missing')
-  }
-
-  const owner: BotProfileOwner = { userId: user.id, username: user.username }
-  const existing = getBotBySlug(db, userId, DEFAULT_BOT_SLUG)
-  if (existing) {
-    seedKnownBotResponsibilities(db)
-    if (!isOperatorOwner(owner)) {
-      ensureUserDefaultProfile(hermesHome, owner, existing)
-    }
-    return getBotBySlug(db, userId, DEFAULT_BOT_SLUG)!
-  }
-
-  const soul = isOperatorOwner(owner)
-    ? (readSoulFile(hermesHome, hermesNameForOwner(owner, DEFAULT_BOT_SLUG)) ?? DEFAULT_BOT_SOUL)
-    : DEFAULT_BOT_SOUL
-  const row = ensureDefaultBotRow(db, userId, soul)
-  if (!isOperatorOwner(owner)) {
-    ensureUserDefaultProfile(hermesHome, owner, row)
-  }
-  return row
-}
-
-function ensureUserDefaultProfile(
-  hermesHome: string,
-  owner: BotProfileOwner,
-  row: BotRow,
-): void {
-  const hermesName = hermesNameForOwner(owner, DEFAULT_BOT_SLUG)
-  if (readSoulFile(hermesHome, hermesName) !== null) {
-    try {
-      ensureSkillsOverlay(hermesHome, hermesName)
-    } catch {
-      // best-effort backfill; listing/seeding must not fail on overlay FS errors
-    }
-    return
-  }
-  createBotProfile({
-    hermesHome,
-    owner,
-    slug: DEFAULT_BOT_SLUG,
-    name: row.name,
-    role: row.role,
-    soul: row.soul,
-  })
-  addHonchoHost(hermesHome, hermesName)
 }
 
 export function insertBot(db: Database.Database, input: CreateBotInput): BotRow {

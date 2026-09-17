@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FastifyInstance } from 'fastify'
-import { insertBot } from '../src/db/repos/bots.js'
+import { ensureDefaultBotRow, insertBot } from '../src/db/repos/bots.js'
 import { createTestApp } from './helpers/app.js'
 import { seedTestUser } from './helpers/users.js'
 
@@ -165,6 +165,61 @@ describe('GET /bots official default seed', () => {
     expect(fs.existsSync(path.join(hermesHome, 'profiles', 'alinetusi-default', 'SOUL.md'))).toBe(
       true,
     )
+  })
+
+  it('backfills missing profile dir for an existing sqlite default', async () => {
+    const seeded = await seedTestUser(app!, 'AlineTusi', 'password123')
+    const row = ensureDefaultBotRow(app!.db, seeded.id)
+    expect(row.hermes_profile_name).toBeNull()
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', 'alinetusi-default'))).toBe(false)
+    const createProfile = vi.spyOn(app!.hermesDashboard, 'createProfile')
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/bots',
+      headers: { authorization: `Bearer ${seeded.token}` },
+    })
+
+    expect(response.statusCode).toBe(200)
+    const body = response.json() as {
+      bots: Array<{ slug: string; hermes_profile_name: string | null }>
+    }
+    expect(body.bots).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          slug: 'default',
+          hermes_profile_name: 'alinetusi-default',
+        }),
+      ]),
+    )
+    expect(createProfile).toHaveBeenCalledWith({
+      name: 'alinetusi-default',
+      description: 'Hermes',
+    })
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', 'alinetusi-default', 'SOUL.md'))).toBe(
+      true,
+    )
+  })
+
+  it('rolls back dashboard profile if default sqlite insert fails', async () => {
+    const seeded = await seedTestUser(app!, 'alice', 'password123')
+    insertBot(app!.db, {
+      userId: seeded.id,
+      slug: 'other',
+      name: 'Other',
+      role: 'Other',
+      soul: 'soul',
+      hermesProfileName: 'alice-default',
+    })
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/bots',
+      headers: { authorization: `Bearer ${seeded.token}` },
+    })
+
+    expect(response.statusCode).toBe(500)
+    expect(fs.existsSync(path.join(hermesHome, 'profiles', 'alice-default'))).toBe(false)
   })
 
   it('GET /bots for operator keeps hermes_profile_name null and never POSTs default', async () => {

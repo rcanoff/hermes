@@ -158,12 +158,13 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
       if (!user) {
         return reply.code(401).send({ error: 'unauthorized' })
       }
-      await ensureDefaultHermesBot({
+      const defaultBot = await ensureDefaultHermesBot({
         db: app.db,
         user,
         hermesHome: app.hermesHome,
         dashboard: app.hermesDashboard,
       })
+      botId = defaultBot.id
     }
 
     const conversationId = createConversation(

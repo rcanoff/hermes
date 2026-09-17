@@ -54,7 +54,7 @@ export async function ensureDefaultHermesBot(input: EnsureDefaultHermesBotInput)
 
   const dirMissing = !fs.existsSync(profileDir(hermesHome, hermesName))
   if (!existing) {
-    await provisionOfficialDefaultProfile({
+    const provisioned = await provisionOfficialDefaultProfile({
       dashboard,
       hermesHome,
       hermesName,
@@ -64,16 +64,27 @@ export async function ensureDefaultHermesBot(input: EnsureDefaultHermesBotInput)
       soul: DEFAULT_BOT_SOUL,
       writeYaml: true,
     })
-    return insertBot(db, {
-      userId: user.id,
-      slug: DEFAULT_BOT_SLUG,
-      name: DEFAULT_BOT_NAME,
-      role: DEFAULT_BOT_ROLE,
-      soul: DEFAULT_BOT_SOUL,
-      responsibilities: DEFAULT_BOT_RESPONSIBILITIES,
-      isDefault: true,
-      hermesProfileName: hermesName,
-    })
+    try {
+      return insertBot(db, {
+        userId: user.id,
+        slug: DEFAULT_BOT_SLUG,
+        name: DEFAULT_BOT_NAME,
+        role: DEFAULT_BOT_ROLE,
+        soul: DEFAULT_BOT_SOUL,
+        responsibilities: DEFAULT_BOT_RESPONSIBILITIES,
+        isDefault: true,
+        hermesProfileName: hermesName,
+      })
+    } catch (error) {
+      const raced = getBotBySlug(db, user.id, DEFAULT_BOT_SLUG)
+      if (raced) {
+        return raced
+      }
+      if (provisioned.created) {
+        await dashboard.deleteProfile(hermesName)
+      }
+      throw error
+    }
   }
 
   if (dirMissing) {
@@ -107,11 +118,12 @@ async function provisionOfficialDefaultProfile(input: {
   role: string
   soul: string
   writeYaml: boolean
-}): Promise<void> {
+}): Promise<{ created: boolean }> {
   if (input.hermesName === DEFAULT_BOT_SLUG) {
-    return
+    return { created: false }
   }
 
+  let created = false
   const remote = await input.dashboard.getProfile(input.hermesName)
   if (!remote) {
     try {
@@ -119,6 +131,7 @@ async function provisionOfficialDefaultProfile(input: {
         name: input.hermesName,
         description: input.name,
       })
+      created = true
     } catch (error) {
       if (!(error instanceof HermesDashboardError && error.code === 'hermes_profile_taken')) {
         throw error
@@ -126,17 +139,26 @@ async function provisionOfficialDefaultProfile(input: {
     }
   }
 
-  const dir = profileDir(input.hermesHome, input.hermesName)
-  stripClonedApiServer(dir)
-  syncProfileApiServerKey(input.hermesHome, input.hermesName)
-  writeSoulFile(input.hermesHome, input.hermesName, input.soul)
-  ensureSkillsOverlay(input.hermesHome, input.hermesName)
-  if (input.writeYaml) {
-    writeProfileYaml(input.hermesHome, input.hermesName, {
-      name: input.name,
-      role: input.role,
-      companionUsername: input.username,
-    })
+  try {
+    const dir = profileDir(input.hermesHome, input.hermesName)
+    stripClonedApiServer(dir)
+    syncProfileApiServerKey(input.hermesHome, input.hermesName)
+    writeSoulFile(input.hermesHome, input.hermesName, input.soul)
+    ensureSkillsOverlay(input.hermesHome, input.hermesName)
+    if (input.writeYaml) {
+      writeProfileYaml(input.hermesHome, input.hermesName, {
+        name: input.name,
+        role: input.role,
+        companionUsername: input.username,
+      })
+    }
+    addHonchoHost(input.hermesHome, input.hermesName)
+  } catch (error) {
+    if (created) {
+      await input.dashboard.deleteProfile(input.hermesName)
+    }
+    throw error
   }
-  addHonchoHost(input.hermesHome, input.hermesName)
+
+  return { created }
 }
