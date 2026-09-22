@@ -20,6 +20,7 @@ export interface SyncInboxResult {
 
 export interface BuildInboxOptions {
   maxGap: number
+  includeShared?: boolean
 }
 
 export function buildInbox(
@@ -38,7 +39,13 @@ export function buildInbox(
     return { changes: [], next_cursor: tip, has_more: false, reset_required: true }
   }
 
-  const accountRows = listAccountEventRowsAfterMarker(db, userId, since, options.maxGap + 1)
+  const accountRows = listAccountEventRowsAfterMarker(
+    db,
+    userId,
+    since,
+    options.maxGap + 1,
+    options.includeShared === true,
+  )
   if (accountRows.length > options.maxGap) {
     return { changes: [], next_cursor: tip, has_more: false, reset_required: true }
   }
@@ -77,9 +84,26 @@ export function buildInbox(
     ...[...updatedLatest.entries()]
       .sort((a, b) => (a[1] < b[1] ? 1 : a[1] > b[1] ? -1 : 0))
       .map(([conversation_id]) => ({ conversation_id, kind: 'updated' as const })),
-  ]
+  ].filter((change) => visibleInboxChange(db, change, options.includeShared === true))
 
   return { changes, next_cursor: tip, has_more: false, reset_required: false }
+}
+
+function visibleInboxChange(
+  db: Database.Database,
+  change: SyncInboxChange,
+  includeShared: boolean,
+): boolean {
+  if (includeShared) {
+    return true
+  }
+  const row = db
+    .prepare(`SELECT kind FROM conversations WHERE id = ?`)
+    .get(change.conversation_id) as { kind: string } | undefined
+  if (!row) {
+    return true
+  }
+  return row.kind !== 'user_dm' && row.kind !== 'group'
 }
 
 const DEVICE_ID_PATTERN =

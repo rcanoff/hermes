@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import type { FastifyPluginAsync } from 'fastify'
+import { isConversationMember } from '../db/repos/conversation-members.js'
+import { getMessageById } from '../db/repos/messages.js'
 import {
   deleteExpiredOrphanAttachments,
+  getAttachmentById,
   getAttachmentForUser,
   insertStagedAttachment,
 } from '../db/repos/message-attachments.js'
@@ -113,8 +116,8 @@ const attachmentRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/attachments/:id', { preHandler: app.authenticate }, async (request, reply) => {
     const attachmentId = (request.params as { id: string }).id
-    const row = getAttachmentForUser(app.db, request.userId, attachmentId)
-    if (!row) {
+    const row = getAttachmentById(app.db, attachmentId)
+    if (!row || !canReadAttachment(app.db, request.userId, row)) {
       return reply.code(404).send({ error: 'not_found' })
     }
 
@@ -126,7 +129,7 @@ const attachmentRoutes: FastifyPluginAsync = async (app) => {
     const filename = variantPath(row, variant)
     const absolutePath = resolveAttachmentFile(
       app.attachmentsDir,
-      request.userId,
+      row.user_id,
       attachmentId,
       filename,
     )
@@ -141,6 +144,18 @@ const attachmentRoutes: FastifyPluginAsync = async (app) => {
       .header('cache-control', 'private, max-age=31536000, immutable')
       .send(fs.createReadStream(absolutePath))
   })
+}
+
+function canReadAttachment(
+  db: Parameters<typeof isConversationMember>[0],
+  userId: string,
+  row: { user_id: string; message_id: string | null },
+): boolean {
+  if (row.message_id === null) {
+    return row.user_id === userId
+  }
+  const message = getMessageById(db, row.message_id)
+  return Boolean(message && isConversationMember(db, message.conversation_id, userId))
 }
 
 function parseVariant(raw: string | undefined): AttachmentVariant {

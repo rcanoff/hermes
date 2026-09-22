@@ -3,14 +3,14 @@ import type Database from 'better-sqlite3'
 import { DEFAULT_COMPANION_MODELS } from '../../lib/companion-models.js'
 import { buildConversationSyncEntry } from '../../lib/conversation-sync-entry.js'
 import { isSyncMarkerOrigin, SYNC_MARKER_ORIGIN } from '../../lib/sync-marker.js'
-import { getConversationForUser, type ConversationRow } from './conversations.js'
+import { getConversationForUser, type ConversationKind, type ConversationRow } from './conversations.js'
 import type { MessageWithAttachments } from '../../lib/attachment-serializer.js'
 import type { MessageRow } from './messages.js'
 
 export interface ConversationSyncEntryPayload {
   id: string
   hermes_session_id: string
-  kind: 'regular' | 'job'
+  kind: ConversationKind
   title: string | null
   model: string
   provider: string
@@ -21,6 +21,8 @@ export interface ConversationSyncEntryPayload {
   latest_message_created_at: string | null
   bot_id: string | null
   peer_bot_id?: string | null
+  members: Array<{ id: string; username: string }>
+  bot: { id: string; name: string; icon: string; color: string } | null
   hermes_job_id?: string | null
   schedule_display?: string | null
   job_enabled?: boolean
@@ -40,6 +42,12 @@ export type AccountSyncEvent =
       type: 'conversation_deleted'
       occurred_at: string
       conversation_id: string
+    }
+  | {
+      event_id: string
+      type: 'message_upsert'
+      occurred_at: string
+      message: MessageWithAttachments
     }
 
 export type ConversationSyncEvent =
@@ -145,6 +153,22 @@ export function appendAccountConversationDeleted(
   return { event_id }
 }
 
+export function appendAccountMessageUpsert(
+  db: Database.Database,
+  userId: string,
+  conversationId: string,
+  message: MessageWithAttachments,
+): { event_id: string } {
+  const event_id = insertEvent(db, {
+    scope: 'account',
+    userId,
+    conversationId,
+    eventType: 'message_upsert',
+    payload: { message },
+  })
+  return { event_id }
+}
+
 export function appendConversationMessageUpsert(
   db: Database.Database,
   userId: string,
@@ -220,9 +244,9 @@ function getStoredEvent(
       .prepare(`
         SELECT id, scope, user_id, conversation_id, event_type, occurred_at, payload_json
         FROM chat_sync_events
-        WHERE id = ? AND scope = ? AND user_id = ? AND conversation_id = ?
+        WHERE id = ? AND scope = ? AND conversation_id = ?
       `)
-      .get(eventId, scope, userId, conversationId) as StoredEventRow | undefined
+      .get(eventId, scope, conversationId) as StoredEventRow | undefined
   }
 
   return db
@@ -300,8 +324,9 @@ export function listAccountEventRowsAfterMarker(
   userId: string,
   since: string | undefined,
   limit: number,
+  includeShared = false,
 ): AccountEventRow[] {
-  return fetchScopedRows(db, 'account', userId, undefined, since, limit).map((row) => ({
+  return fetchScopedRows(db, 'account', userId, undefined, since, limit, includeShared).map((row) => ({
     id: row.id,
     conversation_id: row.conversation_id,
     event_type: row.event_type,
@@ -355,6 +380,49 @@ export function listConversationActivitySinceMarker(
     }>
 }
 
+function accountVisibilitySql(includeShared: boolean | undefined): string {
+  if (includeShared === undefined) {
+    return ''
+  }
+  if (includeShared) {
+    return `
+      AND (
+        event_type = 'conversation_deleted'
+        OR EXISTS (
+          SELECT 1 FROM conversation_members m
+          WHERE m.conversation_id = chat_sync_events.conversation_id
+            AND m.user_id = chat_sync_events.user_id
+        )
+      )
+    `
+  }
+  // Live user_dm/group rows stay hidden. A deleted row has no kind, so its tombstone remains.
+  return `
+    AND (
+      (
+        event_type = 'conversation_deleted'
+        AND NOT EXISTS (
+          SELECT 1 FROM conversations c
+          WHERE c.id = chat_sync_events.conversation_id
+            AND c.kind IN ('user_dm', 'group')
+        )
+      )
+      OR (
+        EXISTS (
+          SELECT 1 FROM conversation_members m
+          WHERE m.conversation_id = chat_sync_events.conversation_id
+            AND m.user_id = chat_sync_events.user_id
+        )
+        AND EXISTS (
+          SELECT 1 FROM conversations c
+          WHERE c.id = chat_sync_events.conversation_id
+            AND c.kind IN ('regular', 'job')
+        )
+      )
+    )
+  `
+}
+
 function fetchScopedRows(
   db: Database.Database,
   scope: 'account' | 'conversation',
@@ -362,7 +430,9 @@ function fetchScopedRows(
   conversationId: string | undefined,
   since: string | undefined,
   limit: number,
+  includeShared?: boolean,
 ): StoredEventRow[] {
+  const visibility = scope === 'account' ? accountVisibilitySql(includeShared) : ''
   if (isSyncMarkerOrigin(since)) {
     if (scope === 'account') {
       return db
@@ -370,6 +440,7 @@ function fetchScopedRows(
           SELECT id, scope, user_id, conversation_id, event_type, occurred_at, payload_json
           FROM chat_sync_events
           WHERE scope = 'account' AND user_id = ?
+          ${visibility}
           ORDER BY occurred_at ASC, id ASC
           LIMIT ?
         `)
@@ -399,6 +470,7 @@ function fetchScopedRows(
             occurred_at > ?
             OR (occurred_at = ? AND id > ?)
           )
+          ${visibility}
         ORDER BY occurred_at ASC, id ASC
         LIMIT ?
       `)
@@ -451,6 +523,15 @@ function mapAccountEvent(row: StoredEventRow): AccountSyncEvent {
     }
   }
 
+  if (row.event_type === 'message_upsert') {
+    return {
+      event_id: row.id,
+      type: 'message_upsert',
+      occurred_at: row.occurred_at,
+      message: payload.message as MessageWithAttachments,
+    }
+  }
+
   return {
     event_id: row.id,
     type: 'conversation_deleted',
@@ -499,12 +580,13 @@ export function listAccountSyncEvents(
   userId: string,
   since: string | undefined,
   limit: number,
+  includeShared = false,
 ): SyncEventPage<AccountSyncEvent> | null {
   if (!validateSinceMarker(db, since, 'account', userId)) {
     return null
   }
 
-  const rows = fetchScopedRows(db, 'account', userId, undefined, since, limit + 1)
+  const rows = fetchScopedRows(db, 'account', userId, undefined, since, limit + 1, includeShared)
   return buildSyncPage(rows, limit, () => resolveAccountFeedTip(db, userId), mapAccountEvent)
 }
 

@@ -1,10 +1,14 @@
+import type Database from 'better-sqlite3'
 import type { ConversationRow } from '../db/repos/conversations.js'
 import { modelDisplayName, type CuratedModelEntry } from './companion-models.js'
+import { buildConversationSyncEntry } from './conversation-sync-entry.js'
 
 export function toConversationResponse(
+  db: Database.Database,
   conversation: ConversationRow,
   catalog: CuratedModelEntry[],
 ) {
+  const share = buildConversationSyncEntry(db, conversation, catalog)
   const { bootstrap_prompt: _bootstrapPrompt, job_enabled, ...rest } = conversation
   const response: Record<string, unknown> = {
     ...rest,
@@ -12,6 +16,8 @@ export function toConversationResponse(
     model: conversation.model,
     provider: conversation.provider,
     model_display: modelDisplayName(catalog, conversation.model, conversation.provider),
+    members: share.members,
+    bot: share.bot,
   }
 
   if (conversation.kind === 'job') {

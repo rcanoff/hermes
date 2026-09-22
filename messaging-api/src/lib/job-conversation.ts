@@ -41,7 +41,7 @@ export function buildJobConversationBootstrap(
 
 export function resolveJobConversationBootstrap(
   conversation: {
-    kind: 'regular' | 'job'
+    kind: string
     bootstrap_prompt: string | null
     hermes_job_id: string | null
     title: string | null

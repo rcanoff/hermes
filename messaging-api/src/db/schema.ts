@@ -157,11 +157,94 @@ export function initSchema(db: Database.Database): void {
   ensureCronOutputDeliveries(db)
   ensureLegacyHealthDailySummaries(db)
   ensureMessageRunsOriginSessionId(db)
+  ensureSharedConversations(db)
   ensureChatSyncEvents(db)
   ensurePushDevices(db)
   ensureDeviceSyncState(db)
   ensureCompanionSettings(db)
   ensureAttachmentCleanup(db)
+}
+
+function ensureSharedConversations(db: Database.Database): void {
+  const conversationColumns = db.prepare(`PRAGMA table_info(conversations)`).all() as Array<{ name: string }>
+  if (!conversationColumns.some((column) => column.name === 'dm_key')) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN dm_key TEXT`)
+  }
+
+  db.exec(`
+    UPDATE conversations SET dm_key = NULL WHERE kind != 'user_dm' AND dm_key IS NOT NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS conversations_dm_key_idx
+      ON conversations (dm_key)
+      WHERE kind = 'user_dm';
+
+    CREATE TABLE IF NOT EXISTS conversation_members (
+      conversation_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      joined_at TEXT NOT NULL,
+      PRIMARY KEY (conversation_id, user_id)
+    );
+
+    INSERT OR IGNORE INTO conversation_members (conversation_id, user_id, joined_at)
+    SELECT id, user_id, created_at FROM conversations;
+
+    CREATE TRIGGER IF NOT EXISTS conversations_owner_member
+    AFTER INSERT ON conversations
+    BEGIN
+      INSERT OR IGNORE INTO conversation_members (conversation_id, user_id, joined_at)
+      VALUES (NEW.id, NEW.user_id, NEW.created_at);
+    END;
+  `)
+
+  const messageColumns = db.prepare(`PRAGMA table_info(messages)`).all() as Array<{ name: string }>
+  const messageNames = new Set(messageColumns.map((column) => column.name))
+  if (!messageNames.has('sender_user_id')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN sender_user_id TEXT`)
+  }
+  if (!messageNames.has('mentioned_bot_id')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN mentioned_bot_id TEXT`)
+  }
+  if (!messageNames.has('sequence')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN sequence INTEGER`)
+  }
+  if (!messageNames.has('client_message_id')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN client_message_id TEXT`)
+  }
+
+  db.exec(`
+    WITH ordered AS (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY conversation_id
+        ORDER BY created_at ASC, id ASC
+      ) AS seq
+      FROM messages
+    )
+    UPDATE messages
+    SET sequence = (SELECT seq FROM ordered WHERE ordered.id = messages.id)
+    WHERE sequence IS NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS messages_conversation_sequence_idx
+      ON messages (conversation_id, sequence);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS messages_client_id_idx
+      ON messages (conversation_id, sender_user_id, client_message_id)
+      WHERE client_message_id IS NOT NULL AND sender_user_id IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS group_bot_runs (
+      message_id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'done', 'failed', 'stuck', 'cancelled')),
+      run_id TEXT NOT NULL,
+      error_code TEXT,
+      claimed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS group_bot_runs_one_running_idx
+      ON group_bot_runs (conversation_id)
+      WHERE state = 'running';
+  `)
 }
 
 function ensureAttachmentCleanup(db: Database.Database): void {

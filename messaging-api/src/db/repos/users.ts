@@ -9,6 +9,20 @@ export interface UserRow {
   created_at: string
 }
 
+export function listUsersExcept(
+  db: Database.Database,
+  callerId: string,
+): Array<{ id: string; username: string }> {
+  return db
+    .prepare(`
+      SELECT id, username
+      FROM users
+      WHERE id != ?
+      ORDER BY username ASC
+    `)
+    .all(callerId) as Array<{ id: string; username: string }>
+}
+
 export function findUserByUsername(db: Database.Database, username: string): UserRow | undefined {
   return db
     .prepare(`

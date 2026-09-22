@@ -34,6 +34,9 @@ export interface InsertMessageInput {
   toBotId?: string | null
   delegationId?: string | null
   input?: MessageInput | null
+  senderUserId?: string | null
+  clientMessageId?: string | null
+  mentionedBotId?: string | null
 }
 
 export interface MessageRow {
@@ -47,6 +50,11 @@ export interface MessageRow {
   to_bot_id: string | null
   delegation_id: string | null
   input: MessageInput | null
+  sender_user_id: string | null
+  client_message_id: string | null
+  mentioned_bot_id: string | null
+  sequence: number | null
+  sender_user: { id: string; username: string } | null
 }
 
 export interface MessagePage {
@@ -62,7 +70,9 @@ interface MessageCursorRow extends MessageRow {
 export const DUPLICATE_MESSAGE_WINDOW_SECONDS = 60
 
 export const MESSAGE_COLUMNS = `
-  id, conversation_id, role, content, created_at, kind, from_bot_id, to_bot_id, delegation_id, input_json
+  id, conversation_id, role, content, created_at, kind, from_bot_id, to_bot_id, delegation_id, input_json,
+  sender_user_id, client_message_id, mentioned_bot_id, sequence,
+  (SELECT username FROM users WHERE users.id = messages.sender_user_id) AS sender_username
 `
 
 export interface MessageSqlRow {
@@ -76,6 +86,11 @@ export interface MessageSqlRow {
   to_bot_id: string | null
   delegation_id: string | null
   input_json: string | null
+  sender_user_id: string | null
+  client_message_id: string | null
+  mentioned_bot_id: string | null
+  sequence: number | null
+  sender_username: string | null
 }
 
 export function findRecentDuplicateUserMessage(
@@ -99,13 +114,42 @@ export function findRecentDuplicateUserMessage(
   return row ? mapMessageRow(row) : undefined
 }
 
+export function allocateMessageSequence(db: Database.Database, conversationId: string): number {
+  const row = db
+    .prepare(`
+      SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence
+      FROM messages
+      WHERE conversation_id = ?
+    `)
+    .get(conversationId) as { sequence: number }
+  return row.sequence
+}
+
+export function findMessageByClientId(
+  db: Database.Database,
+  conversationId: string,
+  senderUserId: string,
+  clientMessageId: string,
+): MessageRow | undefined {
+  const row = db
+    .prepare(`
+      SELECT ${MESSAGE_COLUMNS}
+      FROM messages
+      WHERE conversation_id = ? AND sender_user_id = ? AND client_message_id = ?
+    `)
+    .get(conversationId, senderUserId, clientMessageId) as MessageSqlRow | undefined
+  return row ? mapMessageRow(row) : undefined
+}
+
 export function insertMessage(db: Database.Database, input: InsertMessageInput): string {
   const id = randomUUID()
+  const sequence = allocateMessageSequence(db, input.conversationId)
   db.prepare(`
     INSERT INTO messages (
-      id, conversation_id, role, content, kind, from_bot_id, to_bot_id, delegation_id, input_json
+      id, conversation_id, role, content, kind, from_bot_id, to_bot_id, delegation_id, input_json,
+      sender_user_id, client_message_id, mentioned_bot_id, sequence
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     input.conversationId,
@@ -116,6 +160,10 @@ export function insertMessage(db: Database.Database, input: InsertMessageInput):
     input.toBotId ?? null,
     input.delegationId ?? null,
     serializeMessageInput(input.input),
+    input.senderUserId ?? null,
+    input.clientMessageId ?? null,
+    input.mentionedBotId ?? null,
+    sequence,
   )
   touchConversationUpdatedAt(db, input.conversationId)
   return id
@@ -333,6 +381,14 @@ export function mapMessageRow(row: MessageSqlRow): MessageRow {
     to_bot_id: row.to_bot_id,
     delegation_id: row.delegation_id,
     input: parseMessageInput(row.input_json),
+    sender_user_id: row.sender_user_id ?? null,
+    client_message_id: row.client_message_id ?? null,
+    mentioned_bot_id: row.mentioned_bot_id ?? null,
+    sequence: row.sequence ?? null,
+    sender_user:
+      row.sender_user_id && row.sender_username
+        ? { id: row.sender_user_id, username: row.sender_username }
+        : null,
   }
 }
 

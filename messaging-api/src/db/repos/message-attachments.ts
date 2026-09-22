@@ -61,6 +61,15 @@ export function insertStagedAttachment(
   return id
 }
 
+export function getAttachmentById(
+  db: Database.Database,
+  attachmentId: string,
+): AttachmentRow | undefined {
+  return db
+    .prepare(`SELECT * FROM message_attachments WHERE id = ?`)
+    .get(attachmentId) as AttachmentRow | undefined
+}
+
 export function getAttachmentForUser(
   db: Database.Database,
   userId: string,

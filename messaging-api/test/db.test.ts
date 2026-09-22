@@ -881,6 +881,64 @@ describe('run transitions', () => {
     expect(failedRow.error_code).toBe('old_error')
     expect(failedRow.error_detail).toBe('already failed')
   })
+
+  it('backfills shared-conversation membership and message sequence', () => {
+    const db = new Database(':memory:')
+    db.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL
+      );
+      INSERT INTO users (id, username, password_hash) VALUES ('owner', 'ada', 'hash');
+      CREATE TABLE conversations (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        hermes_session_id TEXT NOT NULL,
+        title TEXT,
+        created_at TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'regular',
+        dm_key TEXT
+      );
+      INSERT INTO conversations (id, user_id, hermes_session_id, title, created_at, kind, dm_key)
+      VALUES ('c1', 'owner', 'hs1', 'Chat', '2026-01-01 00:00:00', 'regular', 'not-a-dm');
+      CREATE TABLE messages (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES
+        ('m-b', 'c1', 'assistant', 'later', '2026-01-03 00:00:00'),
+        ('m-d', 'c1', 'user', 'tie-b', '2026-01-02 00:00:00'),
+        ('m-a', 'c1', 'user', 'first', '2026-01-01 00:00:00'),
+        ('m-c', 'c1', 'user', 'tie-a', '2026-01-02 00:00:00');
+    `)
+
+    initSchema(db)
+
+    const tables = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('conversation_members', 'group_bot_runs')`)
+      .all() as Array<{ name: string }>
+    expect(tables.map((row) => row.name).sort()).toEqual(['conversation_members', 'group_bot_runs'])
+
+    const members = db
+      .prepare(`SELECT user_id FROM conversation_members WHERE conversation_id = 'c1'`)
+      .all() as Array<{ user_id: string }>
+    expect(members).toEqual([{ user_id: 'owner' }])
+
+    const sequences = db
+      .prepare(`SELECT id, sequence FROM messages WHERE conversation_id = 'c1' ORDER BY sequence ASC`)
+      .all() as Array<{ id: string; sequence: number }>
+    expect(sequences).toEqual([
+      { id: 'm-a', sequence: 1 },
+      { id: 'm-c', sequence: 2 },
+      { id: 'm-d', sequence: 3 },
+      { id: 'm-b', sequence: 4 },
+    ])
+    expect(new Set(sequences.map((row) => row.sequence)).size).toBe(sequences.length)
+  })
 })
 
 describe('session denylist', () => {

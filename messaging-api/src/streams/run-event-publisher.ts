@@ -65,6 +65,13 @@ export function publishToolingComplete(ctx: RunEventContext): void {
   }
 }
 
+export function publishReplyTyping(ctx: RunEventContext): void {
+  ctx.hub.publishToUser(ctx.userId, {
+    event: 'reply',
+    data: { conversationId: ctx.conversationId, runId: ctx.runId, phase: 'typing' },
+  })
+}
+
 export function publishReplyToken(ctx: RunEventContext, text: string): void {
   ctx.hub.publishToUser(ctx.userId, {
     event: 'reply',

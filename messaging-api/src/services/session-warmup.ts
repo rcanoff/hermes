@@ -25,6 +25,10 @@ export function scheduleConversationSessionWarmup(input: {
   companionUsername?: string
   log?: (message: string, meta?: Record<string, unknown>) => void
 }): void {
+  if (input.conversation.kind === 'user_dm' || input.conversation.kind === 'group') {
+    return
+  }
+
   const bootstrapPrompt = input.companionUsername
     ? resolveJobConversationBootstrap(input.conversation, input.companionUsername)
     : input.conversation.bootstrap_prompt

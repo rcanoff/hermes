@@ -1,8 +1,10 @@
 import type { FastifyPluginAsync } from 'fastify'
 import { getConversationForUser, setBootstrapPrompt } from '../db/repos/conversations.js'
 import {
+  findMessageByClientId,
   findRecentDuplicateUserMessage,
   insertMessage,
+  getMessage,
   listMessages,
   listMessagesPage,
 } from '../db/repos/messages.js'
@@ -19,6 +21,7 @@ import {
 import { removeAttachmentTree } from '../lib/attachment-storage.js'
 import { validateBootstrap } from '../lib/bootstrap.js'
 import { resolveJobConversationBootstrap } from '../lib/job-conversation.js'
+import { buildConversationSyncEntry } from '../lib/conversation-sync-entry.js'
 import { buildHalLinks, parseListAnchors, parsePageLimit } from '../lib/pagination.js'
 import { getProcessByAssistantMessageIds } from '../db/repos/process.js'
 import { createRun, getActiveRun } from '../db/repos/runs.js'
@@ -29,14 +32,30 @@ import {
   removeConversationMessagesFrom,
 } from '../services/conversation-message-rewind.js'
 import { GrokInputError, resolveGrokInput } from '../services/grok-input.js'
+import { enqueueGroupRun } from '../db/repos/group-bot-runs.js'
+import {
+  appendGroupAssistantMessage,
+  drainGroupRuns,
+  groupPromptForMention,
+  type GroupRunDeps,
+} from '../services/group-run.js'
 import { executeAssistantRun } from '../services/run-executor.js'
 import { scheduleTitleGeneration } from '../services/title-generator.js'
 import { scheduleConversationSessionWarmup } from '../services/session-warmup.js'
-import { emitConversationMessageUpsert } from '../services/chat-sync-emitter.js'
+import {
+  appendAccountMessageUpsert,
+  appendConversationMessageUpsert,
+} from '../db/repos/chat-sync-events.js'
+import {
+  emitAccountConversationUpsert,
+  emitConversationMessageUpsert,
+  emitToConversationMembers,
+} from '../services/chat-sync-emitter.js'
 import {
   publishAccountConversationUpsert,
   publishMessageUpsert,
   publishMessagesRewound,
+  publishToConversationMembers,
 } from '../streams/sse-mutation-publisher.js'
 import type { StreamEvent } from '../streams/hub.js'
 
@@ -45,6 +64,8 @@ interface MessageBody {
   content?: string
   bootstrap?: string
   attachment_ids?: string[]
+  client_message_id?: string | null
+  mentioned_bot_id?: string | null
 }
 
 class BootstrapValidationError extends Error {
@@ -133,7 +154,31 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    if (attachmentIds.length === 0) {
+    const shared = conversation.kind === 'user_dm' || conversation.kind === 'group'
+    const clientMessageId = optionalBodyId(body, 'client_message_id')
+    const mentionedBotId = optionalBodyId(body, 'mentioned_bot_id')
+    if (shared && !isUuid(clientMessageId)) {
+      return reply.code(400).send({ error: 'invalid_request' })
+    }
+    if (clientMessageId && isUuid(clientMessageId)) {
+      const existing = findMessageByClientId(
+        app.db,
+        conversation.id,
+        request.userId,
+        clientMessageId,
+      )
+      if (existing) {
+        return reply.code(200).send({ message: enrichMessageWithAttachments(app.db, existing) })
+      }
+    }
+    if (
+      mentionedBotId !== undefined &&
+      (conversation.kind !== 'group' || mentionedBotId !== conversation.bot_id)
+    ) {
+      return reply.code(400).send({ error: 'invalid_request' })
+    }
+
+    if (attachmentIds.length === 0 && !clientMessageId) {
       const duplicate = findRecentDuplicateUserMessage(app.db, conversation.id, content)
       if (duplicate) {
         return reply.code(202).send({ message: enrichMessageWithAttachments(app.db, duplicate) })
@@ -141,6 +186,76 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     }
 
     try {
+      if (shared) {
+        const created = app.db.transaction(() => {
+          const mention = mentionedBotId
+            ? groupPromptForMention(app.db, {
+                conversationId: conversation.id,
+                botId: mentionedBotId,
+                username: request.username,
+                text: content,
+              })
+            : null
+          const messageId = insertMessage(app.db, {
+            conversationId: conversation.id,
+            role: 'user',
+            content,
+            senderUserId: request.userId,
+            clientMessageId,
+            mentionedBotId: mentionedBotId ?? null,
+          })
+          if (attachmentIds.length > 0) {
+            const staged = validateStagedAttachments(app.db, request.userId, attachmentIds)
+            if (!staged) {
+              throw new Error('invalid_attachments')
+            }
+            linkAttachmentsToMessage(app.db, request.userId, messageId, attachmentIds)
+          }
+          const stored = getMessage(app.db, conversation.id, messageId)
+          if (!stored) {
+            throw new Error('message_not_found')
+          }
+          const enriched = enrichMessageWithAttachments(app.db, stored)
+          emitToConversationMembers(app.db, conversation.id, (userId) => {
+            appendAccountMessageUpsert(app.db, userId, conversation.id, enriched)
+            emitAccountConversationUpsert(app.db, userId, conversation.id, app.companionModels)
+          })
+          appendConversationMessageUpsert(app.db, conversation.user_id, conversation.id, enriched)
+          const runError =
+            mention && !mention.fits
+              ? appendGroupAssistantMessage(app.db, conversation, 'context_too_large', app.companionModels)
+              : null
+          if (mention?.fits) {
+            enqueueGroupRun(app.db, { messageId, conversationId: conversation.id })
+          }
+          return { message: enriched, runError, enqueued: mention?.fits === true }
+        })()
+
+        publishToConversationMembers(app.streamHub, app.db, conversation.id, {
+          event: 'message_upsert',
+          data: { conversationId: conversation.id, message: created.message },
+        })
+        if (created.runError) {
+          publishToConversationMembers(app.streamHub, app.db, conversation.id, {
+            event: 'message_upsert',
+            data: { conversationId: conversation.id, message: created.runError },
+          })
+        }
+        const row = getConversationForUser(app.db, request.userId, conversation.id)
+        if (row) {
+          publishToConversationMembers(app.streamHub, app.db, conversation.id, {
+            event: 'conversation_upsert',
+            data: { conversation: buildConversationSyncEntry(app.db, row, app.companionModels) },
+          })
+        }
+        if (created.enqueued) {
+          void drainGroupRuns(groupRunDeps(app)).catch((error) => {
+            app.log.error({ err: error }, 'group run drain failed')
+          })
+        }
+        return reply.code(202).send({ message: created.message })
+      }
+
       let bootstrapPrompt = resolveJobConversationBootstrap(conversation, request.username)
 
       const created = app.db.transaction(() => {
@@ -283,6 +398,9 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     if (!conversation) {
       return reply.code(404).send({ error: 'not_found' })
     }
+    if (isSharedKind(conversation.kind)) {
+      return reply.code(409).send({ error: 'unavailable' })
+    }
     app.runAbortRegistry.abort(conversation.id, 'interrupt')
     try {
       await app.grokGatewayClient.cancelPrompt(conversation.id)
@@ -302,6 +420,9 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     const conversation = getOwnedConversation(app, request.userId, (request.params as { id: string }).id)
     if (!conversation) {
       return reply.code(404).send({ error: 'not_found' })
+    }
+    if (isSharedKind(conversation.kind)) {
+      return reply.code(409).send({ error: 'delete_unavailable' })
     }
 
     if (getActiveRun(app.db, conversation.id)) {
@@ -400,6 +521,9 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       if (!conversation) {
         return reply.code(404).send({ error: 'not_found' })
       }
+      if (isSharedKind(conversation.kind)) {
+        return reply.code(409).send({ error: 'delete_unavailable' })
+      }
 
       if (getActiveRun(app.db, conversation.id)) {
         return reply.code(409).send({ error: 'run_conflict' })
@@ -485,6 +609,9 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       const conversation = getOwnedConversation(app, request.userId, id)
       if (!conversation) {
         return reply.code(404).send({ error: 'not_found' })
+      }
+      if (isSharedKind(conversation.kind)) {
+        return reply.code(409).send({ error: 'unavailable' })
       }
 
       const body = parseInputBody(request.body)
@@ -578,6 +705,24 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
 
 export default messageRoutes
 
+function groupRunDeps(app: Parameters<FastifyPluginAsync>[0]): GroupRunDeps {
+  return {
+    db: app.db,
+    hub: app.streamHub,
+    bridgeUrl: app.titleGeneration.bridgeUrl,
+    bridgeApiKey: app.titleGeneration.bridgeApiKey,
+    timeoutMs: app.titleGeneration.timeoutMs,
+    catalog: app.companionModels,
+    log: (message, meta) => {
+      app.log.error(meta ?? {}, message)
+    },
+  }
+}
+
+function isSharedKind(kind: string): boolean {
+  return kind === 'user_dm' || kind === 'group'
+}
+
 function getOwnedConversation(
   app: Parameters<FastifyPluginAsync>[0],
   userId: string,
@@ -616,6 +761,22 @@ function normalizeAttachmentIds(value: string[] | undefined): string[] {
 function extractMessageText(body: MessageBody): string {
   const raw = typeof body.text === 'string' ? body.text : body.content
   return typeof raw === 'string' ? raw.trim() : ''
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function optionalBodyId(
+  body: MessageBody,
+  key: 'client_message_id' | 'mentioned_bot_id',
+): string | undefined {
+  if (body[key] == null) {
+    return undefined
+  }
+  return typeof body[key] === 'string' ? body[key] : ''
+}
+
+function isUuid(value: string | undefined): value is string {
+  return typeof value === 'string' && UUID_RE.test(value)
 }
 
 function parseInputBody(value: unknown): { action: string; text?: string } | null {

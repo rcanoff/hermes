@@ -5,6 +5,7 @@ import { initSchema } from '../src/db/schema.js'
 import {
   appendAccountConversationDeleted,
   appendAccountConversationUpsert,
+  appendAccountMessageUpsert,
   appendConversationMessageUpsert,
 } from '../src/db/repos/chat-sync-events.js'
 import { insertMessage } from '../src/db/repos/messages.js'
@@ -168,4 +169,51 @@ describe('buildInbox', () => {
     expect(result.reset_required).toBe(true)
     expect(result.changes).toEqual([])
   })
+
+  it('does not count live shared events toward maxGap unless includeShared', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const userId = randomUUID()
+    const groupId = randomUUID()
+    const dmId = randomUUID()
+    const goneId = randomUUID()
+    seedUser(db, userId)
+    seedKind(db, userId, groupId, 'group')
+    seedKind(db, userId, dmId, 'user_dm')
+    seedKind(db, userId, goneId, 'group')
+    db.prepare(`DELETE FROM conversations WHERE id = ?`).run(goneId)
+
+    for (const conversationId of [groupId, dmId]) {
+      for (let i = 0; i < 3; i += 1) {
+        appendAccountMessageUpsert(db, userId, conversationId, {
+          id: randomUUID(),
+          conversation_id: conversationId,
+          role: 'user',
+          content: `m${i}`,
+          created_at: `2026-01-01T00:00:0${i}.000Z`,
+        })
+      }
+    }
+    appendAccountConversationDeleted(db, userId, goneId)
+
+    const hidden = buildInbox(db, userId, SYNC_MARKER_ORIGIN, { maxGap: 2, includeShared: false })
+    const shown = buildInbox(db, userId, SYNC_MARKER_ORIGIN, { maxGap: 2, includeShared: true })
+
+    expect(hidden.reset_required).toBe(false)
+    expect(hidden.changes).toEqual([{ conversation_id: goneId, kind: 'deleted' }])
+    expect(shown.reset_required).toBe(true)
+    expect(shown.changes).toEqual([])
+  })
 })
+
+function seedKind(
+  db: Database.Database,
+  userId: string,
+  conversationId: string,
+  kind: 'group' | 'user_dm',
+) {
+  db.prepare(`
+    INSERT INTO conversations (id, user_id, hermes_session_id, kind, title, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 't', datetime('now'), datetime('now'))
+  `).run(conversationId, userId, randomUUID(), kind)
+}

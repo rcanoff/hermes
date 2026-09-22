@@ -60,6 +60,7 @@ describe('executeAssistantRun process stream', () => {
     expect(hermes.requests[0]?.companionUsername).toBe('op')
 
     expect(events.map((e) => e.event)).toEqual([
+      'reply',
       'tooling',
       'tooling',
       'tooling',
@@ -71,6 +72,10 @@ describe('executeAssistantRun process stream', () => {
     ])
 
     expect(events[0]).toEqual({
+      event: 'reply',
+      data: { conversationId: 'c1', runId: 'run-1', phase: 'typing' },
+    })
+    expect(events[1]).toEqual({
       event: 'tooling',
       data: {
         conversationId: 'c1',
@@ -273,6 +278,7 @@ describe('executeAssistantRun process stream', () => {
     await runPromise
 
     expect(events.map((e) => e.event)).toEqual([
+      'reply',
       'tooling',
       'tooling',
       'tooling',
@@ -283,7 +289,7 @@ describe('executeAssistantRun process stream', () => {
       'conversation_upsert',
       'reply',
     ])
-    expect(events[0]).toEqual({
+    expect(events[1]).toEqual({
       event: 'tooling',
       data: {
         conversationId: 'c1',
@@ -293,7 +299,7 @@ describe('executeAssistantRun process stream', () => {
         draft: true,
       },
     })
-    expect(events[2]).toEqual({
+    expect(events[3]).toEqual({
       event: 'tooling',
       data: {
         conversationId: 'c1',
@@ -302,7 +308,7 @@ describe('executeAssistantRun process stream', () => {
         text: 'Thinking',
       },
     })
-    expect(events[4]).toEqual({
+    expect(events[5]).toEqual({
       event: 'tooling',
       data: {
         conversationId: 'c1',

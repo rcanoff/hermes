@@ -3,12 +3,17 @@ import type Database from 'better-sqlite3'
 import {
   COMPANION_DEFAULT_MODEL,
   COMPANION_DEFAULT_PROVIDER,
+  DEFAULT_COMPANION_MODELS,
 } from '../../lib/companion-models.js'
+import { buildConversationSyncEntry } from '../../lib/conversation-sync-entry.js'
 import { buildJobConversationBootstrap } from '../../lib/job-conversation.js'
 import { enqueueConversationAttachments } from '../../services/attachment-cleanup.js'
 import { ensureDefaultBotRow } from './bots.js'
+import { appendAccountConversationUpsert } from './chat-sync-events.js'
+import { addConversationMembers } from './conversation-members.js'
+import { findUserById } from './users.js'
 
-export type ConversationKind = 'regular' | 'job'
+export type ConversationKind = 'regular' | 'user_dm' | 'group' | 'job'
 
 export const BOT_CHAT_TITLE = 'Bot Chat'
 
@@ -46,12 +51,21 @@ export interface ListPageAnchors {
 export interface ListConversationsFilter {
   kind?: ConversationKind
   botId?: string
+  includeShared?: boolean
 }
 
 const CONVERSATION_COLUMNS = `
-  id, user_id, hermes_session_id, kind, title, bootstrap_prompt,
-  hermes_job_id, schedule_display, job_enabled, job_last_run_at, job_last_status,
-  model, provider, bot_id, peer_bot_id, created_at, updated_at
+  conversations.id, conversations.user_id, conversations.hermes_session_id, conversations.kind,
+  conversations.title, conversations.bootstrap_prompt, conversations.hermes_job_id,
+  conversations.schedule_display, conversations.job_enabled, conversations.job_last_run_at,
+  conversations.job_last_status, conversations.model, conversations.provider, conversations.bot_id,
+  conversations.peer_bot_id, conversations.created_at, conversations.updated_at
+`
+
+const MEMBERSHIP_JOIN = `
+  INNER JOIN conversation_members
+    ON conversation_members.conversation_id = conversations.id
+   AND conversation_members.user_id = ?
 `
 
 export function touchConversationUpdatedAt(db: Database.Database, conversationId: string): void {
@@ -98,6 +112,117 @@ export function createConversation(
     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `).run(id, userId, hermesSessionId, bootstrapPrompt ?? null, model, provider, resolvedBotId)
   return id
+}
+
+export function sharedConversationTitle(usernames: string[]): string {
+  const names = [...usernames].sort()
+  while (names.length > 1 && names.join(', ').length > 120) {
+    names.pop()
+  }
+  return names.join(', ').slice(0, 120)
+}
+
+export function createOrOpenUserDm(
+  db: Database.Database,
+  callerId: string,
+  peerId: string,
+): { id: string; created: boolean } {
+  const key = [callerId, peerId].sort().join(':')
+  const existing = findUserDm(db, key)
+  if (existing) {
+    return { id: existing.id, created: false }
+  }
+
+  const id = randomUUID()
+  const insert = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO conversations (
+        id, user_id, hermes_session_id, kind, title, model, provider,
+        bot_id, peer_bot_id, dm_key, updated_at
+      )
+      VALUES (?, ?, ?, 'user_dm', ?, ?, ?, NULL, NULL, ?, datetime('now'))
+    `).run(
+      id,
+      callerId,
+      randomUUID(),
+      findUserById(db, peerId)?.username ?? '',
+      COMPANION_DEFAULT_MODEL,
+      COMPANION_DEFAULT_PROVIDER,
+      key,
+    )
+    const row = getConversationById(db, id)!
+    addConversationMembers(db, id, [callerId, peerId], row.created_at)
+    const entry = buildConversationSyncEntry(db, row, DEFAULT_COMPANION_MODELS)
+    appendAccountConversationUpsert(db, callerId, id, entry)
+    appendAccountConversationUpsert(db, peerId, id, entry)
+  })
+
+  try {
+    insert()
+  } catch (error) {
+    if (!isUniqueConstraint(error)) {
+      throw error
+    }
+    const raced = findUserDm(db, key)
+    if (!raced) {
+      throw error
+    }
+    return { id: raced.id, created: false }
+  }
+
+  return { id, created: true }
+}
+
+export function createGroupConversation(
+  db: Database.Database,
+  input: { callerId: string; peerIds: string[]; botId: string },
+): string {
+  const memberIds = [input.callerId, ...input.peerIds]
+  const placeholders = memberIds.map(() => '?').join(', ')
+  const people = db
+    .prepare(`SELECT username FROM users WHERE id IN (${placeholders})`)
+    .all(...memberIds) as Array<{ username: string }>
+  const id = randomUUID()
+
+  db.transaction(() => {
+    db.prepare(`
+      INSERT INTO conversations (
+        id, user_id, hermes_session_id, kind, title, model, provider,
+        bot_id, peer_bot_id, updated_at
+      )
+      VALUES (?, ?, ?, 'group', ?, ?, ?, ?, NULL, datetime('now'))
+    `).run(
+      id,
+      input.callerId,
+      randomUUID(),
+      sharedConversationTitle(people.map((person) => person.username)),
+      COMPANION_DEFAULT_MODEL,
+      COMPANION_DEFAULT_PROVIDER,
+      input.botId,
+    )
+    const row = getConversationById(db, id)!
+    addConversationMembers(db, id, memberIds, row.created_at)
+    const entry = buildConversationSyncEntry(db, row, DEFAULT_COMPANION_MODELS)
+    for (const userId of memberIds) {
+      appendAccountConversationUpsert(db, userId, id, entry)
+    }
+  })()
+
+  return id
+}
+
+function findUserDm(db: Database.Database, dmKey: string): { id: string } | undefined {
+  return db
+    .prepare(`SELECT id FROM conversations WHERE kind = 'user_dm' AND dm_key = ?`)
+    .get(dmKey) as { id: string } | undefined
+}
+
+function isUniqueConstraint(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: string }).code === 'SQLITE_CONSTRAINT_UNIQUE'
+  )
 }
 
 export function findPeerConversation(
@@ -328,13 +453,14 @@ export function listConversationsPage(
       .prepare(`
         SELECT ${CONVERSATION_COLUMNS}
         FROM conversations
-        WHERE user_id = ?
+        ${MEMBERSHIP_JOIN}
+        WHERE 1 = 1
           ${clause}
           AND (
-            updated_at < ?
-            OR (updated_at = ? AND id < ?)
+            conversations.updated_at < ?
+            OR (conversations.updated_at = ? AND conversations.id < ?)
           )
-        ORDER BY updated_at DESC, id DESC
+        ORDER BY conversations.updated_at DESC, conversations.id DESC
         LIMIT ?
       `)
       .all(userId, ...params, cursor.updated_at, cursor.updated_at, cursor.id, limit) as ConversationRow[]
@@ -352,13 +478,14 @@ export function listConversationsPage(
       .prepare(`
         SELECT ${CONVERSATION_COLUMNS}
         FROM conversations
-        WHERE user_id = ?
+        ${MEMBERSHIP_JOIN}
+        WHERE 1 = 1
           ${clause}
           AND (
-            updated_at > ?
-            OR (updated_at = ? AND id > ?)
+            conversations.updated_at > ?
+            OR (conversations.updated_at = ? AND conversations.id > ?)
           )
-        ORDER BY updated_at ASC, id ASC
+        ORDER BY conversations.updated_at ASC, conversations.id ASC
         LIMIT ?
       `)
       .all(userId, ...params, cursor.updated_at, cursor.updated_at, cursor.id, limit) as ConversationRow[]
@@ -371,9 +498,10 @@ export function listConversationsPage(
     .prepare(`
       SELECT ${CONVERSATION_COLUMNS}
       FROM conversations
-      WHERE user_id = ?
+      ${MEMBERSHIP_JOIN}
+      WHERE 1 = 1
         ${clause}
-      ORDER BY updated_at DESC, id DESC
+      ORDER BY conversations.updated_at DESC, conversations.id DESC
       LIMIT ?
     `)
     .all(userId, ...params, limit) as ConversationRow[]
@@ -406,7 +534,10 @@ export function getConversationForUser(
     .prepare(`
       SELECT ${CONVERSATION_COLUMNS}
       FROM conversations
-      WHERE user_id = ? AND id = ?
+      INNER JOIN conversation_members
+        ON conversation_members.conversation_id = conversations.id
+       AND conversation_members.user_id = ?
+      WHERE conversations.id = ?
     `)
     .get(userId, conversationId) as ConversationRow | undefined
 }
@@ -436,6 +567,7 @@ export function listGrokRuntimeConversations(db: Database.Database): Conversatio
       FROM conversations
       INNER JOIN bots ON bots.id = conversations.bot_id
       WHERE bots.runtime = 'grok'
+        AND conversations.kind NOT IN ('user_dm', 'group')
       ORDER BY conversations.updated_at DESC, conversations.id DESC
     `)
     .all() as ConversationRow[]
@@ -608,12 +740,16 @@ function conversationFilterSql(filter: ListConversationsFilter): {
 } {
   const clauses: string[] = []
   const params: string[] = []
-  if (filter.kind) {
-    clauses.push('AND kind = ?')
+  if (filter.includeShared && filter.kind === 'regular') {
+    clauses.push(`AND conversations.kind IN ('regular', 'user_dm', 'group')`)
+  } else if (filter.kind) {
+    clauses.push('AND conversations.kind = ?')
     params.push(filter.kind)
+  } else if (!filter.includeShared) {
+    clauses.push(`AND conversations.kind IN ('regular', 'job')`)
   }
   if (filter.botId) {
-    clauses.push('AND bot_id = ?')
+    clauses.push('AND conversations.bot_id = ?')
     params.push(filter.botId)
   }
   return { clause: clauses.join(' '), params }
@@ -623,7 +759,13 @@ function conversationMatchesFilter(
   conversation: ConversationRow,
   filter: ListConversationsFilter,
 ): boolean {
-  if (filter.kind && conversation.kind !== filter.kind) {
+  if (filter.includeShared && filter.kind === 'regular') {
+    if (conversation.kind !== 'regular' && conversation.kind !== 'user_dm' && conversation.kind !== 'group') {
+      return false
+    }
+  } else if (filter.kind && conversation.kind !== filter.kind) {
+    return false
+  } else if (!filter.includeShared && !filter.kind && conversation.kind !== 'regular' && conversation.kind !== 'job') {
     return false
   }
   if (filter.botId && conversation.bot_id !== filter.botId) {
@@ -655,11 +797,12 @@ function buildConversationPage(
     .prepare(`
       SELECT 1
       FROM conversations
-      WHERE user_id = ?
+      ${MEMBERSHIP_JOIN}
+      WHERE 1 = 1
         ${clause}
         AND (
-          updated_at > ?
-          OR (updated_at = ? AND id > ?)
+          conversations.updated_at > ?
+          OR (conversations.updated_at = ? AND conversations.id > ?)
         )
       LIMIT 1
     `)
@@ -669,11 +812,12 @@ function buildConversationPage(
     .prepare(`
       SELECT 1
       FROM conversations
-      WHERE user_id = ?
+      ${MEMBERSHIP_JOIN}
+      WHERE 1 = 1
         ${clause}
         AND (
-          updated_at < ?
-          OR (updated_at = ? AND id < ?)
+          conversations.updated_at < ?
+          OR (conversations.updated_at = ? AND conversations.id < ?)
         )
       LIMIT 1
     `)

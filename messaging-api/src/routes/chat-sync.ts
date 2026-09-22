@@ -21,13 +21,19 @@ const MAX_CONVERSATION_SYNC_LIMIT = 1000
 
 const chatSyncRoutes: FastifyPluginAsync = async (app) => {
   app.get('/conversations/sync', { preHandler: app.authenticate }, async (request, reply) => {
-    const query = request.query as { since?: string; limit?: string }
+    const query = request.query as { since?: string; limit?: string; include_shared?: string }
     const limit = parseSyncLimit(query.limit, DEFAULT_ACCOUNT_SYNC_LIMIT, MAX_ACCOUNT_SYNC_LIMIT)
     if (limit === null) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
-    const page = listAccountSyncEvents(app.db, request.userId, query.since, limit)
+    const page = listAccountSyncEvents(
+      app.db,
+      request.userId,
+      query.since,
+      limit,
+      query.include_shared === 'true',
+    )
     if (page === null) {
       return query.since
         ? reply.code(400).send({ error: 'sync_marker_invalid' })

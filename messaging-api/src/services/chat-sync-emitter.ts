@@ -6,11 +6,22 @@ import {
   appendConversationMessageUpsert,
   appendConversationMessagesRewound,
 } from '../db/repos/chat-sync-events.js'
+import { listConversationMemberIds } from '../db/repos/conversation-members.js'
 import { getConversationForUser } from '../db/repos/conversations.js'
 import type { MessageWithAttachments } from '../lib/attachment-serializer.js'
 import type { MessageProcess } from '../db/repos/process.js'
 import { DEFAULT_COMPANION_MODELS, type CuratedModelEntry } from '../lib/companion-models.js'
 import { buildConversationSyncEntry } from '../lib/conversation-sync-entry.js'
+
+export function emitToConversationMembers(
+  db: Database.Database,
+  conversationId: string,
+  emit: (userId: string) => void,
+): void {
+  for (const userId of listConversationMemberIds(db, conversationId)) {
+    emit(userId)
+  }
+}
 
 export function emitAccountConversationUpsert(
   db: Database.Database,

@@ -5,6 +5,7 @@ export interface CompleteHermesAuxiliaryInput {
   model: string
   messages: HermesPromptMessage[]
   timeoutMs: number
+  maxTokens?: number
 }
 
 interface CompleteHermesAuxiliaryResponse {
@@ -32,7 +33,7 @@ export async function completeHermesAuxiliary(
         provider: input.provider,
         model: input.model,
         messages: input.messages,
-        max_tokens: 64,
+        max_tokens: input.maxTokens ?? 64,
         temperature: 0.3,
         timeout: input.timeoutMs / 1000,
       }),

@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import type { FastifyPluginAsync } from 'fastify'
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
+import { listConversationMemberIds } from '../db/repos/conversation-members.js'
+import { finishGroupRun } from '../db/repos/group-bot-runs.js'
+import { appendAccountConversationDeleted } from '../db/repos/chat-sync-events.js'
 import {
   createConversation,
+  createGroupConversation,
+  createOrOpenUserDm,
   deleteConversationForUser,
   getConversationForUser,
   listConversationsPage,
@@ -9,6 +14,7 @@ import {
   updateConversationTitle,
   type ConversationRow,
 } from '../db/repos/conversations.js'
+import { enqueueConversationAttachments } from '../services/attachment-cleanup.js'
 import { resolveDefaultModel } from '../db/repos/settings.js'
 import { getBotByIdForUser, getBotBySlug, normalizeBotRuntime } from '../db/repos/bots.js'
 import { DEFAULT_BOT_SLUG } from '../lib/hermes-profile.js'
@@ -39,7 +45,14 @@ import { scheduleConversationSessionWarmup } from '../services/session-warmup.js
 
 const conversationRoutes: FastifyPluginAsync = async (app) => {
   app.get('/conversations', { preHandler: app.authenticate }, async (request, reply) => {
-    const query = request.query as { limit?: string; before?: string; after?: string; bot_id?: string }
+    const query = request.query as {
+      limit?: string
+      before?: string
+      after?: string
+      bot_id?: string
+      include_shared?: string
+    }
+    const includeShared = query.include_shared === 'true'
     const limit = parsePageLimit(query.limit)
     if (limit === null) {
       return reply.code(400).send({ error: 'invalid_request' })
@@ -64,6 +77,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
     const page = listConversationsPage(app.db, request.userId, limit, anchors, {
       kind: 'regular',
       botId,
+      includeShared,
     })
     if (!page) {
       return reply.code(400).send({ error: 'invalid_request' })
@@ -74,7 +88,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
 
     return {
       conversations: page.conversations.map((row) =>
-        toConversationResponse(row, app.companionModels),
+        toConversationResponse(app.db, row, app.companionModels),
       ),
       _links: buildHalLinks({
         basePath: '/conversations',
@@ -85,12 +99,20 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
         hasNewer: page.hasNewer,
         firstId,
         lastId,
-        extraQuery: botId ? { bot_id: botId } : undefined,
+        extraQuery: {
+          ...(botId ? { bot_id: botId } : {}),
+          ...(includeShared ? { include_shared: 'true' } : {}),
+        },
       }),
     }
   })
 
   app.post('/conversations', { preHandler: app.authenticate }, async (request, reply) => {
+    const sharedKind = sharedCreateKind(request.body)
+    if (sharedKind) {
+      return createSharedConversation(app, request, reply, sharedKind)
+    }
+
     let bootstrapPrompt: string | null = null
     let modelProvider: { model: string; provider: string } | undefined
     let botId: string | undefined
@@ -190,7 +212,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
       },
     })
 
-    return reply.code(201).send(toConversationResponse(conversation!, app.companionModels))
+    return reply.code(201).send(toConversationResponse(app.db, conversation!, app.companionModels))
   })
 
   app.get('/conversations/:id', { preHandler: app.authenticate }, async (request, reply) => {
@@ -204,7 +226,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(404).send({ error: 'not_found' })
     }
 
-    return toConversationResponse(conversation, app.companionModels)
+    return toConversationResponse(app.db, conversation, app.companionModels)
   })
 
   app.patch('/conversations/:id', { preHandler: app.authenticate }, async (request, reply) => {
@@ -216,6 +238,18 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
 
     if (!isPatchConversationBody(request.body)) {
       return reply.code(400).send({ error: 'invalid_request' })
+    }
+
+    if (existing.kind === 'user_dm' || existing.kind === 'group') {
+      if (request.body.model !== undefined || request.body.provider !== undefined) {
+        return reply.code(400).send({ error: 'invalid_request' })
+      }
+      if (existing.kind === 'user_dm') {
+        return reply.code(400).send({ error: 'invalid_request' })
+      }
+      if (existing.user_id !== request.userId) {
+        return reply.code(403).send({ error: 'creator_required' })
+      }
     }
 
     if (request.body.model !== undefined || request.body.provider !== undefined) {
@@ -250,7 +284,7 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
           app.companionModels,
         )
 
-        return toConversationResponse(result.conversation, app.companionModels)
+        return toConversationResponse(app.db, result.conversation, app.companionModels)
       } catch (error) {
         if (error instanceof ModelChangeError) {
           if (error.code === 'run_conflict') {
@@ -277,16 +311,22 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
 
     const updated = updateConversationTitle(app.db, conversationId, normalizedTitle)
     if (updated) {
-      emitAccountConversationUpsert(app.db, request.userId, conversationId, app.companionModels)
-      publishAccountConversationUpsert(
-        app.streamHub,
-        app.db,
-        request.userId,
-        conversationId,
-        app.companionModels,
-      )
+      const userIds =
+        updated.kind === 'group'
+          ? listConversationMemberIds(app.db, conversationId)
+          : [request.userId]
+      for (const userId of userIds) {
+        emitAccountConversationUpsert(app.db, userId, conversationId, app.companionModels)
+        publishAccountConversationUpsert(
+          app.streamHub,
+          app.db,
+          userId,
+          conversationId,
+          app.companionModels,
+        )
+      }
     }
-    return updated ? toConversationResponse(updated, app.companionModels) : updated
+    return updated ? toConversationResponse(app.db, updated, app.companionModels) : updated
   })
 
   app.delete('/conversations/:id', { preHandler: app.authenticate }, async (request, reply) => {
@@ -294,6 +334,21 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
     const existing = getConversationForUser(app.db, request.userId, conversationId)
     if (!existing) {
       return reply.code(404).send({ error: 'not_found' })
+    }
+
+    if (existing.kind === 'user_dm') {
+      return reply.code(409).send({ error: 'delete_unavailable' })
+    }
+
+    if (existing.kind === 'group') {
+      if (existing.user_id !== request.userId) {
+        return reply.code(403).send({ error: 'creator_required' })
+      }
+      const memberIds = deleteGroupConversation(app, conversationId, request.userId)
+      for (const userId of memberIds) {
+        publishConversationDeleted(app.streamHub, userId, conversationId)
+      }
+      return reply.code(204).send()
     }
 
     if (getActiveRun(app.db, conversationId)) {
@@ -355,6 +410,133 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
 }
 
 export default conversationRoutes
+
+function deleteGroupConversation(
+  app: FastifyInstance,
+  conversationId: string,
+  userId: string,
+): string[] {
+  return app.db.transaction(() => {
+    const memberIds = listConversationMemberIds(app.db, conversationId)
+    enqueueConversationAttachments(app.db, conversationId)
+    const runs = app.db
+      .prepare(
+        `
+        SELECT message_id, state
+        FROM group_bot_runs
+        WHERE conversation_id = ? AND state IN ('queued', 'running')
+      `,
+      )
+      .all(conversationId) as Array<{ message_id: string; state: 'queued' | 'running' }>
+    for (const run of runs) {
+      finishGroupRun(app.db, run.message_id, run.state, 'cancelled')
+    }
+    for (const memberId of memberIds) {
+      appendAccountConversationDeleted(app.db, memberId, conversationId)
+    }
+    app.db.prepare('DELETE FROM group_bot_runs WHERE conversation_id = ?').run(conversationId)
+    if (!deleteConversationForUser(app.db, userId, conversationId)) {
+      throw new Error('conversation_delete_failed')
+    }
+    app.db.prepare('DELETE FROM conversation_members WHERE conversation_id = ?').run(conversationId)
+    return memberIds
+  })()
+}
+
+function sharedCreateKind(body: unknown): 'user_dm' | 'group' | null {
+  if (typeof body !== 'object' || body === null) {
+    return null
+  }
+  const kind = (body as { kind?: unknown }).kind
+  return kind === 'user_dm' || kind === 'group' ? kind : null
+}
+
+function participantIds(body: unknown): string[] | null {
+  const raw = (body as { participant_user_ids?: unknown }).participant_user_ids
+  if (raw === undefined) {
+    return []
+  }
+  if (!Array.isArray(raw)) {
+    return null
+  }
+  const ids: string[] = []
+  for (const id of raw) {
+    if (typeof id !== 'string' || !isValidAnchor(id)) {
+      return null
+    }
+    ids.push(id)
+  }
+  return ids
+}
+
+function usersExist(app: FastifyInstance, ids: string[]): boolean {
+  if (ids.length === 0) {
+    return true
+  }
+  const placeholders = ids.map(() => '?').join(', ')
+  const row = app.db
+    .prepare(`SELECT COUNT(*) AS n FROM users WHERE id IN (${placeholders})`)
+    .get(...ids) as { n: number }
+  return row.n === ids.length
+}
+
+function publishSharedUpserts(app: FastifyInstance, conversationId: string): void {
+  for (const userId of listConversationMemberIds(app.db, conversationId)) {
+    publishAccountConversationUpsert(
+      app.streamHub,
+      app.db,
+      userId,
+      conversationId,
+      app.companionModels,
+    )
+  }
+}
+
+async function createSharedConversation(
+  app: FastifyInstance,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  kind: 'user_dm' | 'group',
+) {
+  const ids = participantIds(request.body)
+  if (!ids) {
+    return reply.code(400).send({ error: 'invalid_request' })
+  }
+  if (ids.includes(request.userId) || new Set(ids).size !== ids.length || !usersExist(app, ids)) {
+    return reply.code(400).send({ error: 'invalid_request' })
+  }
+
+  const botId = (request.body as { bot_id?: unknown }).bot_id
+  if (kind === 'user_dm') {
+    if (ids.length !== 1 || botId !== undefined) {
+      return reply.code(400).send({ error: 'invalid_request' })
+    }
+    const opened = createOrOpenUserDm(app.db, request.userId, ids[0]!)
+    if (opened.created) {
+      publishSharedUpserts(app, opened.id)
+    }
+    const conversation = getConversationForUser(app.db, request.userId, opened.id)
+    return reply.code(opened.created ? 201 : 200).send(
+      toConversationResponse(app.db, conversation!, app.companionModels),
+    )
+  }
+
+  if (ids.length < 1) {
+    return reply.code(400).send({ error: 'invalid_request' })
+  }
+  if (typeof botId !== 'string' || !getBotByIdForUser(app.db, request.userId, botId)) {
+    return reply.code(404).send({ error: 'not_found' })
+  }
+
+  const conversationId = createGroupConversation(app.db, {
+    callerId: request.userId,
+    peerIds: ids,
+    botId,
+  })
+  publishSharedUpserts(app, conversationId)
+  const conversation = getConversationForUser(app.db, request.userId, conversationId)
+  return reply.code(201).send(toConversationResponse(app.db, conversation!, app.companionModels))
+}
 
 function isCreateConversationBody(
   value: unknown,

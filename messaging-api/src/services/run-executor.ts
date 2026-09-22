@@ -6,6 +6,7 @@ import type { StreamHub } from '../streams/hub.js'
 import {
   publishReplyDone,
   publishReplyToken,
+  publishReplyTyping,
   publishRewind,
   publishRunError,
   publishToolingComplete,
@@ -25,6 +26,7 @@ import {
 } from '../db/repos/bots.js'
 import {
   getConversationBotSlug,
+  getConversationById,
   getConversationForUser,
   type ConversationRow,
 } from '../db/repos/conversations.js'
@@ -103,6 +105,11 @@ function publishAssembledReply(
 }
 
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
+  const kind = getConversationById(input.db, input.conversationId)?.kind
+  if (kind === 'user_dm' || kind === 'group') {
+    return ''
+  }
+
   const runId =
     input.runId ??
     createRun(input.db, input.conversationId, input.userMessageId, input.originSessionId ?? 'legacy')
@@ -127,6 +134,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     runId,
     originSessionId: input.originSessionId,
   }
+  publishReplyTyping(streamCtx)
 
   const reply = createReplyAssembler()
   let sawDone = false

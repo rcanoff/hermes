@@ -4,7 +4,19 @@ import { getConversationForUser } from '../db/repos/conversations.js'
 import { DEFAULT_COMPANION_MODELS, type CuratedModelEntry } from '../lib/companion-models.js'
 import { buildConversationSyncEntry } from '../lib/conversation-sync-entry.js'
 import type { MessageWithAttachments } from '../lib/attachment-serializer.js'
-import type { StreamHub } from './hub.js'
+import { listConversationMemberIds } from '../db/repos/conversation-members.js'
+import type { SessionStreamEvent, StreamHub } from './hub.js'
+
+export function publishToConversationMembers(
+  hub: StreamHub,
+  db: Database.Database,
+  conversationId: string,
+  event: SessionStreamEvent,
+): void {
+  for (const userId of listConversationMemberIds(db, conversationId)) {
+    hub.publishToUser(userId, event)
+  }
+}
 
 export function publishMessageUpsert(
   hub: StreamHub,

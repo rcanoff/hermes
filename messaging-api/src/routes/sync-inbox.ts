@@ -9,7 +9,7 @@ import { buildInbox, isValidDeviceId } from '../lib/sync-inbox.js'
 
 const syncInboxRoutes: FastifyPluginAsync = async (app) => {
   app.get('/sync/inbox', { preHandler: app.authenticate }, async (request, reply) => {
-    const query = request.query as { device_id?: string; since?: string }
+    const query = request.query as { device_id?: string; since?: string; include_shared?: string }
     if (!isValidDeviceId(query.device_id)) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
@@ -27,6 +27,7 @@ const syncInboxRoutes: FastifyPluginAsync = async (app) => {
 
     const result = buildInbox(app.db, request.userId, since, {
       maxGap: app.syncInboxMaxGap,
+      includeShared: query.include_shared === 'true',
     })
 
     setDeviceSyncCursor(app.db, request.userId, query.device_id!, result.next_cursor)

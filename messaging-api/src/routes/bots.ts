@@ -20,6 +20,7 @@ import {
   type BotRow,
   type BotRuntime,
 } from '../db/repos/bots.js'
+import { listConversationMemberIds } from '../db/repos/conversation-members.js'
 import {
   BOT_CHAT_TITLE,
   createConversation,
@@ -364,6 +365,24 @@ const botRoutes: FastifyPluginAsync = async (app) => {
       upsertBotNotificationsEnabled(app.db, request.userId, id, body.notifications_enabled)
     }
 
+    if (body.name !== undefined || body.icon !== undefined || body.color !== undefined) {
+      const groups = app.db
+        .prepare(`SELECT id FROM conversations WHERE kind = 'group' AND bot_id = ?`)
+        .all(updated.id) as Array<{ id: string }>
+      for (const group of groups) {
+        for (const userId of listConversationMemberIds(app.db, group.id)) {
+          emitAccountConversationUpsert(app.db, userId, group.id, app.companionModels)
+          publishAccountConversationUpsert(
+            app.streamHub,
+            app.db,
+            userId,
+            group.id,
+            app.companionModels,
+          )
+        }
+      }
+    }
+
     return toBotResponse(
       updated,
       app.hermesHome,
@@ -385,6 +404,13 @@ const botRoutes: FastifyPluginAsync = async (app) => {
 
     if (existing.is_default === 1 || existing.slug === DEFAULT_BOT_SLUG) {
       return reply.code(409).send({ error: 'default_bot' })
+    }
+
+    const inGroup = app.db
+      .prepare(`SELECT 1 AS n FROM conversations WHERE kind = 'group' AND bot_id = ? LIMIT 1`)
+      .get(existing.id) as { n: number } | undefined
+    if (inGroup) {
+      return reply.code(409).send({ error: 'bot_in_group' })
     }
 
     const conversations = listConversationsReferencingBot(

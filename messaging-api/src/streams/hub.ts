@@ -34,7 +34,7 @@ export type SessionStreamEvent =
         conversationId: string
         runId: string
         text?: string
-        phase?: 'done'
+        phase?: 'done' | 'typing'
         messageId?: string
       }
     }

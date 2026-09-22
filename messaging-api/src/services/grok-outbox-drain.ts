@@ -328,6 +328,9 @@ export async function drainGrokOutboxesOnStartup(input: {
 }): Promise<void> {
   const catalog = input.companionModels ?? DEFAULT_COMPANION_MODELS
   for (const conversation of listGrokRuntimeConversations(input.db)) {
+    if (conversation.kind === 'user_dm' || conversation.kind === 'group') {
+      continue
+    }
     const latest = getLatestRunForConversation(input.db, conversation.id)
     if (latest?.error_code === 'interrupted') {
       continue

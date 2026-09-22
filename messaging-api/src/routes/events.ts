@@ -1,4 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify'
+import { getConversationById } from '../db/repos/conversations.js'
+import type { SessionStreamEvent } from '../streams/hub.js'
 
 const eventsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/events/stream', { preHandler: app.authenticate }, async (request, reply) => {
@@ -8,6 +10,7 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
 
     const sessionId = request.sessionId
     const userId = request.userId
+    const includeShared = (request.query as { include_shared?: string }).include_shared === 'true'
 
     reply.sseInit()
 
@@ -32,7 +35,7 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
       userId,
       sessionId,
       (event) => {
-        if (!closed) {
+        if (!closed && visibleStreamEvent(app.db, event, includeShared)) {
           reply.sseSend(event.event, event.data)
         }
       },
@@ -63,6 +66,21 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
       request.raw.on('error', onClose)
     })
   })
+}
+
+function visibleStreamEvent(
+  db: Parameters<typeof getConversationById>[0],
+  event: SessionStreamEvent,
+  includeShared: boolean,
+): boolean {
+  if (includeShared) {
+    return true
+  }
+  const kind =
+    event.event === 'conversation_upsert'
+      ? event.data.conversation.kind
+      : getConversationById(db, event.data.conversationId)?.kind
+  return kind !== 'user_dm' && kind !== 'group'
 }
 
 export default eventsRoutes

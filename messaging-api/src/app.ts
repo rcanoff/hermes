@@ -12,11 +12,13 @@ import chatSyncRoutes from './routes/chat-sync.js'
 import devicesRoutes from './routes/devices.js'
 import syncInboxRoutes from './routes/sync-inbox.js'
 import conversationRoutes from './routes/conversations.js'
+import userRoutes from './routes/users.js'
 import messageRoutes from './routes/messages.js'
 import attachmentRoutes from './routes/attachments.js'
 import { deleteExpiredOrphanAttachments } from './db/repos/message-attachments.js'
 import { removeAttachmentTree } from './lib/attachment-storage.js'
 import { drainAttachmentCleanup } from './services/attachment-cleanup.js'
+import { drainGroupRuns, type GroupRunDeps } from './services/group-run.js'
 import eventsRoutes from './routes/events.js'
 import dataLocationRoutes from './routes/data-location.js'
 import dataHealthRoutes from './routes/data-health.js'
@@ -186,9 +188,34 @@ export function buildApp(options: AppOptions) {
       )
     }, cleanupIntervalMs)
     timer.unref?.()
+    const groupDeps = groupRunDeps()
+    void drainGroupRuns(groupDeps).catch((error) => {
+      app.log.error({ err: error }, 'group run startup drain failed')
+    })
+    const groupTimer = setInterval(() => {
+      void drainGroupRuns(groupDeps).catch((error) => {
+        app.log.error({ err: error }, 'group run drain failed')
+      })
+    }, cleanupIntervalMs)
+    groupTimer.unref?.()
     app.addHook('onClose', async () => {
       clearInterval(timer)
+      clearInterval(groupTimer)
     })
+  }
+
+  function groupRunDeps(): GroupRunDeps {
+    return {
+      db: app.db,
+      hub: app.streamHub,
+      bridgeUrl: options.titleGeneration.bridgeUrl,
+      bridgeApiKey: options.titleGeneration.bridgeApiKey,
+      timeoutMs: options.titleGeneration.timeoutMs,
+      catalog: options.companionModels,
+      log: (message, meta) => {
+        app.log.error(meta ?? {}, message)
+      },
+    }
   }
 
   app.register(authPlugin)
@@ -198,6 +225,7 @@ export function buildApp(options: AppOptions) {
   app.register(chatSyncRoutes)
   app.register(devicesRoutes)
   app.register(syncInboxRoutes)
+  app.register(userRoutes)
   app.register(conversationRoutes)
   app.register(modelsRoutes)
   app.register(settingsRoutes)
