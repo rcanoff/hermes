@@ -208,6 +208,7 @@ export function buildApp(options: AppOptions) {
     return {
       db: app.db,
       hub: app.streamHub,
+      hermesClient: app.hermesClient,
       bridgeUrl: options.titleGeneration.bridgeUrl,
       bridgeApiKey: options.titleGeneration.bridgeApiKey,
       timeoutMs: options.titleGeneration.timeoutMs,

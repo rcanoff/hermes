@@ -12,11 +12,14 @@ import { seedTestUser } from './helpers/users.js'
 describe('group runs', () => {
   let app: FastifyInstance | undefined
   let complete: ReturnType<typeof vi.spyOn>
+  let auxiliary: ReturnType<typeof vi.spyOn>
 
   beforeEach(async () => {
     app = await createTestApp()
     await app.ready()
-    complete = vi.spyOn(hermesAuxiliaryClient, 'completeHermesAuxiliary').mockResolvedValue('ok')
+    vi.spyOn(app.hermesClient, 'ensureSession').mockResolvedValue()
+    complete = vi.spyOn(app.hermesClient, 'completeChat').mockResolvedValue('ok')
+    auxiliary = vi.spyOn(hermesAuxiliaryClient, 'completeHermesAuxiliary').mockResolvedValue('ok')
   })
 
   afterEach(async () => {
@@ -34,7 +37,7 @@ describe('group runs', () => {
     const group = await createGroup(app!, alice.token, bob.id, alice.id)
     const prompts: string[] = []
     const replies = ['boundary reply', 'second answer', 'third answer']
-    complete.mockImplementation(async (_url, _key, input) => {
+    complete.mockImplementation(async (input) => {
       const text = typeof input.messages[0]?.content === 'string' ? input.messages[0].content : ''
       prompts.push(text)
       return replies[prompts.length - 1] ?? 'later'
@@ -54,10 +57,9 @@ describe('group runs', () => {
     const secondSection = prompts[1].indexOf('Primary request from alice:')
     expect(prompts[1].slice(0, secondSection)).not.toContain('second request')
     expect(prompts[1].slice(secondSection)).toContain('second request')
-    expect(complete.mock.calls[0]?.[2]).toMatchObject({
-      maxTokens: 2048,
-      model: expect.not.stringMatching('hermes-agent'),
-    })
+    expect(auxiliary).not.toHaveBeenCalled()
+    expect(complete.mock.calls[0]?.[0]?.hermesSessionId).toBeTruthy()
+    expect(complete.mock.calls[0]?.[0]?.messages[0]?.content).toContain('Primary request from alice:')
     expect(messageContents(app!, group.id)).toEqual([
       'first request',
       'second request',
@@ -207,14 +209,15 @@ describe('group runs', () => {
     const group = await createGroup(app!, alice.token, bob.id, alice.id)
     app!.db.prepare(`UPDATE bots SET runtime = 'grok' WHERE id = ?`).run(group.botId)
     app!.db.prepare(`UPDATE conversations SET provider = 'grok' WHERE id = ?`).run(group.id)
-    complete.mockRejectedValue(new Error("unsupported provider 'grok'"))
+    auxiliary.mockRejectedValue(new Error("unsupported provider 'grok'"))
     const prompt = vi.spyOn(app!.grokGatewayClient, 'prompt')
     queueMention(app!, group.id, alice.id, group.botId, 'ask grok')
 
     await drainGroupRuns(deps(app!))
 
     expect(prompt).not.toHaveBeenCalled()
-    expect(complete.mock.calls[0]?.[2]).toMatchObject({ provider: 'grok', maxTokens: 2048 })
+    expect(complete).not.toHaveBeenCalled()
+    expect(auxiliary.mock.calls[0]?.[2]).toMatchObject({ provider: 'grok', maxTokens: 2048 })
     expect(messageContents(app!, group.id)).toEqual(['ask grok', 'runtime_unavailable'])
     expect(runStates(app!, group.id)).toEqual(['failed'])
   })
@@ -224,6 +227,7 @@ function deps(app: FastifyInstance): GroupRunDeps {
   return {
     db: app.db,
     hub: app.streamHub,
+    hermesClient: app.hermesClient,
     bridgeUrl: 'http://bridge.test',
     bridgeApiKey: 'key',
     timeoutMs: 1_000,

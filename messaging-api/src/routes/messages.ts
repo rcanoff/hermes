@@ -709,6 +709,7 @@ function groupRunDeps(app: Parameters<FastifyPluginAsync>[0]): GroupRunDeps {
   return {
     db: app.db,
     hub: app.streamHub,
+    hermesClient: app.hermesClient,
     bridgeUrl: app.titleGeneration.bridgeUrl,
     bridgeApiKey: app.titleGeneration.bridgeApiKey,
     timeoutMs: app.titleGeneration.timeoutMs,

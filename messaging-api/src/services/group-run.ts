@@ -10,7 +10,8 @@ import {
   appendAccountMessageUpsert,
   appendConversationMessageUpsert,
 } from '../db/repos/chat-sync-events.js'
-import { getConversationById } from '../db/repos/conversations.js'
+import { getBotById, hermesProfileKeyForBot, normalizeBotRuntime } from '../db/repos/bots.js'
+import { getConversationById, type ConversationRow } from '../db/repos/conversations.js'
 import {
   claimNextGroupRun,
   finishGroupRun,
@@ -22,12 +23,14 @@ import { publishToConversationMembers } from '../streams/sse-mutation-publisher.
 import type { StreamHub } from '../streams/hub.js'
 import { emitAccountConversationUpsert, emitToConversationMembers } from './chat-sync-emitter.js'
 import * as hermesAuxiliaryClient from './hermes-auxiliary-client.js'
+import type { HermesClient } from './hermes-client.js'
 
 const GROUP_MAX_TOKENS = 2048
 
 export interface GroupRunDeps {
   db: Database.Database
   hub: StreamHub
+  hermesClient: HermesClient
   bridgeUrl: string
   bridgeApiKey: string
   timeoutMs: number
@@ -61,7 +64,7 @@ export function groupPromptForMention(
 
 export function appendGroupAssistantMessage(
   db: Database.Database,
-  conversation: { id: string; user_id: string },
+  conversation: { id: string; user_id: string; bot_id?: string | null },
   content: string,
   catalog: CuratedModelEntry[],
 ): MessageWithAttachments {
@@ -69,6 +72,7 @@ export function appendGroupAssistantMessage(
     conversationId: conversation.id,
     role: 'assistant',
     content,
+    fromBotId: conversation.bot_id,
   })
   const stored = getMessage(db, conversation.id, messageId)
   if (!stored) {
@@ -144,22 +148,42 @@ async function executeClaimedGroupRun(deps: GroupRunDeps, claim: GroupRunClaim):
   })
 
   try {
-    const text = await hermesAuxiliaryClient.completeHermesAuxiliary(
-      deps.bridgeUrl,
-      deps.bridgeApiKey,
-      {
-        provider: conversation.provider,
-        model: conversation.model,
-        messages: [{ role: 'user', content: prompt.text }],
-        timeoutMs: deps.timeoutMs,
-        maxTokens: GROUP_MAX_TOKENS,
-      },
-    )
+    const text = await completeGroupTurn(deps, conversation, prompt.text)
     commitGroupOutput(deps, claim, 'done', text)
   } catch (error) {
     const code = groupRunFailureCode(error)
     commitGroupOutput(deps, claim, 'failed', code, code)
   }
+}
+
+async function completeGroupTurn(
+  deps: GroupRunDeps,
+  conversation: ConversationRow,
+  promptText: string,
+): Promise<string> {
+  const bot = conversation.bot_id ? getBotById(deps.db, conversation.bot_id) : undefined
+  if (!bot || normalizeBotRuntime(bot.runtime) === 'grok') {
+    return hermesAuxiliaryClient.completeHermesAuxiliary(deps.bridgeUrl, deps.bridgeApiKey, {
+      provider: conversation.provider,
+      model: conversation.model,
+      messages: [{ role: 'user', content: promptText }],
+      timeoutMs: deps.timeoutMs,
+      maxTokens: GROUP_MAX_TOKENS,
+    })
+  }
+
+  const profileSlug = hermesProfileKeyForBot(bot)
+  await deps.hermesClient.ensureSession({
+    hermesSessionId: conversation.hermes_session_id,
+    ...(profileSlug ? { profileSlug } : {}),
+    companionUserId: conversation.user_id,
+  })
+  return deps.hermesClient.completeChat({
+    hermesSessionId: conversation.hermes_session_id,
+    messages: [{ role: 'user', content: promptText }],
+    ...(profileSlug ? { profileSlug } : {}),
+    companionUserId: conversation.user_id,
+  })
 }
 
 function commitGroupOutput(

@@ -268,12 +268,15 @@ Maps tools in **apple-mcp** resolve iPhone location by companion **user UUID** (
 |-------|------|
 | `messaging-api` | `X-Hermes-Session-Key: companion-app:<userId>`, `X-Companion-User-Id`, `X-Companion-Username` on stream, complete, and `ensureSession` |
 | `scripts/patches/api_server.py` | UUID → `HERMES_SESSION_USER_ID` (Maps). Username → Honcho human peer (`rcanoff` if the username header is absent) |
+| `scripts/patches/api_server_openai_routes.py` | Parses companion headers on `/v1/chat/completions` and `/v1/responses` |
 | `scripts/patches/mcp_tool.py` | Adds `X-Companion-User-Id` to each HTTP request to the `apple` MCP server when session context has a user id |
+| `scripts/patches/mcp_tool_transport.py` / `mcp_tool_loop.py` / `mcp_tool_handlers.py` | HTTP hook, session-context wrap, and in-flight apple user id (split from `mcp_tool.py` in v0.21.3) |
 | `scripts/patches/memory_tool.py` | File backup dir `memories/users/<username>/` (TUI fallback `rcanoff`) |
+| `scripts/patches/profiles.py` | Nested Companion bot ids (`<userId>/<slug>`) |
 
 Title generation and cron prompt synthesis keep their existing session keys and **omit** `X-Companion-Username`.
 
-Patches are mounted in `docker-compose.yml` over the Hermes image paths `/opt/hermes/gateway/platforms/api_server.py`, `/opt/hermes/tools/mcp_tool.py`, and `/opt/hermes/tools/memory_tool.py`. Restart the stack after editing them (`make down && make up`).
+Patches are mounted in `docker-compose.yml` over the matching Hermes image paths under `/opt/hermes/gateway/platforms/`, `/opt/hermes/tools/`, and `/opt/hermes/hermes_cli/`. Restart the stack after editing them (`make down && make up`).
 
 Manual check (companion chat that calls an `apple` MCP tool):
 

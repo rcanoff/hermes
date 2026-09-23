@@ -24,7 +24,11 @@ services:
       # so /opt/data/vaults/<username.lower()> stays under HERMES_WRITE_SAFE_ROOT.
       - ${OBSIDIAN_VAULTS_HOST_PATH:-${HERMES_DATA_DIR}/vault}:/opt/data/vaults:cached
       - ./scripts/patches/api_server.py:/opt/hermes/gateway/platforms/api_server.py:ro
+      - ./scripts/patches/api_server_openai_routes.py:/opt/hermes/gateway/platforms/api_server_openai_routes.py:ro
       - ./scripts/patches/mcp_tool.py:/opt/hermes/tools/mcp_tool.py:ro
+      - ./scripts/patches/mcp_tool_transport.py:/opt/hermes/tools/mcp_tool_transport.py:ro
+      - ./scripts/patches/mcp_tool_loop.py:/opt/hermes/tools/mcp_tool_loop.py:ro
+      - ./scripts/patches/mcp_tool_handlers.py:/opt/hermes/tools/mcp_tool_handlers.py:ro
       - ./scripts/patches/memory_tool.py:/opt/hermes/tools/memory_tool.py:ro
       - ./scripts/patches/profiles.py:/opt/hermes/hermes_cli/profiles.py:ro
     environment:
@@ -35,6 +39,7 @@ services:
       HERMES_DASHBOARD_PORT: ${HERMES_DASHBOARD_PORT:-9119}
       HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-}
       HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-}
+      HERMES_DASHBOARD_BASIC_AUTH_SECRET: ${HERMES_DASHBOARD_BASIC_AUTH_SECRET:-}
       API_SERVER_ENABLED: "true"
       API_SERVER_HOST: 0.0.0.0
       API_SERVER_PORT: 8642

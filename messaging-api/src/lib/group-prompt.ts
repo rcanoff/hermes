@@ -28,7 +28,6 @@ function renderGroupPrompt(
 ): string {
   const context = lines.map((line) => `${line.author}: ${line.text}`).join('\n')
   return [
-    `You are ${input.botName}.`,
     GROUP_SYSTEM_PROMPT,
     context,
     `Primary request from ${input.primary.username}:\n${input.primary.text}`,
