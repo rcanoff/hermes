@@ -10,25 +10,31 @@ import type { SessionStreamEvent } from '../src/streams/hub.js'
 import { StreamHub } from '../src/streams/hub.js'
 import { FakeHermesClient } from './helpers/hermes.js'
 
+const conversationId = '11111111-1111-4111-8111-111111111111'
+
 function seedConversation(db: Database.Database, originSessionId = 'sess-1') {
   db.prepare(`INSERT INTO users (id, username, password_hash) VALUES ('u1', 'op', 'hash')`).run()
   db.prepare(`
-    INSERT INTO conversations (id, user_id, hermes_session_id) VALUES ('c1', 'u1', 'sess-1')
-  `).run()
+    INSERT INTO conversations (id, user_id, hermes_session_id) VALUES (?, 'u1', 'sess-1')
+  `).run(conversationId)
+  const bot = ensureDefaultBotRow(db, 'u1')
+  db.prepare(`UPDATE conversations SET bot_id = ? WHERE id = ?`).run(bot.id, conversationId)
   db.prepare(`
     INSERT INTO message_runs (id, conversation_id, user_message_id, origin_session_id, status)
-    VALUES ('run-1', 'c1', ?, ?, 'running')
+    VALUES ('run-1', ?, ?, ?, 'running')
   `).run(
-    insertMessage(db, { conversationId: 'c1', role: 'user', content: 'Where am I?' }),
+    conversationId,
+    insertMessage(db, { conversationId, role: 'user', content: 'Where am I?' }),
     originSessionId,
   )
+  return bot.id
 }
 
 describe('executeAssistantRun process stream', () => {
   it('emits tooling and reply session events and persists process blob', async () => {
     const db = new Database(':memory:')
     initSchema(db)
-    seedConversation(db)
+    const botId = seedConversation(db)
 
     const hermes = new FakeHermesClient()
     const hub = new StreamHub()
@@ -40,7 +46,7 @@ describe('executeAssistantRun process stream', () => {
       db,
       hermesClient: hermes,
       hub,
-      conversationId: 'c1',
+      conversationId: conversationId,
       hermesSessionId: 'sess-1',
       userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
       runId: 'run-1',
@@ -60,11 +66,12 @@ describe('executeAssistantRun process stream', () => {
     expect(hermes.requests[0]?.companionUsername).toBe('op')
 
     expect(events.map((e) => e.event)).toEqual([
-      'reply',
+      'typing',
       'tooling',
       'tooling',
       'tooling',
       'tooling',
+      'typing',
       'reply',
       'message_upsert',
       'conversation_upsert',
@@ -72,13 +79,17 @@ describe('executeAssistantRun process stream', () => {
     ])
 
     expect(events[0]).toEqual({
-      event: 'reply',
-      data: { conversationId: 'c1', runId: 'run-1', phase: 'typing' },
+      event: 'typing',
+      data: { conversationId, actorId: botId, active: true },
+    })
+    expect(events[5]).toEqual({
+      event: 'typing',
+      data: { conversationId, actorId: botId, active: false },
     })
     expect(events[1]).toEqual({
       event: 'tooling',
       data: {
-        conversationId: 'c1',
+        conversationId: conversationId,
         runId: 'run-1',
         phase: 'reasoning',
         text: 'Searching for tools…',
@@ -117,7 +128,7 @@ describe('executeAssistantRun process stream', () => {
       db,
       hermesClient: hermes,
       hub,
-      conversationId: 'c1',
+      conversationId: conversationId,
       hermesSessionId: 'sess-1',
       userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
       runId: 'run-1',
@@ -176,7 +187,7 @@ describe('executeAssistantRun process stream', () => {
       db,
       hermesClient: hermes,
       hub,
-      conversationId: 'c1',
+      conversationId: conversationId,
       hermesSessionId: 'sess-1',
       userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
       runId: 'run-1',
@@ -213,13 +224,13 @@ describe('executeAssistantRun process stream', () => {
     const hermes = new FakeHermesClient()
     const hub = new StreamHub()
     const legacyEvents: Array<{ event: string; data: unknown }> = []
-    hub.subscribeLegacy('c1', (event) => legacyEvents.push(event))
+    hub.subscribeLegacy(conversationId, (event) => legacyEvents.push(event))
 
     const runPromise = executeAssistantRun({
       db,
       hermesClient: hermes,
       hub,
-      conversationId: 'c1',
+      conversationId: conversationId,
       hermesSessionId: 'sess-1',
       userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
       runId: 'run-1',
@@ -259,7 +270,7 @@ describe('executeAssistantRun process stream', () => {
       db,
       hermesClient: hermes,
       hub,
-      conversationId: 'c1',
+      conversationId: conversationId,
       hermesSessionId: 'sess-1',
       userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
       runId: 'run-1',
@@ -278,12 +289,13 @@ describe('executeAssistantRun process stream', () => {
     await runPromise
 
     expect(events.map((e) => e.event)).toEqual([
-      'reply',
+      'typing',
       'tooling',
       'tooling',
       'tooling',
       'tooling',
       'tooling',
+      'typing',
       'reply',
       'message_upsert',
       'conversation_upsert',
@@ -292,7 +304,7 @@ describe('executeAssistantRun process stream', () => {
     expect(events[1]).toEqual({
       event: 'tooling',
       data: {
-        conversationId: 'c1',
+        conversationId: conversationId,
         runId: 'run-1',
         phase: 'reasoning',
         text: 'Think',
@@ -302,7 +314,7 @@ describe('executeAssistantRun process stream', () => {
     expect(events[3]).toEqual({
       event: 'tooling',
       data: {
-        conversationId: 'c1',
+        conversationId: conversationId,
         runId: 'run-1',
         phase: 'reasoning',
         text: 'Thinking',
@@ -311,7 +323,7 @@ describe('executeAssistantRun process stream', () => {
     expect(events[5]).toEqual({
       event: 'tooling',
       data: {
-        conversationId: 'c1',
+        conversationId: conversationId,
         runId: 'run-1',
         phase: 'complete',
       },
@@ -333,7 +345,7 @@ describe('executeAssistantRun process stream', () => {
       db,
       hermesClient: hermes,
       hub,
-      conversationId: 'c1',
+      conversationId: conversationId,
       hermesSessionId: 'sess-1',
       userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
       runId: 'run-1',
@@ -347,7 +359,7 @@ describe('executeAssistantRun process stream', () => {
     await expect(runPromise).rejects.toThrow('Hermes stream completed without assistant text')
 
     expect(
-      db.prepare(`SELECT role, content FROM messages WHERE conversation_id = 'c1' ORDER BY created_at`).all(),
+      db.prepare(`SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at`).all(conversationId),
     ).toEqual([{ role: 'user', content: 'Where am I?' }])
     expect(
       db.prepare(`SELECT status, error_code, assistant_message_id FROM message_runs WHERE id = 'run-1'`).get(),
@@ -375,7 +387,7 @@ describe('executeAssistantRun process stream', () => {
       soul: 'You book trips.',
       hermesProfileName: 'op-travel',
     })
-    db.prepare(`UPDATE conversations SET bot_id = ? WHERE id = 'c1'`).run(travel.id)
+    db.prepare(`UPDATE conversations SET bot_id = ? WHERE id = ?`).run(travel.id, conversationId)
 
     const hermes = new FakeHermesClient()
     const hub = new StreamHub()
@@ -383,7 +395,7 @@ describe('executeAssistantRun process stream', () => {
       db,
       hermesClient: hermes,
       hub,
-      conversationId: 'c1',
+      conversationId: conversationId,
       hermesSessionId: 'sess-1',
       userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
       runId: 'run-1',
@@ -419,14 +431,14 @@ describe('executeAssistantRun process stream', () => {
       soul: 'You book trips.',
     })
     const hermesBot = ensureDefaultBotRow(db, 'u1')
-    db.prepare(`UPDATE conversations SET bot_id = ? WHERE id = 'c1'`).run(hermesBot.id)
+    db.prepare(`UPDATE conversations SET bot_id = ? WHERE id = ?`).run(hermesBot.id, conversationId)
 
     const hermes = new FakeHermesClient()
     const runPromise = executeAssistantRun({
       db,
       hermesClient: hermes,
       hub: new StreamHub(),
-      conversationId: 'c1',
+      conversationId: conversationId,
       hermesSessionId: 'sess-1',
       userMessageId: db.prepare(`SELECT user_message_id FROM message_runs WHERE id = 'run-1'`).pluck().get() as string,
       runId: 'run-1',

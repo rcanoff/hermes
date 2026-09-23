@@ -19,6 +19,7 @@ import {
   type GroupRunClaim,
 } from '../db/repos/group-bot-runs.js'
 import { getMessage, insertMessage, listMessages, type MessageRow } from '../db/repos/messages.js'
+import { startBotTyping } from '../streams/run-event-publisher.js'
 import { publishToConversationMembers } from '../streams/sse-mutation-publisher.js'
 import type { StreamHub } from '../streams/hub.js'
 import { emitAccountConversationUpsert, emitToConversationMembers } from './chat-sync-emitter.js'
@@ -122,37 +123,42 @@ async function runGroupQueue(deps: GroupRunDeps): Promise<void> {
 
 async function executeClaimedGroupRun(deps: GroupRunDeps, claim: GroupRunClaim): Promise<void> {
   const conversation = getConversationById(deps.db, claim.conversationId)
-  const trigger = getMessage(deps.db, claim.conversationId, claim.messageId)
-  if (!conversation || !trigger) {
-    commitGroupOutput(deps, claim, 'failed', 'run_failed', 'run_failed')
-    return
-  }
-
-  const botName = botNameById(deps.db, conversation.bot_id)
-  const prompt = buildGroupPrompt({
-    botName,
-    context: groupContextLines(deps.db, claim.conversationId, botName, trigger.sequence ?? 0),
-    primary: {
-      username: trigger.sender_user?.username ?? 'user',
-      text: trigger.content,
-    },
+  const typing = startBotTyping({
+    hub: deps.hub,
+    db: deps.db,
+    conversationId: claim.conversationId,
+    botId: conversation?.bot_id,
   })
-  if (!prompt.fits) {
-    commitGroupOutput(deps, claim, 'failed', 'context_too_large', 'context_too_large')
-    return
-  }
-
-  publishToConversationMembers(deps.hub, deps.db, claim.conversationId, {
-    event: 'reply',
-    data: { conversationId: claim.conversationId, runId: claim.runId, phase: 'typing' },
-  })
-
   try {
-    const text = await completeGroupTurn(deps, conversation, prompt.text)
-    commitGroupOutput(deps, claim, 'done', text)
-  } catch (error) {
-    const code = groupRunFailureCode(error)
-    commitGroupOutput(deps, claim, 'failed', code, code)
+    const trigger = getMessage(deps.db, claim.conversationId, claim.messageId)
+    if (!conversation || !trigger) {
+      commitGroupOutput(deps, claim, 'failed', 'run_failed', 'run_failed')
+      return
+    }
+
+    const botName = botNameById(deps.db, conversation.bot_id)
+    const prompt = buildGroupPrompt({
+      botName,
+      context: groupContextLines(deps.db, claim.conversationId, botName, trigger.sequence ?? 0),
+      primary: {
+        username: trigger.sender_user?.username ?? 'user',
+        text: trigger.content,
+      },
+    })
+    if (!prompt.fits) {
+      commitGroupOutput(deps, claim, 'failed', 'context_too_large', 'context_too_large')
+      return
+    }
+
+    try {
+      const text = await completeGroupTurn(deps, conversation, prompt.text)
+      commitGroupOutput(deps, claim, 'done', text)
+    } catch (error) {
+      const code = groupRunFailureCode(error)
+      commitGroupOutput(deps, claim, 'failed', code, code)
+    }
+  } finally {
+    typing.stop()
   }
 }
 

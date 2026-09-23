@@ -6,9 +6,9 @@ import type { StreamHub } from '../streams/hub.js'
 import {
   publishReplyDone,
   publishReplyToken,
-  publishReplyTyping,
   publishRewind,
   publishRunError,
+  startBotTyping,
   publishToolingComplete,
   publishToolingDraft,
   publishToolingLine,
@@ -95,20 +95,33 @@ function publishAssembledReply(
   assembler: ReplyAssembler,
   streamCtx: RunEventContext,
   beginReplyPhase: () => void,
+  onFirstToken?: () => void,
 ): string {
   const assistantText = assembler.text()
   beginReplyPhase()
-  for (const part of assembler.tokens()) {
+  const tokens = assembler.tokens()
+  if (tokens.length > 0) {
+    onFirstToken?.()
+  }
+  for (const part of tokens) {
     publishReplyToken(streamCtx, part)
   }
   return assistantText
 }
 
 export async function executeAssistantRun(input: ExecuteAssistantRunInput): Promise<string> {
-  const kind = getConversationById(input.db, input.conversationId)?.kind
-  if (kind === 'user_dm' || kind === 'group') {
+  const loaded = getConversationById(input.db, input.conversationId)
+  if (loaded?.kind === 'user_dm' || loaded?.kind === 'group') {
     return ''
   }
+
+  const botTyping = startBotTyping({
+    hub: input.hub,
+    db: input.db,
+    conversationId: input.conversationId,
+    botId: loaded?.bot_id,
+  })
+  const stopTyping = () => botTyping.stop()
 
   const runId =
     input.runId ??
@@ -134,7 +147,6 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     runId,
     originSessionId: input.originSessionId,
   }
-  publishReplyTyping(streamCtx)
 
   const reply = createReplyAssembler()
   let sawDone = false
@@ -193,11 +205,13 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
         beginReplyPhase,
         publishProcessLine,
         abortSignal,
+        onFirstReplyToken: stopTyping,
       })
     } finally {
       if (abortSignal) {
         input.abortRegistry?.finish(input.conversationId, abortSignal)
       }
+      stopTyping()
     }
   }
 
@@ -301,7 +315,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       throw new Error('Hermes stream completed without assistant text')
     }
 
-    const assistantText = publishAssembledReply(reply, streamCtx, beginReplyPhase)
+    const assistantText = publishAssembledReply(reply, streamCtx, beginReplyPhase, stopTyping)
     const assistantMessageId = persistAssistantRun(
       input.db,
       input.hub,
@@ -342,6 +356,7 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     })
 
     publishReplyDone(streamCtx, assistantMessageId)
+    stopTyping()
 
     return assistantMessageId
   } catch (error) {
@@ -363,11 +378,13 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
     const message = error instanceof Error ? error.message : 'unknown'
     markRunFailed(input.db, runId, 'hermes_stream_failed', message)
     publishRunError(streamCtx, 'hermes_stream_failed')
+    stopTyping()
     throw error
   } finally {
     if (abortSignal) {
       input.abortRegistry?.finish(input.conversationId, abortSignal)
     }
+    stopTyping()
   }
 }
 
@@ -381,6 +398,7 @@ async function executeGrokAssistantRun(
     beginReplyPhase: () => void
     publishProcessLine: (line: ToolingLine) => void
     abortSignal?: AbortSignal
+    onFirstReplyToken?: () => void
   },
 ): Promise<string> {
   const grokClient = input.grokGatewayClient ?? createGrokGatewayClient('', '')
@@ -527,7 +545,12 @@ async function executeGrokAssistantRun(
       throw new GrokGatewayError('grok_unavailable', 'stream_ended')
     }
 
-    const assistantText = publishAssembledReply(reply, input.streamCtx, beginReplyPhase)
+    const assistantText = publishAssembledReply(
+      reply,
+      input.streamCtx,
+      beginReplyPhase,
+      input.onFirstReplyToken,
+    )
     const assistantMessageId = persistAssistantRun(
       input.db,
       input.hub,
@@ -597,6 +620,7 @@ async function executeGrokAssistantRun(
         const drainMessage = drainError instanceof Error ? drainError.message : 'unknown'
         markRunFailed(input.db, input.runId, 'grok_unavailable', drainMessage)
         publishRunError(input.streamCtx, 'grok_unavailable')
+        input.onFirstReplyToken?.()
         throw drainError
       }
     }
@@ -626,6 +650,7 @@ async function executeGrokAssistantRun(
     const message = error instanceof Error ? error.message : 'unknown'
     markRunFailed(input.db, input.runId, 'grok_unavailable', message)
     publishRunError(input.streamCtx, 'grok_unavailable')
+    input.onFirstReplyToken?.()
     throw error
   }
 }

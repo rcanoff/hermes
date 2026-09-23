@@ -1,11 +1,12 @@
 import type Database from 'better-sqlite3'
 import type { ConversationSyncEntryPayload } from '../db/repos/chat-sync-events.js'
-import { getConversationForUser } from '../db/repos/conversations.js'
+import { getConversationById, getConversationForUser } from '../db/repos/conversations.js'
 import { DEFAULT_COMPANION_MODELS, type CuratedModelEntry } from '../lib/companion-models.js'
 import { buildConversationSyncEntry } from '../lib/conversation-sync-entry.js'
 import type { MessageWithAttachments } from '../lib/attachment-serializer.js'
 import { listConversationMemberIds } from '../db/repos/conversation-members.js'
 import type { SessionStreamEvent, StreamHub } from './hub.js'
+import { typingEventDataSchema } from './typing-event.js'
 
 export function publishTypingToOtherMembers(
   hub: StreamHub,
@@ -14,13 +15,26 @@ export function publishTypingToOtherMembers(
   senderId: string,
   active: boolean,
 ): void {
+  const parsed = typingEventDataSchema.safeParse({
+    conversationId,
+    actorId: senderId,
+    active,
+  })
+  if (!parsed.success) {
+    return
+  }
   const event: SessionStreamEvent = {
     event: 'typing',
-    data: { conversationId, actorId: senderId, active },
+    data: parsed.data,
   }
-  for (const userId of listConversationMemberIds(db, conversationId)) {
+  const memberIds = listConversationMemberIds(db, conversationId)
+  for (const userId of memberIds) {
     if (userId === senderId) continue
     hub.publishToUser(userId, event)
+  }
+  const ownerId = getConversationById(db, conversationId)?.user_id
+  if (ownerId && ownerId !== senderId && !memberIds.includes(ownerId)) {
+    hub.publishToUser(ownerId, event)
   }
 }
 

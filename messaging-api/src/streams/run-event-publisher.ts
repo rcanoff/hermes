@@ -1,5 +1,7 @@
+import type Database from 'better-sqlite3'
 import type { ToolingLine } from '../db/repos/process.js'
 import type { StreamHub } from './hub.js'
+import { publishTypingToOtherMembers } from './sse-mutation-publisher.js'
 
 export interface RunEventContext {
   hub: StreamHub
@@ -65,11 +67,33 @@ export function publishToolingComplete(ctx: RunEventContext): void {
   }
 }
 
-export function publishReplyTyping(ctx: RunEventContext): void {
-  ctx.hub.publishToUser(ctx.userId, {
-    event: 'reply',
-    data: { conversationId: ctx.conversationId, runId: ctx.runId, phase: 'typing' },
-  })
+export function startBotTyping(input: {
+  hub: StreamHub
+  db: Database.Database
+  conversationId: string
+  botId: string | null | undefined
+}): { stop: () => void } {
+  if (!input.botId) {
+    return { stop() {} }
+  }
+  const botId = input.botId
+  const publish = (active: boolean) => {
+    publishTypingToOtherMembers(input.hub, input.db, input.conversationId, botId, active)
+  }
+  publish(true)
+  // ponytail: one interval per run, per-conversation scheduler only if many runs overlap.
+  const timer = setInterval(() => publish(true), 3000)
+  let stopped = false
+  return {
+    stop() {
+      if (stopped) {
+        return
+      }
+      stopped = true
+      clearInterval(timer)
+      publish(false)
+    },
+  }
 }
 
 export function publishReplyToken(ctx: RunEventContext, text: string): void {
