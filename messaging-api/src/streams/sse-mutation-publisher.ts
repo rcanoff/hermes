@@ -7,6 +7,23 @@ import type { MessageWithAttachments } from '../lib/attachment-serializer.js'
 import { listConversationMemberIds } from '../db/repos/conversation-members.js'
 import type { SessionStreamEvent, StreamHub } from './hub.js'
 
+export function publishTypingToOtherMembers(
+  hub: StreamHub,
+  db: Database.Database,
+  conversationId: string,
+  senderId: string,
+  active: boolean,
+): void {
+  const event: SessionStreamEvent = {
+    event: 'typing',
+    data: { conversationId, actorId: senderId, active },
+  }
+  for (const userId of listConversationMemberIds(db, conversationId)) {
+    if (userId === senderId) continue
+    hub.publishToUser(userId, event)
+  }
+}
+
 export function publishToConversationMembers(
   hub: StreamHub,
   db: Database.Database,

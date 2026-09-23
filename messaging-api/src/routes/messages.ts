@@ -56,6 +56,7 @@ import {
   publishMessageUpsert,
   publishMessagesRewound,
   publishToConversationMembers,
+  publishTypingToOtherMembers,
 } from '../streams/sse-mutation-publisher.js'
 import type { StreamEvent } from '../streams/hub.js'
 
@@ -700,6 +701,25 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     request.raw.on('close', () => {
       closeStream()
     })
+  })
+
+  app.post('/conversations/:id/typing', { preHandler: app.authenticate }, async (request, reply) => {
+    const conversation = getOwnedConversation(app, request.userId, (request.params as { id: string }).id)
+    if (!conversation || !isSharedKind(conversation.kind)) {
+      return reply.code(404).send({ error: 'not_found' })
+    }
+    const body = request.body as { active?: unknown } | null
+    if (!body || typeof body.active !== 'boolean') {
+      return reply.code(400).send({ error: 'invalid_request' })
+    }
+    publishTypingToOtherMembers(
+      app.streamHub,
+      app.db,
+      conversation.id,
+      request.userId,
+      body.active,
+    )
+    return reply.code(204).send()
   })
 }
 
