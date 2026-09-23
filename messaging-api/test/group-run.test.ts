@@ -75,7 +75,9 @@ describe('group runs', () => {
     expect(prompts[2]?.slice(0, thirdSection)).not.toContain('third request')
 
     const aliceEvents = publish.mock.calls.filter((call) => call[0] === alice.id).map((call) => call[1])
-    const typing = aliceEvents.findIndex((event) => event.event === 'reply' && event.data.phase === 'typing')
+    const typing = aliceEvents.findIndex(
+      (event) => event.event === 'typing' && event.data.actorId === group.botId && event.data.active === true,
+    )
     const done = aliceEvents.findIndex(
       (event, index) => index > typing && event.event === 'reply' && event.data.phase === 'done',
     )

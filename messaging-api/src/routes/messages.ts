@@ -59,6 +59,7 @@ import {
   publishTypingToOtherMembers,
 } from '../streams/sse-mutation-publisher.js'
 import type { StreamEvent } from '../streams/hub.js'
+import { typingPostBodySchema } from '../streams/typing-event.js'
 
 interface MessageBody {
   text?: string
@@ -708,8 +709,8 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     if (!conversation || !isSharedKind(conversation.kind)) {
       return reply.code(404).send({ error: 'not_found' })
     }
-    const body = request.body as { active?: unknown } | null
-    if (!body || typeof body.active !== 'boolean') {
+    const parsed = typingPostBodySchema.safeParse(request.body)
+    if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
     publishTypingToOtherMembers(
@@ -717,7 +718,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
       app.db,
       conversation.id,
       request.userId,
-      body.active,
+      parsed.data.active,
     )
     return reply.code(204).send()
   })
