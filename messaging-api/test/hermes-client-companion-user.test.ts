@@ -128,6 +128,29 @@ describe('OpenAiHermesClient companion identity headers', () => {
     expect(headers['x-companion-username']).toBeUndefined()
   })
 
+  it('sends the conversation model and provider instead of the hermes-agent alias', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ choices: [{ message: { content: 'ok' } }] }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new OpenAiHermesClient('http://hermes:8642', 'test-key')
+    await client.completeChat({
+      hermesSessionId: 'sess-1',
+      messages: [{ role: 'user', content: 'hello' }],
+      model: 'grok-4.3',
+      provider: 'xai-oauth',
+    })
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(JSON.parse(String(init.body))).toEqual({
+      model: 'grok-4.3',
+      provider: 'xai-oauth',
+      messages: [{ role: 'user', content: 'hello' }],
+      stream: false,
+    })
+  })
+
   it('forwards session key and both Companion headers on ensureSession when the user is set', async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 201 }))
     vi.stubGlobal('fetch', fetchMock)

@@ -2929,6 +2929,21 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         def _atomic(conn):
             # One BEGIN IMMEDIATE write: a concurrent same-id create blocks and sees the row.
             if conn.execute("SELECT id FROM sessions WHERE id = ?", (session_id,)).fetchone():
+                if model_name:
+                    import re
+                    row = conn.execute(
+                        "SELECT system_prompt FROM sessions WHERE id = ?", (session_id,)).fetchone()
+                    prompt = (row["system_prompt"] if row and row["system_prompt"] else "") or ""
+                    provider_name = requested.get("provider") or ""
+                    if re.search(r"(?m)^Model:\s*.+$", prompt) and re.search(r"(?m)^Provider:\s*.+$", prompt):
+                        prompt = re.sub(r"(?m)^Model:\s*.+$", f"Model: {model_name}", prompt, count=1)
+                        prompt = re.sub(r"(?m)^Provider:\s*.+$", f"Provider: {provider_name}", prompt, count=1)
+                    else:
+                        footer = f"Model: {model_name}\nProvider: {provider_name}"
+                        prompt = f"{prompt}\n\n{footer}" if prompt.strip() else footer
+                    conn.execute(
+                        "UPDATE sessions SET model = ?, system_prompt = ? WHERE id = ?",
+                        (model_name, prompt, session_id))
                 return None, "exists"
             conn.execute(
                 """INSERT INTO sessions (

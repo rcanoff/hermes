@@ -22,6 +22,8 @@ export interface ConversationSyncEntryPayload {
   bot_id: string | null
   peer_bot_id?: string | null
   members: Array<{ id: string; username: string }>
+  icon: string
+  color: string
   bot: { id: string; name: string; icon: string; color: string } | null
   hermes_job_id?: string | null
   schedule_display?: string | null

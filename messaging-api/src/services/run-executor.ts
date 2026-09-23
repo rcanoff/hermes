@@ -247,6 +247,9 @@ export async function executeAssistantRun(input: ExecuteAssistantRunInput): Prom
       companionUserId: input.userId,
       ...(companionUsername ? { companionUsername } : {}),
       ...(profileSlug ? { profileSlug } : {}),
+      ...(loaded?.model && loaded.provider
+        ? { model: loaded.model, provider: loaded.provider }
+        : {}),
       ...(abortSignal ? { signal: abortSignal } : {}),
     })) {
       if (abortSignal?.aborted) {

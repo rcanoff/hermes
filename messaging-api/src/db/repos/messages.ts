@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { touchConversationUpdatedAt, type ListPageAnchors } from './conversations.js'
 
-export const MESSAGE_KINDS = ['chat', 'bot_sent', 'bot_reply', 'pending_input'] as const
+export const MESSAGE_KINDS = ['chat', 'bot_sent', 'bot_reply', 'pending_input', 'notice'] as const
 export type MessageKind = (typeof MESSAGE_KINDS)[number]
 
 export const MESSAGE_INPUT_TYPES = ['permission', 'question'] as const

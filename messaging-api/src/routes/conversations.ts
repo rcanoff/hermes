@@ -12,12 +12,14 @@ import {
   listConversationsPage,
   normalizeConversationTitle,
   updateConversationTitle,
+  updateGroupSettings,
   type ConversationRow,
 } from '../db/repos/conversations.js'
 import { enqueueConversationAttachments } from '../services/attachment-cleanup.js'
 import { resolveDefaultModel } from '../db/repos/settings.js'
 import { getBotByIdForUser, getBotBySlug, normalizeBotRuntime } from '../db/repos/bots.js'
 import { DEFAULT_BOT_SLUG } from '../lib/hermes-profile.js'
+import { isBotColor, isBotIcon, DEFAULT_BOT_COLOR, DEFAULT_BOT_ICON } from '../lib/bot-appearance.js'
 import {
   GROK_TUI_PROVIDER,
   assertCuratedModel,
@@ -34,6 +36,7 @@ import {
 import {
   publishAccountConversationUpsert,
   publishConversationDeleted,
+  publishMessageUpsert,
 } from '../streams/sse-mutation-publisher.js'
 import { removeHermesCronJob } from '../lib/hermes-cron-jobs.js'
 import {
@@ -252,6 +255,36 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
+    const groupPatch = existing.kind === 'group' ? groupSettingsPatch(request.body) : null
+    if (groupPatch) {
+      if (groupPatch.botId && !getBotByIdForUser(app.db, request.userId, groupPatch.botId)) {
+        return reply.code(404).send({ error: 'not_found' })
+      }
+      if (groupPatch.addUserIds) {
+        if (
+          groupPatch.addUserIds.includes(request.userId) ||
+          new Set(groupPatch.addUserIds).size !== groupPatch.addUserIds.length ||
+          !usersExist(app, groupPatch.addUserIds)
+        ) {
+          return reply.code(400).send({ error: 'invalid_request' })
+        }
+      }
+      const updated = updateGroupSettings(app.db, conversationId, groupPatch)
+      if (updated) {
+        for (const userId of listConversationMemberIds(app.db, conversationId)) {
+          emitAccountConversationUpsert(app.db, userId, conversationId, app.companionModels)
+          publishAccountConversationUpsert(
+            app.streamHub,
+            app.db,
+            userId,
+            conversationId,
+            app.companionModels,
+          )
+        }
+      }
+      return updated ? toConversationResponse(app.db, updated, app.companionModels) : updated
+    }
+
     if (request.body.model !== undefined || request.body.provider !== undefined) {
       const model = request.body.model?.trim()
       const provider = request.body.provider?.trim()
@@ -283,6 +316,15 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
           conversationId,
           app.companionModels,
         )
+        if (result.notice) {
+          publishMessageUpsert(
+            app.streamHub,
+            request.userId,
+            conversationId,
+            result.notice,
+            result.hermesSessionId,
+          )
+        }
 
         return toConversationResponse(app.db, result.conversation, app.companionModels)
       } catch (error) {
@@ -527,11 +569,25 @@ async function createSharedConversation(
   if (typeof botId !== 'string' || !getBotByIdForUser(app.db, request.userId, botId)) {
     return reply.code(404).send({ error: 'not_found' })
   }
+  const body = request.body as { title?: unknown; icon?: unknown; color?: unknown }
+  const title = typeof body.title === 'string' ? body.title.trim() : undefined
+  if (title !== undefined && (title.length < 1 || title.length > 120)) {
+    return reply.code(400).send({ error: 'invalid_request' })
+  }
+  if (body.icon !== undefined && !isBotIcon(body.icon)) {
+    return reply.code(400).send({ error: 'invalid_request' })
+  }
+  if (body.color !== undefined && !isBotColor(body.color)) {
+    return reply.code(400).send({ error: 'invalid_request' })
+  }
 
   const conversationId = createGroupConversation(app.db, {
     callerId: request.userId,
     peerIds: ids,
     botId,
+    title,
+    icon: isBotIcon(body.icon) ? body.icon : DEFAULT_BOT_ICON,
+    color: isBotColor(body.color) ? body.color : DEFAULT_BOT_COLOR,
   })
   publishSharedUpserts(app, conversationId)
   const conversation = getConversationForUser(app.db, request.userId, conversationId)
@@ -546,29 +602,39 @@ function isCreateConversationBody(
 
 function isPatchConversationBody(
   value: unknown,
-): value is { title?: string; model?: string; provider?: string } {
+): value is { title?: string; model?: string; provider?: string; icon?: string; color?: string; bot_id?: string; add_user_ids?: string[] } {
   if (typeof value !== 'object' || value === null) {
     return false
   }
 
-  const body = value as { title?: unknown; model?: unknown; provider?: unknown }
+  const body = value as {
+    title?: unknown
+    model?: unknown
+    provider?: unknown
+    icon?: unknown
+    color?: unknown
+    bot_id?: unknown
+    add_user_ids?: unknown
+  }
   const hasTitle = body.title !== undefined
   const hasModel = body.model !== undefined
   const hasProvider = body.provider !== undefined
+  const hasIcon = body.icon !== undefined
+  const hasColor = body.color !== undefined
+  const hasBot = body.bot_id !== undefined
+  const hasAdd = body.add_user_ids !== undefined
 
-  if (!hasTitle && !hasModel && !hasProvider) {
+  if (!hasTitle && !hasModel && !hasProvider && !hasIcon && !hasColor && !hasBot && !hasAdd) {
     return false
   }
 
-  if (hasTitle && typeof body.title !== 'string') {
-    return false
-  }
-
-  if (hasModel && typeof body.model !== 'string') {
-    return false
-  }
-
-  if (hasProvider && typeof body.provider !== 'string') {
+  if (hasTitle && typeof body.title !== 'string') return false
+  if (hasModel && typeof body.model !== 'string') return false
+  if (hasProvider && typeof body.provider !== 'string') return false
+  if (hasIcon && !isBotIcon(body.icon)) return false
+  if (hasColor && !isBotColor(body.color)) return false
+  if (hasBot && typeof body.bot_id !== 'string') return false
+  if (hasAdd && (!Array.isArray(body.add_user_ids) || body.add_user_ids.some((id) => typeof id !== 'string'))) {
     return false
   }
 
@@ -577,4 +643,23 @@ function isPatchConversationBody(
   }
 
   return true
+}
+
+function groupSettingsPatch(body: {
+  title?: string
+  icon?: string
+  color?: string
+  bot_id?: string
+  add_user_ids?: string[]
+}): { title?: string; icon?: string; color?: string; botId?: string; addUserIds?: string[] } | null {
+  const title = typeof body.title === 'string' ? body.title.trim() : undefined
+  if (title !== undefined && (title.length < 1 || title.length > 120)) return null
+  const patch = {
+    ...(title ? { title } : {}),
+    ...(body.icon ? { icon: body.icon } : {}),
+    ...(body.color ? { color: body.color } : {}),
+    ...(body.bot_id ? { botId: body.bot_id } : {}),
+    ...(body.add_user_ids?.length ? { addUserIds: body.add_user_ids } : {}),
+  }
+  return Object.keys(patch).length > 0 ? patch : null
 }

@@ -33,6 +33,8 @@ export interface ConversationRow {
   provider: string
   bot_id: string | null
   peer_bot_id: string | null
+  icon: string
+  color: string
   created_at: string
   updated_at: string
 }
@@ -59,7 +61,7 @@ const CONVERSATION_COLUMNS = `
   conversations.title, conversations.bootstrap_prompt, conversations.hermes_job_id,
   conversations.schedule_display, conversations.job_enabled, conversations.job_last_run_at,
   conversations.job_last_status, conversations.model, conversations.provider, conversations.bot_id,
-  conversations.peer_bot_id, conversations.created_at, conversations.updated_at
+  conversations.icon, conversations.color, conversations.peer_bot_id, conversations.created_at, conversations.updated_at
 `
 
 const MEMBERSHIP_JOIN = `
@@ -175,7 +177,7 @@ export function createOrOpenUserDm(
 
 export function createGroupConversation(
   db: Database.Database,
-  input: { callerId: string; peerIds: string[]; botId: string },
+  input: { callerId: string; peerIds: string[]; botId: string; title?: string; icon: string; color: string },
 ): string {
   const memberIds = [input.callerId, ...input.peerIds]
   const placeholders = memberIds.map(() => '?').join(', ')
@@ -183,22 +185,25 @@ export function createGroupConversation(
     .prepare(`SELECT username FROM users WHERE id IN (${placeholders})`)
     .all(...memberIds) as Array<{ username: string }>
   const id = randomUUID()
+  const title = input.title?.trim() || sharedConversationTitle(people.map((person) => person.username))
 
   db.transaction(() => {
     db.prepare(`
       INSERT INTO conversations (
         id, user_id, hermes_session_id, kind, title, model, provider,
-        bot_id, peer_bot_id, updated_at
+        bot_id, icon, color, peer_bot_id, updated_at
       )
-      VALUES (?, ?, ?, 'group', ?, ?, ?, ?, NULL, datetime('now'))
+      VALUES (?, ?, ?, 'group', ?, ?, ?, ?, ?, ?, NULL, datetime('now'))
     `).run(
       id,
       input.callerId,
       randomUUID(),
-      sharedConversationTitle(people.map((person) => person.username)),
+      title,
       COMPANION_DEFAULT_MODEL,
       COMPANION_DEFAULT_PROVIDER,
       input.botId,
+      input.icon,
+      input.color,
     )
     const row = getConversationById(db, id)!
     addConversationMembers(db, id, memberIds, row.created_at)
@@ -667,6 +672,29 @@ export function updateConversationTitle(
       WHERE id = ?
     `)
     .get(conversationId) as ConversationRow | undefined
+}
+
+export function updateGroupSettings(
+  db: Database.Database,
+  conversationId: string,
+  patch: { title?: string; icon?: string; color?: string; botId?: string; addUserIds?: string[] },
+): ConversationRow | undefined {
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE conversations
+      SET title = COALESCE(?, title),
+          icon = COALESCE(?, icon),
+          color = COALESCE(?, color),
+          bot_id = COALESCE(?, bot_id)
+      WHERE id = ?
+    `).run(patch.title ?? null, patch.icon ?? null, patch.color ?? null, patch.botId ?? null, conversationId)
+    if (patch.addUserIds?.length) {
+      const row = getConversationById(db, conversationId)
+      addConversationMembers(db, conversationId, patch.addUserIds, row?.created_at ?? new Date().toISOString())
+    }
+    touchConversationUpdatedAt(db, conversationId)
+  })()
+  return getConversationById(db, conversationId)
 }
 
 export function rotateHermesSessionId(db: Database.Database, conversationId: string): string {

@@ -6,7 +6,12 @@ import {
   normalizeBotRuntime,
 } from '../db/repos/bots.js'
 import { listAttachmentsForMessages } from '../db/repos/message-attachments.js'
-import { botSummariesForMessages } from '../lib/attachment-serializer.js'
+import { botSummariesForMessages, enrichMessageWithAttachments, type MessageWithAttachments } from '../lib/attachment-serializer.js'
+import {
+  appendAccountMessageUpsert,
+  appendConversationMessageUpsert,
+} from '../db/repos/chat-sync-events.js'
+import { emitToConversationMembers } from './chat-sync-emitter.js'
 import {
   getConversationBotSlug,
   rotateHermesSessionId,
@@ -14,7 +19,7 @@ import {
   type ConversationRow,
 } from '../db/repos/conversations.js'
 import { buildBotRosterPrompt } from '../lib/bot-roster.js'
-import { listMessages } from '../db/repos/messages.js'
+import { getMessage, insertMessage, listMessages } from '../db/repos/messages.js'
 import { getActiveRun } from '../db/repos/runs.js'
 import {
   assertCuratedModel,
@@ -44,6 +49,7 @@ export interface ModelChangeResult {
   providerChanged: boolean
   previousHermesSessionId: string
   hermesSessionId: string
+  notice?: MessageWithAttachments
 }
 
 const CONTEXT_REBUILD_PROVIDER_CHANGE_USER_MESSAGE =
@@ -112,6 +118,9 @@ export async function rewarmSessionTranscript(input: {
     companionUserId: input.conversation.user_id,
     ...(input.companionUsername ? { companionUsername: input.companionUsername } : {}),
     ...(profileSlug ? { profileSlug } : {}),
+    ...(input.conversation.model && input.conversation.provider
+      ? { model: input.conversation.model, provider: input.conversation.provider }
+      : {}),
   })
 }
 
@@ -155,11 +164,17 @@ export async function applyConversationModelChange(input: {
   const sameProvider = input.conversation.provider === input.provider
 
   if (sameProvider) {
-    await input.hermesClient.patchSessionModel({
-      hermesSessionId: previousHermesSessionId,
-      model: input.model,
-      provider: input.provider,
-    })
+    try {
+      await input.hermesClient.patchSessionModel({
+        hermesSessionId: previousHermesSessionId,
+        model: input.model,
+        provider: input.provider,
+      })
+    } catch {
+      // The gateway owns state.db. A malformed or locked side write must not
+      // roll back the picker; the next turn sends model and provider itself.
+    }
+
 
     const updated = updateConversationModel(
       input.db,
@@ -171,12 +186,7 @@ export async function applyConversationModelChange(input: {
       throw new ModelChangeError('invalid_request')
     }
 
-    return {
-      conversation: updated,
-      providerChanged: false,
-      previousHermesSessionId,
-      hermesSessionId: previousHermesSessionId,
-    }
+    return finishModelChange(input, updated, false, previousHermesSessionId, previousHermesSessionId)
   }
 
   const hermesSessionId = rotateHermesSessionId(input.db, input.conversation.id)
@@ -209,12 +219,7 @@ export async function applyConversationModelChange(input: {
     hermesHome: input.hermesHome,
   })
 
-  return {
-    conversation: updated,
-    providerChanged: true,
-    previousHermesSessionId,
-    hermesSessionId,
-  }
+  return finishModelChange(input, updated, true, previousHermesSessionId, hermesSessionId)
 }
 
 async function applyGrokConversationModelChange(input: {
@@ -269,10 +274,80 @@ async function applyGrokConversationModelChange(input: {
     throw new ModelChangeError('invalid_request')
   }
 
+  return finishModelChange(
+    input,
+    updated,
+    input.conversation.provider !== input.provider,
+    previousHermesSessionId,
+    previousHermesSessionId,
+  )
+}
+
+async function finishModelChange(
+  input: {
+    db: Database.Database
+    hermesClient?: HermesClient
+    userId?: string
+    conversation: ConversationRow
+    model: string
+    provider: string
+    companionUsername?: string
+    hermesHome?: string
+  },
+  updated: ConversationRow,
+  providerChanged: boolean,
+  previousHermesSessionId: string,
+  hermesSessionId: string,
+): Promise<ModelChangeResult> {
+  const changed = input.conversation.model !== input.model || input.conversation.provider !== input.provider
+  const bot = updated.bot_id ? getBotById(input.db, updated.bot_id) : undefined
+  const hermes = !bot || normalizeBotRuntime(bot.runtime) !== 'grok'
+  if (changed && hermes && !providerChanged && input.hermesClient) {
+    const profileSlug = bot ? hermesProfileKeyForBot(bot, input.hermesHome) : undefined
+    try {
+      await input.hermesClient.ensureSession({
+        hermesSessionId,
+        model: input.model,
+        provider: input.provider,
+        ...(profileSlug ? { profileSlug } : {}),
+        ...(input.userId ? { companionUserId: input.userId } : {}),
+        ...(input.companionUsername ? { companionUsername: input.companionUsername } : {}),
+      })
+    } catch {
+      // The next turn still sends model and provider on the chat request.
+    }
+  }
+
+  const unchanged =
+    input.conversation.model === input.model && input.conversation.provider === input.provider
+  const notice = unchanged ? undefined : recordModelChangeNotice(input.db, updated, input.model, input.provider)
   return {
     conversation: updated,
-    providerChanged: input.conversation.provider !== input.provider,
+    providerChanged,
     previousHermesSessionId,
-    hermesSessionId: previousHermesSessionId,
+    hermesSessionId,
+    ...(notice ? { notice } : {}),
   }
+}
+
+function recordModelChangeNotice(
+  db: Database.Database,
+  conversation: ConversationRow,
+  model: string,
+  provider: string,
+): MessageWithAttachments | undefined {
+  const messageId = insertMessage(db, {
+    conversationId: conversation.id,
+    role: 'assistant',
+    content: `model changed to ${provider} ${model}`,
+    kind: 'notice',
+  })
+  const stored = getMessage(db, conversation.id, messageId)
+  if (!stored) return undefined
+  const enriched = enrichMessageWithAttachments(db, stored)
+  emitToConversationMembers(db, conversation.id, (userId) => {
+    appendAccountMessageUpsert(db, userId, conversation.id, enriched)
+  })
+  appendConversationMessageUpsert(db, conversation.user_id, conversation.id, enriched)
+  return enriched
 }

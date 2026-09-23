@@ -109,6 +109,9 @@ export async function buildHermesMessages(
   const includedVisionKeys = await selectVisionImages(history, options)
   const transcript = await Promise.all(
     history.map(async (message, messageIndex) => {
+      if (message.kind === 'notice' || message.content.startsWith('model changed to ')) {
+        return { role: 'system', content: message.content } satisfies HermesPromptMessage
+      }
       const mapped = mapDelegationForHermes(message, options?.currentBotId)
       if (mapped.role !== 'user' || !message.attachments || message.attachments.length === 0) {
         return mapped satisfies HermesPromptMessage

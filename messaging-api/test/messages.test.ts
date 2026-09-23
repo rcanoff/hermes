@@ -239,6 +239,8 @@ describe('message routes', () => {
       hermesSessionId: expect.any(String),
       companionUserId: expect.any(String),
       companionUsername: 'operator',
+      model: 'grok-composer-2.5-fast',
+      provider: 'xai-oauth',
       messages: [
         {
           role: 'system',

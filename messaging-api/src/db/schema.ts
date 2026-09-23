@@ -170,6 +170,12 @@ function ensureSharedConversations(db: Database.Database): void {
   if (!conversationColumns.some((column) => column.name === 'dm_key')) {
     db.exec(`ALTER TABLE conversations ADD COLUMN dm_key TEXT`)
   }
+  if (!conversationColumns.some((column) => column.name === 'icon')) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN icon TEXT NOT NULL DEFAULT 'message'`)
+  }
+  if (!conversationColumns.some((column) => column.name === 'color')) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN color TEXT NOT NULL DEFAULT 'blue'`)
+  }
 
   db.exec(`
     UPDATE conversations SET dm_key = NULL WHERE kind != 'user_dm' AND dm_key IS NOT NULL;

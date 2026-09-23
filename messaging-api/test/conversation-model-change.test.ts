@@ -74,8 +74,38 @@ describe('applyConversationModelChange', () => {
     expect(hermesClient.patchSessionModelRequests).toEqual([
       { hermesSessionId: 'hs-original', model: 'grok-4.3', provider: 'xai-oauth' },
     ])
-    expect(hermesClient.ensureSessionRequests).toHaveLength(0)
+    expect(hermesClient.ensureSessionRequests).toEqual([
+      expect.objectContaining({
+        hermesSessionId: 'hs-original',
+        model: 'grok-4.3',
+        provider: 'xai-oauth',
+      }),
+    ])
     expect(hermesClient.completeRequests).toHaveLength(0)
+  })
+
+  it('saves the conversation model when the Hermes state write fails', async () => {
+    const hermesClient = new FakeHermesClient()
+    hermesClient.patchSessionModel = async () => {
+      throw new Error('database disk image is malformed')
+    }
+    const conversationId = createConversation(app.db, userId, 'hs-original')
+    const conversation = app.db
+      .prepare('SELECT * FROM conversations WHERE id = ?')
+      .get(conversationId) as Parameters<typeof applyConversationModelChange>[0]['conversation']
+
+    const result = await applyConversationModelChange({
+      db: app.db,
+      hermesClient,
+      catalog: DEFAULT_COMPANION_MODELS,
+      userId,
+      conversation,
+      model: 'grok-4.3',
+      provider: 'xai-oauth',
+    })
+
+    expect(result.conversation.model).toBe('grok-4.3')
+    expect(result.conversation.provider).toBe('xai-oauth')
   })
 
   it('skips rewarm when same-provider selection is unchanged', async () => {

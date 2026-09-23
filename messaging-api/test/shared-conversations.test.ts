@@ -118,6 +118,8 @@ describe('shared conversation create', () => {
       bot_id: botId,
       peer_bot_id: null,
       members,
+      icon: 'message',
+      color: 'blue',
     })
     expect(first.json().bot).toMatchObject({ id: botId })
     expect(first.json().bot).not.toHaveProperty('soul')

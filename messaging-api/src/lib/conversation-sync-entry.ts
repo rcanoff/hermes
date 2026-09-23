@@ -33,6 +33,8 @@ export function buildConversationSyncEntry(
     bot_id: conversation.bot_id,
     peer_bot_id: conversation.peer_bot_id,
     members: listConversationMembers(db, conversation.id),
+    icon: conversation.icon,
+    color: conversation.color,
     bot: conversation.kind === 'group' ? conversationBotRef(db, conversation.bot_id) : null,
   }
 

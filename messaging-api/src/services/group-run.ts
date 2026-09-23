@@ -189,6 +189,9 @@ async function completeGroupTurn(
     messages: [{ role: 'user', content: promptText }],
     ...(profileSlug ? { profileSlug } : {}),
     companionUserId: conversation.user_id,
+    ...(conversation.model && conversation.provider
+      ? { model: conversation.model, provider: conversation.provider }
+      : {}),
   })
 }
 

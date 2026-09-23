@@ -47,6 +47,9 @@ export interface StreamChatInput extends CompanionIdentity {
   /** Hermes profile slug. Non-default values prefix `/p/<slug>` on gateway URLs. */
   profileSlug?: string
   signal?: AbortSignal
+  /** Curated model id. With `provider`, overrides the profile default for this turn. */
+  model?: string
+  provider?: string
 }
 
 export interface CompleteChatInput extends CompanionIdentity {
@@ -54,6 +57,9 @@ export interface CompleteChatInput extends CompanionIdentity {
   messages: HermesPromptMessage[]
   /** Hermes profile slug. Non-default values prefix `/p/<slug>` on gateway URLs. */
   profileSlug?: string
+  /** Curated model id. With `provider`, overrides the profile default for this turn. */
+  model?: string
+  provider?: string
 }
 
 export interface EnsureSessionInput extends CompanionIdentity {
@@ -92,6 +98,25 @@ interface OpenAiChatCompletion {
       content?: string | Array<{ type?: string; text?: string }> | null
     }
   }>
+}
+
+function chatCompletionBody(input: {
+  messages: HermesPromptMessage[]
+  stream: boolean
+  model?: string
+  provider?: string
+}): Record<string, unknown> {
+  const model = input.model?.trim()
+  const provider = input.provider?.trim()
+  const body: Record<string, unknown> = {
+    model: model && provider ? model : 'hermes-agent',
+    messages: input.messages,
+    stream: input.stream,
+  }
+  if (model && provider) {
+    body.provider = provider
+  }
+  return body
 }
 
 interface OpenAiChatChunk {
@@ -294,12 +319,16 @@ export class OpenAiHermesClient implements HermesClient {
     })
 
     if (response.status === 409 || response.ok) {
-      this.syncSessionModelToStateDb({
-        hermesSessionId: input.hermesSessionId,
-        model: input.model,
-        provider: input.provider,
-        systemPrompt: input.systemPrompt,
-      })
+      try {
+        this.syncSessionModelToStateDb({
+          hermesSessionId: input.hermesSessionId,
+          model: input.model,
+          provider: input.provider,
+          systemPrompt: input.systemPrompt,
+        })
+      } catch {
+        // Gateway already wrote the profile session. The shared state.db side write is optional.
+      }
     }
 
     if (response.status === 409) {
@@ -340,11 +369,7 @@ export class OpenAiHermesClient implements HermesClient {
       {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        model: 'hermes-agent',
-        messages: input.messages,
-        stream: false,
-      }),
+      body: JSON.stringify(chatCompletionBody({ ...input, stream: false })),
     },
     )
 
@@ -366,11 +391,7 @@ export class OpenAiHermesClient implements HermesClient {
       method: 'POST',
       headers,
       signal: input.signal,
-      body: JSON.stringify({
-        model: 'hermes-agent',
-        messages: input.messages,
-        stream: true,
-      }),
+      body: JSON.stringify(chatCompletionBody({ ...input, stream: true })),
     },
     )
 
