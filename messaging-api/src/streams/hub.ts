@@ -62,6 +62,10 @@ export type SessionStreamEvent =
     }
   | { event: 'conversation_deleted'; data: { conversationId: string } }
   | {
+      event: 'typing'
+      data: { conversationId: string; actorId: string; active: boolean }
+    }
+  | {
       event: 'conversation_upsert'
       data: {
         conversation: ConversationSyncEntryPayload

@@ -243,6 +243,45 @@ describe('shared conversation create', () => {
     expect(upsertUserIds(app!, group.json().id).filter((id) => id === caller.id)).toHaveLength(2)
     expect(upsertUserIds(app!, group.json().id).filter((id) => id === peer.id)).toHaveLength(2)
   })
+
+  it('forwards typing to the other members and not the sender', async () => {
+    const amy = await seedTestUser(app!, 'amy', 'password123')
+    const bob = await seedTestUser(app!, 'bob', 'password123')
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${amy.token}` },
+      payload: { kind: 'user_dm', participant_user_ids: [bob.id] },
+    })
+    const conversationId = created.json().id as string
+    const published: Array<{ userId: string; event: unknown }> = []
+    const original = app!.streamHub.publishToUser.bind(app!.streamHub)
+    app!.streamHub.publishToUser = (userId, event) => {
+      published.push({ userId, event })
+      original(userId, event)
+    }
+
+    const started = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/typing`,
+      headers: { authorization: `Bearer ${amy.token}` },
+      payload: { active: true },
+    })
+    const stopped = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${conversationId}/typing`,
+      headers: { authorization: `Bearer ${amy.token}` },
+      payload: { active: false },
+    })
+
+    expect(started.statusCode).toBe(204)
+    expect(stopped.statusCode).toBe(204)
+    expect(published.filter((row) => row.userId === amy.id)).toEqual([])
+    expect(published.filter((row) => row.userId === bob.id).map((row) => row.event)).toEqual([
+      { event: 'typing', data: { conversationId, actorId: amy.id, active: true } },
+      { event: 'typing', data: { conversationId, actorId: amy.id, active: false } },
+    ])
+  })
 })
 
 describe('shared conversation delete', () => {
