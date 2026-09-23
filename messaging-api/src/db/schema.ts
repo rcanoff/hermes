@@ -158,6 +158,7 @@ export function initSchema(db: Database.Database): void {
   ensureLegacyHealthDailySummaries(db)
   ensureMessageRunsOriginSessionId(db)
   ensureSharedConversations(db)
+  ensureGroupBots(db)
   ensureChatSyncEvents(db)
   ensurePushDevices(db)
   ensureDeviceSyncState(db)
@@ -249,6 +250,63 @@ function ensureSharedConversations(db: Database.Database): void {
 
     CREATE UNIQUE INDEX IF NOT EXISTS group_bot_runs_one_running_idx
       ON group_bot_runs (conversation_id)
+      WHERE state = 'running';
+  `)
+}
+
+function ensureGroupBots(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_bots (
+      conversation_id TEXT NOT NULL,
+      bot_id TEXT NOT NULL,
+      PRIMARY KEY (conversation_id, bot_id),
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY (bot_id) REFERENCES bots(id)
+    );
+
+    INSERT OR IGNORE INTO conversation_bots (conversation_id, bot_id)
+    SELECT id, bot_id FROM conversations
+    WHERE kind = 'group' AND bot_id IS NOT NULL;
+  `)
+
+  const columns = db.prepare(`PRAGMA table_info(group_bot_runs)`).all() as Array<{ name: string }>
+  if (!columns.some((column) => column.name === 'bot_id')) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE group_bot_runs_v2 (
+          message_id TEXT NOT NULL,
+          bot_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'done', 'failed', 'stuck', 'cancelled')),
+          run_id TEXT NOT NULL,
+          error_code TEXT,
+          claimed_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (message_id, bot_id),
+          FOREIGN KEY (conversation_id) REFERENCES conversations(id),
+          FOREIGN KEY (bot_id) REFERENCES bots(id)
+        );
+
+        INSERT INTO group_bot_runs_v2 (
+          message_id, bot_id, conversation_id, state, run_id, error_code, claimed_at, created_at
+        )
+        SELECT runs.message_id, conversations.bot_id, runs.conversation_id, runs.state,
+               runs.run_id, runs.error_code, runs.claimed_at, runs.created_at
+        FROM group_bot_runs AS runs
+        JOIN conversations ON conversations.id = runs.conversation_id
+        WHERE conversations.bot_id IS NOT NULL;
+
+        DROP TABLE group_bot_runs;
+        ALTER TABLE group_bot_runs_v2 RENAME TO group_bot_runs;
+      `)
+    })()
+  }
+  db.exec(`UPDATE conversations SET bot_id = NULL WHERE kind = 'group'`)
+
+  db.exec(`
+    DROP INDEX IF EXISTS group_bot_runs_one_running_idx;
+    CREATE UNIQUE INDEX group_bot_runs_one_running_idx
+      ON group_bot_runs (conversation_id, bot_id)
       WHERE state = 'running';
   `)
 }

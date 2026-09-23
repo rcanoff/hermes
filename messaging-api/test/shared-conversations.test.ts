@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { sharedConversationTitle } from '../src/db/repos/conversations.js'
-import { finishGroupRun } from '../src/db/repos/group-bot-runs.js'
+import { enqueueGroupRun, finishGroupRun } from '../src/db/repos/group-bot-runs.js'
 import { createTestApp } from './helpers/app.js'
 import { FakeHermesClient } from './helpers/hermes.js'
 import { seedTestUser } from './helpers/users.js'
@@ -99,7 +99,8 @@ describe('shared conversation create', () => {
     const caller = await seedTestUser(app!, 'caller', 'password123')
     const peer = await seedTestUser(app!, 'peer', 'password123')
     const botId = defaultBotId(app!, caller.id)
-    const payload = { kind: 'group', participant_user_ids: [peer.id], bot_id: botId }
+    const bot = app!.db.prepare(`SELECT name FROM bots WHERE id = ?`).get(botId) as { name: string }
+    const payload = { kind: 'group', participant_user_ids: [peer.id], bot_ids: [botId] }
     const headers = { authorization: `Bearer ${caller.token}` }
 
     const first = await app!.inject({ method: 'POST', url: '/conversations', headers, payload })
@@ -112,19 +113,18 @@ describe('shared conversation create', () => {
       { id: caller.id, username: caller.username },
       { id: peer.id, username: peer.username },
     ]
+    const bots = [{ id: botId, name: bot.name, icon: 'message', color: 'blue' }]
     expect(first.json()).toMatchObject({
       kind: 'group',
-      title: sharedConversationTitle([caller.username, peer.username]),
-      bot_id: botId,
+      title: sharedConversationTitle([caller.username, peer.username, bot.name]),
+      bot_id: null,
       peer_bot_id: null,
       members,
+      bots,
+      bot: null,
       icon: 'message',
       color: 'blue',
     })
-    expect(first.json().bot).toMatchObject({ id: botId })
-    expect(first.json().bot).not.toHaveProperty('soul')
-    expect(first.json().bot).not.toHaveProperty('role')
-    expect(first.json().bot).not.toHaveProperty('responsibilities')
 
     const got = await app!.inject({
       method: 'GET',
@@ -139,14 +139,16 @@ describe('shared conversation create', () => {
     const item = listed.json().conversations.find((row: { id: string }) => row.id === first.json().id)
 
     expect(got.json().members).toEqual(members)
-    expect(got.json().bot).toEqual(first.json().bot)
+    expect(got.json().bots).toEqual(bots)
+    expect(got.json().bot).toBeNull()
     expect(item.members).toEqual(members)
-    expect(item.bot).toEqual(first.json().bot)
+    expect(item.bots).toEqual(bots)
+    expect(item.bot).toBeNull()
     expect(countKind(app!, 'group')).toBe(2)
     expect(hermes.ensureSessionRequests).toEqual([])
   })
 
-  it('sync entry includes members and bot and not soul', async () => {
+  it('sync entry includes members and bots and not soul', async () => {
     const caller = await seedTestUser(app!, 'caller', 'password123')
     const peer = await seedTestUser(app!, 'peer', 'password123')
     const bot = app!.db
@@ -156,7 +158,7 @@ describe('shared conversation create', () => {
       method: 'POST',
       url: '/conversations',
       headers: { authorization: `Bearer ${caller.token}` },
-      payload: { kind: 'group', participant_user_ids: [peer.id], bot_id: bot.id },
+      payload: { kind: 'group', participant_user_ids: [peer.id], bot_ids: [bot.id] },
     })
     const stored = app!.db
       .prepare(`
@@ -166,15 +168,16 @@ describe('shared conversation create', () => {
       .get(created.json().id, caller.id) as { payload_json: string }
     const entry = JSON.parse(stored.payload_json).conversation as {
       members: Array<{ id: string; username: string }>
-      bot: { id: string; name: string; icon: string; color: string }
+      bots: Array<{ id: string; name: string; icon: string; color: string }>
+      bot: null
     }
 
     expect(entry.members).toEqual([
       { id: caller.id, username: caller.username },
       { id: peer.id, username: peer.username },
     ])
-    expect(entry.bot).toEqual({ id: bot.id, name: bot.name, icon: bot.icon, color: bot.color })
-    expect(entry.bot).not.toHaveProperty('soul')
+    expect(entry.bots).toEqual([{ id: bot.id, name: bot.name, icon: bot.icon, color: bot.color }])
+    expect(entry.bot).toBeNull()
     expect(JSON.stringify(entry)).not.toContain(bot.soul)
   })
 
@@ -196,7 +199,7 @@ describe('shared conversation create', () => {
       payload: {
         kind: 'group',
         participant_user_ids: [peer.id],
-        bot_id: defaultBotId(app!, caller.id),
+        bot_ids: [defaultBotId(app!, caller.id)],
       },
     })
 
@@ -238,13 +241,77 @@ describe('shared conversation create', () => {
     expect(creatorTitle.statusCode).toBe(200)
     expect(creatorTitle.json().title).toBe('Renamed')
     expect(creatorTitle.json().members).toHaveLength(2)
-    expect(creatorTitle.json().bot).not.toHaveProperty('soul')
+    expect(creatorTitle.json().bot).toBeNull()
     expect(creatorModel.statusCode).toBe(400)
     expect(hermes.patchSessionModelRequests).toEqual([])
     expect(upsertUserIds(app!, dm.json().id).sort()).toEqual([caller.id, peer.id].sort())
     expect(upsertUserIds(app!, group.json().id).filter((id) => id === caller.id)).toHaveLength(2)
     expect(upsertUserIds(app!, group.json().id).filter((id) => id === peer.id)).toHaveLength(2)
   })
+  it('patches a group roster and cancels runs for removed bots', async () => {
+    const caller = await seedTestUser(app!, 'caller', 'password123')
+    const removedPeer = await seedTestUser(app!, 'removed', 'password123')
+    const addedPeer = await seedTestUser(app!, 'added', 'password123')
+    const defaultId = defaultBotId(app!, caller.id)
+    const extra = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: { authorization: `Bearer ${caller.token}` },
+      payload: { name: 'Guide', role: 'helper' },
+    })
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${caller.token}` },
+      payload: { kind: 'group', participant_user_ids: [removedPeer.id], bot_ids: [defaultId] },
+    })
+    const conversationId = created.json().id as string
+    const messageId = randomUUID()
+    enqueueGroupRun(app!.db, { messageId, conversationId, botId: defaultId })
+
+    const patched = await app!.inject({
+      method: 'PATCH',
+      url: `/conversations/${conversationId}`,
+      headers: { authorization: `Bearer ${caller.token}` },
+      payload: {
+        bot_ids: [extra.json().id],
+        add_user_ids: [addedPeer.id],
+        remove_user_ids: [removedPeer.id],
+      },
+    })
+
+    expect(patched.statusCode).toBe(200)
+    expect(patched.json().members.map((member: { id: string }) => member.id).sort()).toEqual(
+      [caller.id, addedPeer.id].sort(),
+    )
+    expect(patched.json().bots.map((bot: { id: string }) => bot.id)).toEqual([extra.json().id])
+    expect(
+      app!.db.prepare(`SELECT state FROM group_bot_runs WHERE message_id = ?`).get(messageId),
+    ).toEqual({ state: 'cancelled' })
+    const invalidRemoval = await app!.inject({
+      method: 'PATCH',
+      url: `/conversations/${conversationId}`,
+      headers: { authorization: `Bearer ${caller.token}` },
+      payload: { remove_user_ids: [removedPeer.id] },
+    })
+    const unchanged = await app!.inject({
+      method: 'GET',
+      url: `/conversations/${conversationId}`,
+      headers: { authorization: `Bearer ${caller.token}` },
+    })
+    expect(invalidRemoval.statusCode).toBe(400)
+    expect(unchanged.json().members).toEqual(patched.json().members)
+    expect(unchanged.json().bots).toEqual(patched.json().bots)
+
+    const singular = await app!.inject({
+      method: 'PATCH',
+      url: `/conversations/${conversationId}`,
+      headers: { authorization: `Bearer ${caller.token}` },
+      payload: { bot_id: extra.json().id },
+    })
+    expect(singular.statusCode).toBe(400)
+  })
+
 
   it('forwards typing to the other members and not the sender', async () => {
     const amy = await seedTestUser(app!, 'amy', 'password123')
@@ -316,7 +383,7 @@ describe('shared conversation delete', () => {
       method: 'POST',
       url: '/conversations',
       headers: aliceHeaders,
-      payload: { kind: 'group', participant_user_ids: [bob.id], bot_id: botId },
+      payload: { kind: 'group', participant_user_ids: [bob.id], bot_ids: [botId] },
     })
     const groupId = group.json().id as string
     const dm = await app!.inject({
@@ -405,21 +472,21 @@ describe('shared conversation delete', () => {
       headers: bobHeaders,
     })
     expect(renamed.statusCode).toBe(200)
-    expect(bobRead.json().bot.name).toBe('Scout')
+    expect(bobRead.json().bots[0].name).toBe('Scout')
     expect(bobBot.statusCode).toBe(404)
 
     const runningId = randomUUID()
     const queuedId = randomUUID()
     app!.db
       .prepare(
-        `INSERT INTO group_bot_runs (message_id, conversation_id, state, run_id) VALUES (?, ?, 'running', ?)`,
+        `INSERT INTO group_bot_runs (message_id, bot_id, conversation_id, state, run_id) VALUES (?, ?, ?, 'running', ?)`,
       )
-      .run(runningId, groupId, randomUUID())
+      .run(runningId, botId, groupId, randomUUID())
     app!.db
       .prepare(
-        `INSERT INTO group_bot_runs (message_id, conversation_id, state, run_id) VALUES (?, ?, 'queued', ?)`,
+        `INSERT INTO group_bot_runs (message_id, bot_id, conversation_id, state, run_id) VALUES (?, ?, ?, 'queued', ?)`,
       )
-      .run(queuedId, groupId, randomUUID())
+      .run(queuedId, botId, groupId, randomUUID())
 
     const deleted = await app!.inject({
       method: 'DELETE',
@@ -427,8 +494,8 @@ describe('shared conversation delete', () => {
       headers: aliceHeaders,
     })
     expect(deleted.statusCode).toBe(204)
-    expect(finishGroupRun(app!.db, runningId, 'running', 'done')).toBe(false)
-    expect(finishGroupRun(app!.db, queuedId, 'queued', 'done')).toBe(false)
+    expect(finishGroupRun(app!.db, runningId, botId, 'running', 'done')).toBe(false)
+    expect(finishGroupRun(app!.db, queuedId, botId, 'queued', 'done')).toBe(false)
 
     const listed = await app!.inject({
       method: 'GET',

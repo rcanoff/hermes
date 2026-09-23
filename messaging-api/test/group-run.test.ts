@@ -98,8 +98,8 @@ describe('group runs', () => {
     const second = queueMention(app!, group.id, alice.id, group.botId, 'two')
 
     expect(claimNextGroupRun(app!.db)?.messageId).toBe(first)
-    expect(finishGroupRun(app!.db, first, 'running', 'stuck', 'run_unconfirmed')).toBe(true)
-    expect(finishGroupRun(app!.db, first, 'running', 'done')).toBe(false)
+    expect(finishGroupRun(app!.db, first, group.botId, 'running', 'stuck', 'run_unconfirmed')).toBe(true)
+    expect(finishGroupRun(app!.db, first, group.botId, 'running', 'done')).toBe(false)
     expect(claimNextGroupRun(app!.db)?.messageId).toBe(second)
   })
 
@@ -114,9 +114,9 @@ describe('group runs', () => {
       turn += 1
       if (turn === 1) {
         const running = app!.db
-          .prepare(`SELECT message_id FROM group_bot_runs WHERE state = 'running'`)
-          .get() as { message_id: string }
-        finishGroupRun(app!.db, running.message_id, 'running', 'stuck')
+          .prepare(`SELECT message_id, bot_id FROM group_bot_runs WHERE state = 'running'`)
+          .get() as { message_id: string; bot_id: string }
+        finishGroupRun(app!.db, running.message_id, running.bot_id, 'running', 'stuck')
         return 'lost reply'
       }
       return 'next reply'
@@ -124,7 +124,7 @@ describe('group runs', () => {
 
     await drainGroupRuns(deps(app!))
 
-    expect(finishGroupRun(app!.db, first, 'running', 'done')).toBe(false)
+    expect(finishGroupRun(app!.db, first, group.botId, 'running', 'done')).toBe(false)
     expect(messageContents(app!, group.id)).not.toContain('lost reply')
     expect(messageContents(app!, group.id)).toContain('next reply')
     expect(runStates(app!, group.id)).toEqual(['stuck', 'done'])
@@ -153,7 +153,7 @@ describe('group runs', () => {
     const payload = {
       text: '@Homer hi',
       client_message_id: clientMessageId,
-      mentioned_bot_id: group.botId,
+      mentioned_bot_ids: [group.botId],
     }
     const headers = { authorization: `Bearer ${alice.token}` }
 
@@ -164,7 +164,11 @@ describe('group runs', () => {
       payload,
     })
     expect(groupRunCount(app!, group.id)).toBe(1)
-    enqueueGroupRun(app!.db, { messageId: first.json().message.id, conversationId: group.id })
+    enqueueGroupRun(app!.db, {
+      messageId: first.json().message.id,
+      conversationId: group.id,
+      botId: group.botId,
+    })
     expect(groupRunCount(app!, group.id)).toBe(1)
 
     const second = await app!.inject({
@@ -194,7 +198,7 @@ describe('group runs', () => {
       payload: {
         text: 'z'.repeat(GROUP_PROMPT_CHAR_BUDGET),
         client_message_id: randomUUID(),
-        mentioned_bot_id: group.botId,
+        mentioned_bot_ids: [group.botId],
       },
     })
 
@@ -245,7 +249,7 @@ async function createGroup(app: FastifyInstance, token: string, peerId: string, 
     payload: {
       kind: 'group',
       participant_user_ids: [peerId],
-      bot_id: defaultBotId(app, ownerId),
+      bot_ids: [defaultBotId(app, ownerId)],
     },
   })
   return { id: created.json().id as string, botId: defaultBotId(app, ownerId) }
@@ -266,7 +270,7 @@ function queueMention(
     mentionedBotId: botId,
     clientMessageId: randomUUID(),
   })
-  enqueueGroupRun(app.db, { messageId, conversationId })
+  enqueueGroupRun(app.db, { messageId, conversationId, botId })
   return messageId
 }
 

@@ -254,11 +254,21 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(403).send({ error: 'creator_required' })
       }
     }
-
     const groupPatch = existing.kind === 'group' ? groupSettingsPatch(request.body) : null
     if (groupPatch) {
-      if (groupPatch.botId && !getBotByIdForUser(app.db, request.userId, groupPatch.botId)) {
-        return reply.code(404).send({ error: 'not_found' })
+      const oldMemberIds = listConversationMemberIds(app.db, conversationId)
+      if ((request.body as { bot_id?: unknown }).bot_id !== undefined) {
+        return reply.code(400).send({ error: 'invalid_request' })
+      }
+      if (groupPatch.botIds) {
+        if (
+          groupPatch.botIds.length > 6 ||
+          groupPatch.botIds.some((id) => !isValidAnchor(id)) ||
+          new Set(groupPatch.botIds).size !== groupPatch.botIds.length ||
+          groupPatch.botIds.some((id) => !getBotByIdForUser(app.db, request.userId, id))
+        ) {
+          return reply.code(400).send({ error: 'invalid_request' })
+        }
       }
       if (groupPatch.addUserIds) {
         if (
@@ -269,20 +279,53 @@ const conversationRoutes: FastifyPluginAsync = async (app) => {
           return reply.code(400).send({ error: 'invalid_request' })
         }
       }
-      const updated = updateGroupSettings(app.db, conversationId, groupPatch)
-      if (updated) {
-        for (const userId of listConversationMemberIds(app.db, conversationId)) {
-          emitAccountConversationUpsert(app.db, userId, conversationId, app.companionModels)
-          publishAccountConversationUpsert(
-            app.streamHub,
-            app.db,
-            userId,
-            conversationId,
-            app.companionModels,
-          )
+      if (groupPatch.removeUserIds) {
+        if (
+          groupPatch.removeUserIds.includes(request.userId) ||
+          new Set(groupPatch.removeUserIds).size !== groupPatch.removeUserIds.length ||
+          !usersExist(app, groupPatch.removeUserIds) ||
+          groupPatch.removeUserIds.some((id) => !oldMemberIds.includes(id))
+        ) {
+          return reply.code(400).send({ error: 'invalid_request' })
         }
       }
-      return updated ? toConversationResponse(app.db, updated, app.companionModels) : updated
+
+      const updated = (() => {
+        try {
+          return updateGroupSettings(app.db, conversationId, groupPatch)
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            ['bot_cap', 'empty_roster'].includes(error.message)
+          ) {
+            return undefined
+          }
+          throw error
+        }
+      })()
+      if (!updated) {
+        return reply.code(400).send({ error: 'invalid_request' })
+      }
+
+      const remainingMemberIds = listConversationMemberIds(app.db, conversationId)
+      for (const userId of remainingMemberIds) {
+        emitAccountConversationUpsert(app.db, userId, conversationId, app.companionModels)
+        publishAccountConversationUpsert(
+          app.streamHub,
+          app.db,
+          userId,
+          conversationId,
+          app.companionModels,
+        )
+      }
+      for (const userId of (groupPatch.removeUserIds ?? []).filter((id) => oldMemberIds.includes(id))) {
+        if (remainingMemberIds.includes(userId)) {
+          continue
+        }
+        appendAccountConversationDeleted(app.db, userId, conversationId)
+        publishConversationDeleted(app.streamHub, userId, conversationId)
+      }
+      return toConversationResponse(app.db, updated, app.companionModels)
     }
 
     if (request.body.model !== undefined || request.body.provider !== undefined) {
@@ -464,14 +507,14 @@ function deleteGroupConversation(
     const runs = app.db
       .prepare(
         `
-        SELECT message_id, state
+        SELECT message_id, bot_id, state
         FROM group_bot_runs
         WHERE conversation_id = ? AND state IN ('queued', 'running')
       `,
       )
-      .all(conversationId) as Array<{ message_id: string; state: 'queued' | 'running' }>
+      .all(conversationId) as Array<{ message_id: string; bot_id: string; state: 'queued' | 'running' }>
     for (const run of runs) {
-      finishGroupRun(app.db, run.message_id, run.state, 'cancelled')
+      finishGroupRun(app.db, run.message_id, run.bot_id, run.state, 'cancelled')
     }
     for (const memberId of memberIds) {
       appendAccountConversationDeleted(app.db, memberId, conversationId)
@@ -548,9 +591,18 @@ async function createSharedConversation(
     return reply.code(400).send({ error: 'invalid_request' })
   }
 
-  const botId = (request.body as { bot_id?: unknown }).bot_id
+  const body = request.body as {
+    bot_id?: unknown
+    bot_ids?: unknown
+    title?: unknown
+    icon?: unknown
+    color?: unknown
+  }
+  const hasBotId = Object.prototype.hasOwnProperty.call(body, 'bot_id')
+  const hasBotIds = Object.prototype.hasOwnProperty.call(body, 'bot_ids')
+
   if (kind === 'user_dm') {
-    if (ids.length !== 1 || botId !== undefined) {
+    if (ids.length !== 1 || hasBotId || hasBotIds) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
     const opened = createOrOpenUserDm(app.db, request.userId, ids[0]!)
@@ -563,13 +615,22 @@ async function createSharedConversation(
     )
   }
 
-  if (ids.length < 1) {
+  if (hasBotId || !Array.isArray(body.bot_ids)) {
     return reply.code(400).send({ error: 'invalid_request' })
   }
-  if (typeof botId !== 'string' || !getBotByIdForUser(app.db, request.userId, botId)) {
-    return reply.code(404).send({ error: 'not_found' })
+  const botIds = body.bot_ids
+  if (
+    botIds.length > 6 ||
+    botIds.some((id) => typeof id !== 'string' || !isValidAnchor(id)) ||
+    new Set(botIds).size !== botIds.length ||
+    botIds.some((id) => !getBotByIdForUser(app.db, request.userId, id))
+  ) {
+    return reply.code(400).send({ error: 'invalid_request' })
   }
-  const body = request.body as { title?: unknown; icon?: unknown; color?: unknown }
+  if (ids.length === 0 && botIds.length === 0) {
+    return reply.code(400).send({ error: 'invalid_request' })
+  }
+
   const title = typeof body.title === 'string' ? body.title.trim() : undefined
   if (title !== undefined && (title.length < 1 || title.length > 120)) {
     return reply.code(400).send({ error: 'invalid_request' })
@@ -584,7 +645,7 @@ async function createSharedConversation(
   const conversationId = createGroupConversation(app.db, {
     callerId: request.userId,
     peerIds: ids,
-    botId,
+    botIds,
     title,
     icon: isBotIcon(body.icon) ? body.icon : DEFAULT_BOT_ICON,
     color: isBotColor(body.color) ? body.color : DEFAULT_BOT_COLOR,
@@ -602,7 +663,17 @@ function isCreateConversationBody(
 
 function isPatchConversationBody(
   value: unknown,
-): value is { title?: string; model?: string; provider?: string; icon?: string; color?: string; bot_id?: string; add_user_ids?: string[] } {
+): value is {
+  title?: string
+  model?: string
+  provider?: string
+  icon?: string
+  color?: string
+  bot_id?: string
+  bot_ids?: string[]
+  add_user_ids?: string[]
+  remove_user_ids?: string[]
+} {
   if (typeof value !== 'object' || value === null) {
     return false
   }
@@ -614,7 +685,9 @@ function isPatchConversationBody(
     icon?: unknown
     color?: unknown
     bot_id?: unknown
+    bot_ids?: unknown
     add_user_ids?: unknown
+    remove_user_ids?: unknown
   }
   const hasTitle = body.title !== undefined
   const hasModel = body.model !== undefined
@@ -622,9 +695,11 @@ function isPatchConversationBody(
   const hasIcon = body.icon !== undefined
   const hasColor = body.color !== undefined
   const hasBot = body.bot_id !== undefined
+  const hasBots = body.bot_ids !== undefined
   const hasAdd = body.add_user_ids !== undefined
+  const hasRemove = body.remove_user_ids !== undefined
 
-  if (!hasTitle && !hasModel && !hasProvider && !hasIcon && !hasColor && !hasBot && !hasAdd) {
+  if (!hasTitle && !hasModel && !hasProvider && !hasIcon && !hasColor && !hasBot && !hasBots && !hasAdd && !hasRemove) {
     return false
   }
 
@@ -634,7 +709,14 @@ function isPatchConversationBody(
   if (hasIcon && !isBotIcon(body.icon)) return false
   if (hasColor && !isBotColor(body.color)) return false
   if (hasBot && typeof body.bot_id !== 'string') return false
+  if (hasBots && (!Array.isArray(body.bot_ids) || body.bot_ids.some((id) => typeof id !== 'string'))) return false
   if (hasAdd && (!Array.isArray(body.add_user_ids) || body.add_user_ids.some((id) => typeof id !== 'string'))) {
+    return false
+  }
+  if (
+    hasRemove &&
+    (!Array.isArray(body.remove_user_ids) || body.remove_user_ids.some((id) => typeof id !== 'string'))
+  ) {
     return false
   }
 
@@ -650,16 +732,32 @@ function groupSettingsPatch(body: {
   icon?: string
   color?: string
   bot_id?: string
+  bot_ids?: string[]
   add_user_ids?: string[]
-}): { title?: string; icon?: string; color?: string; botId?: string; addUserIds?: string[] } | null {
+  remove_user_ids?: string[]
+}): {
+  title?: string
+  icon?: string
+  color?: string
+  botIds?: string[]
+  addUserIds?: string[]
+  removeUserIds?: string[]
+} | null {
   const title = typeof body.title === 'string' ? body.title.trim() : undefined
   if (title !== undefined && (title.length < 1 || title.length > 120)) return null
-  const patch = {
-    ...(title ? { title } : {}),
-    ...(body.icon ? { icon: body.icon } : {}),
-    ...(body.color ? { color: body.color } : {}),
-    ...(body.bot_id ? { botId: body.bot_id } : {}),
-    ...(body.add_user_ids?.length ? { addUserIds: body.add_user_ids } : {}),
-  }
+  const patch: {
+    title?: string
+    icon?: string
+    color?: string
+    botIds?: string[]
+    addUserIds?: string[]
+    removeUserIds?: string[]
+  } = {}
+  if (title !== undefined) patch.title = title
+  if (body.icon !== undefined) patch.icon = body.icon
+  if (body.color !== undefined) patch.color = body.color
+  if (body.bot_ids !== undefined) patch.botIds = body.bot_ids
+  if (body.add_user_ids !== undefined) patch.addUserIds = body.add_user_ids
+  if (body.remove_user_ids !== undefined) patch.removeUserIds = body.remove_user_ids
   return Object.keys(patch).length > 0 ? patch : null
 }

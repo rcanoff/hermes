@@ -367,7 +367,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
 
     if (body.name !== undefined || body.icon !== undefined || body.color !== undefined) {
       const groups = app.db
-        .prepare(`SELECT id FROM conversations WHERE kind = 'group' AND bot_id = ?`)
+        .prepare(`SELECT conversation_id AS id FROM conversation_bots WHERE bot_id = ?`)
         .all(updated.id) as Array<{ id: string }>
       for (const group of groups) {
         for (const userId of listConversationMemberIds(app.db, group.id)) {
@@ -407,7 +407,7 @@ const botRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const inGroup = app.db
-      .prepare(`SELECT 1 AS n FROM conversations WHERE kind = 'group' AND bot_id = ? LIMIT 1`)
+      .prepare(`SELECT 1 AS n FROM conversation_bots WHERE bot_id = ? LIMIT 1`)
       .get(existing.id) as { n: number } | undefined
     if (inGroup) {
       return reply.code(409).send({ error: 'bot_in_group' })

@@ -13,7 +13,7 @@ import {
 import { getBotById, hermesProfileKeyForBot, normalizeBotRuntime } from '../db/repos/bots.js'
 import { getConversationById, type ConversationRow } from '../db/repos/conversations.js'
 import {
-  claimNextGroupRun,
+  claimReadyGroupRuns,
   finishGroupRun,
   sweepStuckGroupRuns,
   type GroupRunClaim,
@@ -65,7 +65,8 @@ export function groupPromptForMention(
 
 export function appendGroupAssistantMessage(
   db: Database.Database,
-  conversation: { id: string; user_id: string; bot_id?: string | null },
+  conversation: { id: string; user_id: string },
+  botId: string,
   content: string,
   catalog: CuratedModelEntry[],
 ): MessageWithAttachments {
@@ -73,7 +74,7 @@ export function appendGroupAssistantMessage(
     conversationId: conversation.id,
     role: 'assistant',
     content,
-    fromBotId: conversation.bot_id,
+    fromBotId: botId,
   })
   const stored = getMessage(db, conversation.id, messageId)
   if (!stored) {
@@ -87,12 +88,15 @@ export function appendGroupAssistantMessage(
   appendConversationMessageUpsert(db, conversation.user_id, conversation.id, enriched)
   return enriched
 }
-
 async function runGroupQueue(deps: GroupRunDeps): Promise<void> {
-  for (const messageId of sweepStuckGroupRuns(deps.db)) {
+  for (const stuck of sweepStuckGroupRuns(deps.db)) {
     const row = deps.db
-      .prepare(`SELECT conversation_id, run_id FROM group_bot_runs WHERE message_id = ?`)
-      .get(messageId) as { conversation_id: string; run_id: string } | undefined
+      .prepare(`
+        SELECT conversation_id, run_id
+        FROM group_bot_runs
+        WHERE message_id = ? AND bot_id = ?
+      `)
+      .get(stuck.messageId, stuck.botId) as { conversation_id: string; run_id: string } | undefined
     if (!row) {
       continue
     }
@@ -100,24 +104,22 @@ async function runGroupQueue(deps: GroupRunDeps): Promise<void> {
     if (!conversation) {
       continue
     }
-    const message = appendGroupAssistantMessage(deps.db, conversation, 'run_unconfirmed', deps.catalog)
+    const message = appendGroupAssistantMessage(
+      deps.db,
+      conversation,
+      stuck.botId,
+      'run_unconfirmed',
+      deps.catalog,
+    )
     publishGroupTerminal(deps, conversation, row.run_id, message)
   }
 
   for (;;) {
-    const claim = claimNextGroupRun(deps.db)
-    if (!claim) {
+    const claims = claimReadyGroupRuns(deps.db)
+    if (claims.length === 0) {
       return
     }
-    try {
-      await executeClaimedGroupRun(deps, claim)
-    } catch (error) {
-      deps.log?.('group run failed', {
-        err: error instanceof Error ? error.message : String(error),
-        conversationId: claim.conversationId,
-      })
-      commitGroupOutput(deps, claim, 'failed', 'run_failed', 'run_failed')
-    }
+    await Promise.all(claims.map((claim) => executeClaimedGroupRun(deps, claim)))
   }
 }
 
@@ -127,7 +129,7 @@ async function executeClaimedGroupRun(deps: GroupRunDeps, claim: GroupRunClaim):
     hub: deps.hub,
     db: deps.db,
     conversationId: claim.conversationId,
-    botId: conversation?.bot_id,
+    botId: claim.botId,
   })
   try {
     const trigger = getMessage(deps.db, claim.conversationId, claim.messageId)
@@ -136,7 +138,7 @@ async function executeClaimedGroupRun(deps: GroupRunDeps, claim: GroupRunClaim):
       return
     }
 
-    const botName = botNameById(deps.db, conversation.bot_id)
+    const botName = botNameById(deps.db, claim.botId)
     const prompt = buildGroupPrompt({
       botName,
       context: groupContextLines(deps.db, claim.conversationId, botName, trigger.sequence ?? 0),
@@ -145,18 +147,12 @@ async function executeClaimedGroupRun(deps: GroupRunDeps, claim: GroupRunClaim):
         text: trigger.content,
       },
     })
-    if (!prompt.fits) {
-      commitGroupOutput(deps, claim, 'failed', 'context_too_large', 'context_too_large')
-      return
-    }
 
-    try {
-      const text = await completeGroupTurn(deps, conversation, prompt.text)
-      commitGroupOutput(deps, claim, 'done', text)
-    } catch (error) {
-      const code = groupRunFailureCode(error)
-      commitGroupOutput(deps, claim, 'failed', code, code)
-    }
+    const text = await completeGroupTurn(deps, conversation, claim.botId, prompt.text)
+    commitGroupOutput(deps, claim, 'done', text)
+  } catch (error) {
+    const code = groupRunFailureCode(error)
+    commitGroupOutput(deps, claim, 'failed', code, code)
   } finally {
     typing.stop()
   }
@@ -165,9 +161,10 @@ async function executeClaimedGroupRun(deps: GroupRunDeps, claim: GroupRunClaim):
 async function completeGroupTurn(
   deps: GroupRunDeps,
   conversation: ConversationRow,
+  botId: string,
   promptText: string,
 ): Promise<string> {
-  const bot = conversation.bot_id ? getBotById(deps.db, conversation.bot_id) : undefined
+  const bot = getBotById(deps.db, botId)
   if (!bot || normalizeBotRuntime(bot.runtime) === 'grok') {
     return hermesAuxiliaryClient.completeHermesAuxiliary(deps.bridgeUrl, deps.bridgeApiKey, {
       provider: conversation.provider,
@@ -194,7 +191,6 @@ async function completeGroupTurn(
       : {}),
   })
 }
-
 function commitGroupOutput(
   deps: GroupRunDeps,
   claim: GroupRunClaim,
@@ -204,14 +200,14 @@ function commitGroupOutput(
 ): void {
   const conversation = getConversationById(deps.db, claim.conversationId)
   if (!conversation) {
-    finishGroupRun(deps.db, claim.messageId, 'running', to, errorCode)
+    finishGroupRun(deps.db, claim.messageId, claim.botId, 'running', to, errorCode)
     return
   }
   const message = deps.db.transaction(() => {
-    if (!finishGroupRun(deps.db, claim.messageId, 'running', to, errorCode)) {
+    if (!finishGroupRun(deps.db, claim.messageId, claim.botId, 'running', to, errorCode)) {
       return null
     }
-    return appendGroupAssistantMessage(deps.db, conversation, content, deps.catalog)
+    return appendGroupAssistantMessage(deps.db, conversation, claim.botId, content, deps.catalog)
   })()
   if (!message) {
     return

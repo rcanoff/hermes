@@ -22,6 +22,7 @@ export interface ConversationSyncEntryPayload {
   bot_id: string | null
   peer_bot_id?: string | null
   members: Array<{ id: string; username: string }>
+  bots: Array<{ id: string; name: string; icon: string; color: string }>
   icon: string
   color: string
   bot: { id: string; name: string; icon: string; color: string } | null

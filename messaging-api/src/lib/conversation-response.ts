@@ -17,6 +17,7 @@ export function toConversationResponse(
     provider: conversation.provider,
     model_display: modelDisplayName(catalog, conversation.model, conversation.provider),
     members: share.members,
+    bots: share.bots,
     bot: share.bot,
   }
 

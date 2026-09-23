@@ -74,7 +74,7 @@ describe('shared send', () => {
       payload: {
         kind: 'group',
         participant_user_ids: [bob.id],
-        bot_id: defaultBotId(app!, alice.id),
+        bot_ids: [defaultBotId(app!, alice.id)],
       },
     })
 
@@ -90,6 +90,77 @@ describe('shared send', () => {
     expect(runCount(app!, group.json().id)).toBe(0)
     expect(groupRunCount(app!, group.json().id)).toBe(0)
   })
+  it('enqueues one run per mentioned group bot', async () => {
+    const alice = await seedTestUser(app!, 'alice', 'password123')
+    const bob = await seedTestUser(app!, 'bob', 'password123')
+    const extra = await app!.inject({
+      method: 'POST',
+      url: '/bots',
+      headers: { authorization: `Bearer ${alice.token}` },
+      payload: { name: 'Guide', role: 'helper' },
+    })
+    const defaultId = defaultBotId(app!, alice.id)
+    const group = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${alice.token}` },
+      payload: {
+        kind: 'group',
+        participant_user_ids: [bob.id],
+        bot_ids: [defaultId, extra.json().id],
+      },
+    })
+
+    const sent = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${group.json().id}/messages`,
+      headers: { authorization: `Bearer ${alice.token}` },
+      payload: {
+        text: 'compare these',
+        client_message_id: randomUUID(),
+        mentioned_bot_ids: [extra.json().id, defaultId, extra.json().id],
+      },
+    })
+
+    expect(sent.statusCode).toBe(202)
+    expect(
+      app!.db
+        .prepare(`SELECT bot_id FROM group_bot_runs WHERE message_id = ? ORDER BY bot_id`)
+        .all(sent.json().message.id),
+    ).toEqual(
+      [{ bot_id: defaultId }, { bot_id: extra.json().id }].sort((a, b) => a.bot_id.localeCompare(b.bot_id)),
+    )
+  })
+  it('returns a group replay before validating mention fields', async () => {
+    const alice = await seedTestUser(app!, 'alice', 'password123')
+    const bob = await seedTestUser(app!, 'bob', 'password123')
+    const botId = defaultBotId(app!, alice.id)
+    const group = await app!.inject({
+      method: 'POST',
+      url: '/conversations',
+      headers: { authorization: `Bearer ${alice.token}` },
+      payload: { kind: 'group', participant_user_ids: [bob.id], bot_ids: [botId] },
+    })
+    const headers = { authorization: `Bearer ${alice.token}` }
+    const clientMessageId = randomUUID()
+    const first = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${group.json().id}/messages`,
+      headers,
+      payload: { text: 'once', client_message_id: clientMessageId, mentioned_bot_ids: [botId] },
+    })
+    const second = await app!.inject({
+      method: 'POST',
+      url: `/conversations/${group.json().id}/messages`,
+      headers,
+      payload: { text: 'once', client_message_id: clientMessageId, mentioned_bot_ids: ['not-a-uuid'] },
+    })
+
+    expect(first.statusCode).toBe(202)
+    expect(second.statusCode).toBe(200)
+    expect(second.json().message.id).toBe(first.json().message.id)
+  })
+
 
   it('returns the original message for a replayed client id', async () => {
     const alice = await seedTestUser(app!, 'alice', 'password123')
@@ -134,7 +205,7 @@ describe('shared send', () => {
       payload: {
         kind: 'group',
         participant_user_ids: [bob.id],
-        bot_id: defaultBotId(app!, alice.id),
+        bot_ids: [defaultBotId(app!, alice.id)],
       },
     })
     const before = messageCount(app!, group.json().id)
@@ -146,7 +217,7 @@ describe('shared send', () => {
       payload: {
         text: '@nope',
         client_message_id: randomUUID(),
-        mentioned_bot_id: randomUUID(),
+        mentioned_bot_ids: [randomUUID()],
       },
     })
 

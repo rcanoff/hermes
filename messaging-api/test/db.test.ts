@@ -939,6 +939,47 @@ describe('run transitions', () => {
     ])
     expect(new Set(sequences.map((row) => row.sequence)).size).toBe(sequences.length)
   })
+  it('rebuilds legacy group runs with bot-scoped keys and backfills roster rows', () => {
+    const db = new Database(':memory:')
+    initSchema(db)
+    const user = insertDbUser(db)
+    const bot = ensureDefaultBotRow(db, user.id)!
+    const conversationId = createConversation(db, user.id, 'legacy-session')
+    db.prepare(`UPDATE conversations SET kind = 'group', bot_id = ? WHERE id = ?`).run(bot.id, conversationId)
+    db.exec(`
+      DROP INDEX IF EXISTS group_bot_runs_one_running_idx;
+      DROP TABLE group_bot_runs;
+      CREATE TABLE group_bot_runs (
+        message_id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        state TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        error_code TEXT,
+        claimed_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `)
+    db.prepare(`
+      INSERT INTO group_bot_runs (message_id, conversation_id, state, run_id)
+      VALUES ('legacy-message', ?, 'queued', 'legacy-run')
+    `).run(conversationId)
+
+    initSchema(db)
+
+    const columns = db.prepare(`PRAGMA table_info(group_bot_runs)`).all() as Array<{ name: string }>
+    expect(columns.map((column) => column.name)).toContain('bot_id')
+    expect(
+      db
+        .prepare(`SELECT message_id, bot_id, conversation_id FROM group_bot_runs`)
+        .all(),
+    ).toEqual([{ message_id: 'legacy-message', bot_id: bot.id, conversation_id: conversationId }])
+    expect(
+      db.prepare(`SELECT conversation_id, bot_id FROM conversation_bots`).all(),
+    ).toEqual([{ conversation_id: conversationId, bot_id: bot.id }])
+    expect(
+      db.prepare(`SELECT bot_id FROM conversations WHERE id = ?`).get(conversationId),
+    ).toEqual({ bot_id: null })
+  })
 })
 
 describe('session denylist', () => {

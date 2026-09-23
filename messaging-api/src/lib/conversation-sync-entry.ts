@@ -33,9 +33,10 @@ export function buildConversationSyncEntry(
     bot_id: conversation.bot_id,
     peer_bot_id: conversation.peer_bot_id,
     members: listConversationMembers(db, conversation.id),
+    bots: listConversationBotRefs(db, conversation.id),
     icon: conversation.icon,
     color: conversation.color,
-    bot: conversation.kind === 'group' ? conversationBotRef(db, conversation.bot_id) : null,
+    bot: null,
   }
 
   if (conversation.kind === 'job') {
@@ -64,17 +65,19 @@ function listConversationMembers(
     .all(conversationId) as Array<{ id: string; username: string }>
 }
 
-function conversationBotRef(
+function listConversationBotRefs(
   db: Database.Database,
-  botId: string | null,
-): { id: string; name: string; icon: string; color: string } | null {
-  if (!botId) {
-    return null
-  }
-  const bot = db
-    .prepare(`SELECT id, name, icon, color FROM bots WHERE id = ?`)
-    .get(botId) as { id: string; name: string; icon: string; color: string } | undefined
-  return bot ?? null
+  conversationId: string,
+): Array<{ id: string; name: string; icon: string; color: string }> {
+  return db
+    .prepare(`
+      SELECT bots.id, bots.name, bots.icon, bots.color
+      FROM conversation_bots
+      JOIN bots ON bots.id = conversation_bots.bot_id
+      WHERE conversation_bots.conversation_id = ?
+      ORDER BY bots.name ASC, bots.id ASC
+    `)
+    .all(conversationId) as Array<{ id: string; name: string; icon: string; color: string }>
 }
 
 export function buildConversationMessageSyncSnapshot(conversation: ConversationRow) {

@@ -9,8 +9,10 @@ import { buildConversationSyncEntry } from '../../lib/conversation-sync-entry.js
 import { buildJobConversationBootstrap } from '../../lib/job-conversation.js'
 import { enqueueConversationAttachments } from '../../services/attachment-cleanup.js'
 import { ensureDefaultBotRow } from './bots.js'
+import { listConversationBotIds, replaceConversationBots } from './conversation-bots.js'
+import { addConversationMembers, removeConversationMembers } from './conversation-members.js'
+import { cancelQueuedGroupRunsForBot } from './group-bot-runs.js'
 import { appendAccountConversationUpsert } from './chat-sync-events.js'
-import { addConversationMembers } from './conversation-members.js'
 import { findUserById } from './users.js'
 
 export type ConversationKind = 'regular' | 'user_dm' | 'group' | 'job'
@@ -177,15 +179,23 @@ export function createOrOpenUserDm(
 
 export function createGroupConversation(
   db: Database.Database,
-  input: { callerId: string; peerIds: string[]; botId: string; title?: string; icon: string; color: string },
+  input: { callerId: string; peerIds: string[]; botIds: string[]; title?: string; icon: string; color: string },
 ): string {
   const memberIds = [input.callerId, ...input.peerIds]
-  const placeholders = memberIds.map(() => '?').join(', ')
+  const memberPlaceholders = memberIds.map(() => '?').join(', ')
   const people = db
-    .prepare(`SELECT username FROM users WHERE id IN (${placeholders})`)
+    .prepare(`SELECT username FROM users WHERE id IN (${memberPlaceholders})`)
     .all(...memberIds) as Array<{ username: string }>
+  const botNames =
+    input.botIds.length === 0
+      ? []
+      : (
+          db
+            .prepare(`SELECT name FROM bots WHERE id IN (${input.botIds.map(() => '?').join(', ')})`)
+            .all(...input.botIds) as Array<{ name: string }>
+        ).map((bot) => bot.name)
   const id = randomUUID()
-  const title = input.title?.trim() || sharedConversationTitle(people.map((person) => person.username))
+  const title = input.title?.trim() || sharedConversationTitle([...people.map((person) => person.username), ...botNames])
 
   db.transaction(() => {
     db.prepare(`
@@ -193,7 +203,7 @@ export function createGroupConversation(
         id, user_id, hermes_session_id, kind, title, model, provider,
         bot_id, icon, color, peer_bot_id, updated_at
       )
-      VALUES (?, ?, ?, 'group', ?, ?, ?, ?, ?, ?, NULL, datetime('now'))
+      VALUES (?, ?, ?, 'group', ?, ?, ?, NULL, ?, ?, NULL, datetime('now'))
     `).run(
       id,
       input.callerId,
@@ -201,12 +211,12 @@ export function createGroupConversation(
       title,
       COMPANION_DEFAULT_MODEL,
       COMPANION_DEFAULT_PROVIDER,
-      input.botId,
       input.icon,
       input.color,
     )
     const row = getConversationById(db, id)!
     addConversationMembers(db, id, memberIds, row.created_at)
+    replaceConversationBots(db, id, input.botIds)
     const entry = buildConversationSyncEntry(db, row, DEFAULT_COMPANION_MODELS)
     for (const userId of memberIds) {
       appendAccountConversationUpsert(db, userId, id, entry)
@@ -677,24 +687,94 @@ export function updateConversationTitle(
 export function updateGroupSettings(
   db: Database.Database,
   conversationId: string,
-  patch: { title?: string; icon?: string; color?: string; botId?: string; addUserIds?: string[] },
+  patch: {
+    title?: string
+    icon?: string
+    color?: string
+    botIds?: string[]
+    addUserIds?: string[]
+    removeUserIds?: string[]
+  },
 ): ConversationRow | undefined {
   db.transaction(() => {
+    const existing = getConversationById(db, conversationId)
+    if (!existing) {
+      return
+    }
+
+    const oldBotIds = listConversationBotIds(db, conversationId)
+    const oldGeneratedTitle = sharedConversationTitle([
+      ...groupHumanNames(db, conversationId),
+      ...groupBotNames(db, oldBotIds),
+    ])
+
     db.prepare(`
       UPDATE conversations
       SET title = COALESCE(?, title),
           icon = COALESCE(?, icon),
-          color = COALESCE(?, color),
-          bot_id = COALESCE(?, bot_id)
+          color = COALESCE(?, color)
       WHERE id = ?
-    `).run(patch.title ?? null, patch.icon ?? null, patch.color ?? null, patch.botId ?? null, conversationId)
+    `).run(patch.title ?? null, patch.icon ?? null, patch.color ?? null, conversationId)
+
     if (patch.addUserIds?.length) {
-      const row = getConversationById(db, conversationId)
-      addConversationMembers(db, conversationId, patch.addUserIds, row?.created_at ?? new Date().toISOString())
+      addConversationMembers(db, conversationId, patch.addUserIds, existing.created_at)
+    }
+    if (patch.removeUserIds?.length) {
+      removeConversationMembers(db, conversationId, patch.removeUserIds)
+    }
+    if (patch.botIds !== undefined) {
+      replaceConversationBots(db, conversationId, patch.botIds)
+    }
+
+    const otherHumans = db
+      .prepare(`
+        SELECT COUNT(*) AS count
+        FROM conversation_members
+        WHERE conversation_id = ? AND user_id != ?
+      `)
+      .get(conversationId, existing.user_id) as { count: number }
+    const botIds = listConversationBotIds(db, conversationId)
+    if (otherHumans.count === 0 && botIds.length === 0) {
+      throw new Error('empty_roster')
+    }
+
+    for (const botId of oldBotIds) {
+      if (!botIds.includes(botId)) {
+        cancelQueuedGroupRunsForBot(db, conversationId, botId)
+      }
+    }
+
+    if (patch.title === undefined && existing.title === oldGeneratedTitle) {
+      db.prepare(`UPDATE conversations SET title = ? WHERE id = ?`).run(
+        sharedConversationTitle([...groupHumanNames(db, conversationId), ...groupBotNames(db, botIds)]),
+        conversationId,
+      )
     }
     touchConversationUpdatedAt(db, conversationId)
   })()
   return getConversationById(db, conversationId)
+}
+
+function groupHumanNames(db: Database.Database, conversationId: string): string[] {
+  const rows = db
+    .prepare(`
+      SELECT users.username
+      FROM conversation_members
+      JOIN users ON users.id = conversation_members.user_id
+      WHERE conversation_members.conversation_id = ?
+    `)
+    .all(conversationId) as Array<{ username: string }>
+  return rows.map((row) => row.username)
+}
+
+function groupBotNames(db: Database.Database, botIds: string[]): string[] {
+  if (botIds.length === 0) {
+    return []
+  }
+  const rows = db
+    .prepare(`SELECT name FROM bots WHERE id IN (${botIds.map(() => '?').join(', ')})`)
+    .all(...botIds) as Array<{ name: string }>
+  return rows.map((row) => row.name)
 }
 
 export function rotateHermesSessionId(db: Database.Database, conversationId: string): string {

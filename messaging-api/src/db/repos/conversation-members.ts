@@ -27,6 +27,20 @@ export function addConversationMembers(
   }
 }
 
+export function removeConversationMembers(
+  db: Database.Database,
+  conversationId: string,
+  userIds: string[],
+): void {
+  const remove = db.prepare(`
+    DELETE FROM conversation_members
+    WHERE conversation_id = ? AND user_id = ?
+  `)
+  for (const userId of userIds) {
+    remove.run(conversationId, userId)
+  }
+}
+
 export function isConversationMember(
   db: Database.Database,
   conversationId: string,

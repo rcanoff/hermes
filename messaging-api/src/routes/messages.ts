@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify'
+import { listConversationBotIds } from '../db/repos/conversation-bots.js'
 import { getConversationForUser, setBootstrapPrompt } from '../db/repos/conversations.js'
 import {
   findMessageByClientId,
@@ -68,6 +69,7 @@ interface MessageBody {
   attachment_ids?: string[]
   client_message_id?: string | null
   mentioned_bot_id?: string | null
+  mentioned_bot_ids?: unknown
 }
 
 class BootstrapValidationError extends Error {
@@ -159,6 +161,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     const shared = conversation.kind === 'user_dm' || conversation.kind === 'group'
     const clientMessageId = optionalBodyId(body, 'client_message_id')
     const mentionedBotId = optionalBodyId(body, 'mentioned_bot_id')
+    const hasMentionedBotId = Object.prototype.hasOwnProperty.call(body, 'mentioned_bot_id')
     if (shared && !isUuid(clientMessageId)) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
@@ -173,10 +176,16 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(200).send({ message: enrichMessageWithAttachments(app.db, existing) })
       }
     }
-    if (
-      mentionedBotId !== undefined &&
-      (conversation.kind !== 'group' || mentionedBotId !== conversation.bot_id)
-    ) {
+    const mentionedBotIds = parseMentionedBotIds(body.mentioned_bot_ids)
+    const roomBotIds = conversation.kind === 'group' ? listConversationBotIds(app.db, conversation.id) : []
+    if (!mentionedBotIds) {
+      return reply.code(400).send({ error: 'invalid_request' })
+    }
+    if (conversation.kind === 'group') {
+      if (hasMentionedBotId || mentionedBotIds.some((id) => !roomBotIds.includes(id))) {
+        return reply.code(400).send({ error: 'invalid_request' })
+      }
+    } else if (mentionedBotIds.length > 0 || mentionedBotId !== undefined) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
 
@@ -190,21 +199,23 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     try {
       if (shared) {
         const created = app.db.transaction(() => {
-          const mention = mentionedBotId
-            ? groupPromptForMention(app.db, {
-                conversationId: conversation.id,
-                botId: mentionedBotId,
-                username: request.username,
-                text: content,
-              })
-            : null
+          const firstMentionedBotId = mentionedBotIds[0]
+          const mention =
+            conversation.kind === 'group' && firstMentionedBotId
+              ? groupPromptForMention(app.db, {
+                  conversationId: conversation.id,
+                  botId: firstMentionedBotId,
+                  username: request.username,
+                  text: content,
+                })
+              : null
           const messageId = insertMessage(app.db, {
             conversationId: conversation.id,
             role: 'user',
             content,
             senderUserId: request.userId,
             clientMessageId,
-            mentionedBotId: mentionedBotId ?? null,
+            mentionedBotId: conversation.kind === 'group' ? null : mentionedBotId ?? null,
           })
           if (attachmentIds.length > 0) {
             const staged = validateStagedAttachments(app.db, request.userId, attachmentIds)
@@ -225,12 +236,24 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
           appendConversationMessageUpsert(app.db, conversation.user_id, conversation.id, enriched)
           const runError =
             mention && !mention.fits
-              ? appendGroupAssistantMessage(app.db, conversation, 'context_too_large', app.companionModels)
+              ? appendGroupAssistantMessage(
+                  app.db,
+                  conversation,
+                  firstMentionedBotId!,
+                  'context_too_large',
+                  app.companionModels,
+                )
               : null
           if (mention?.fits) {
-            enqueueGroupRun(app.db, { messageId, conversationId: conversation.id })
+            for (const botId of mentionedBotIds) {
+              enqueueGroupRun(app.db, { messageId, conversationId: conversation.id, botId })
+            }
           }
-          return { message: enriched, runError, enqueued: mention?.fits === true }
+          return {
+            message: enriched,
+            runError,
+            enqueued: mention?.fits === true,
+          }
         })()
 
         publishToConversationMembers(app.streamHub, app.db, conversation.id, {
@@ -786,6 +809,28 @@ function extractMessageText(body: MessageBody): string {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function parseMentionedBotIds(value: unknown): string[] | null {
+  if (value === undefined) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    return null
+  }
+  const ids: string[] = []
+  const seen = new Set<string>()
+  for (const id of value) {
+    if (typeof id !== 'string' || !isUuid(id)) {
+      return null
+    }
+    if (seen.has(id)) {
+      continue
+    }
+    seen.add(id)
+    ids.push(id)
+  }
+  return ids
+}
 
 function optionalBodyId(
   body: MessageBody,

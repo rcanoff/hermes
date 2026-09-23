@@ -276,6 +276,8 @@ describe('durable run execution', () => {
         ],
         companionUserId: 'u1',
         companionUsername: 'operator',
+        model: 'grok-composer-2.5-fast',
+        provider: 'xai-oauth',
       },
     ])
   })
