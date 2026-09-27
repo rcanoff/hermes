@@ -2,9 +2,10 @@ Vendored from https://github.com/browser-use/jev-ultrafast
 Commit: 1231850a0bf1a0c0341fe408ef1668dbbfdfac46 (path jev_ultrafast/)
 License: MIT (see LICENSE)
 
-Unchanged: questions.py, snapshot.js, LICENSE. __init__.py is new (empty).
+Unchanged: questions.py, snapshot.js, LICENSE.
 
 Changes from upstream:
+- __init__.py: emptied (upstream re-exported Agent/Browser; the plugin imports submodules directly)
 - browser.py imports: removed `browser_harness.admin.ensure_daemon` and `browser_harness.helpers.cdp`.
 - browser.py Browser.__init__: signature `(url, client)`; stores `self.client`; `ensure_daemon()` call removed; `cdp(...)` -> `self.client.call(...)`.
 - browser.py Browser.call: `cdp(...)` -> `self.client.call(...)`.

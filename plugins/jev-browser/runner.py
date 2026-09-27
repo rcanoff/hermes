@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import asdict, dataclass
 
@@ -38,6 +39,20 @@ class _Stop(Exception):
         self.reason = reason
 
 
+class _RecordingClient:
+    """Forwards CDP calls; records a created tab so it is closed even if Agent construction fails."""
+
+    def __init__(self, client, runner) -> None:
+        self._client = client
+        self._runner = runner
+
+    def call(self, method, *args, **params):
+        result = self._client.call(method, *args, **params)
+        if method == "Target.createTarget":
+            self._runner._last_target = result["targetId"]
+        return result
+
+
 class GoalRunner:
     def __init__(
         self,
@@ -58,8 +73,14 @@ class GoalRunner:
         self.agent_factory = agent_factory
         self.client_factory = client_factory
         self._last_target: str | None = None
+        self._lock = threading.Lock()
 
     def run(self, url: str, goal: str) -> GoalResult:
+        # One runner is shared across gateway threads; overlapping runs would close each other's tabs.
+        with self._lock:
+            return self._run(url, goal)
+
+    def _run(self, url: str, goal: str) -> GoalResult:
         started = time.monotonic()
         agent = None
         status, reason = "failed", None
@@ -68,7 +89,7 @@ class GoalRunner:
             client.connect()
             self._close_previous_tab(client)
             agent = self.agent_factory(
-                url, goal, client=client, backend=self.backend, text_fn=self.text_fn
+                url, goal, client=_RecordingClient(client, self), backend=self.backend, text_fn=self.text_fn
             )
             self._last_target = agent.browser.target
             status, reason = self._drive(agent, started)
@@ -82,6 +103,8 @@ class GoalRunner:
                 reason = str(exc)
         except (CdpError, DecisionError, RuntimeError) as exc:
             reason = str(exc)
+        except Exception as exc:
+            reason = f"{type(exc).__name__}: {exc}"
         finally:
             client.close()
         return self._result(agent, url, status, reason, started)

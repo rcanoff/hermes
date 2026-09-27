@@ -31,11 +31,14 @@ class TypeSafeBackend:
 
     def decide(self, body: dict) -> dict:
         try:
-            resp = self._client.post(TYPESAFE_URL, json=body)
+            resp = self._client.post(TYPESAFE_URL, json={**body, "model": self.model})
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
         except httpx.HTTPError as exc:
             raise DecisionError(f"TypeSafe request failed: {exc}") from exc
+        if not (isinstance(data, dict) and isinstance(data.get("answers"), dict)):
+            raise DecisionError("TypeSafe returned an unexpected body")
+        return data
 
     def close(self) -> None:
         self._client.close()

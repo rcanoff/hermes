@@ -9,6 +9,7 @@ class FakeClient:
         self.cdp_url = cdp_url
         self.fail_connect = fail_connect
         self.calls = []
+        self.stamps = []
         self.closed = False
 
     def connect(self):
@@ -17,6 +18,9 @@ class FakeClient:
 
     def call(self, method, session_id=None, **params):
         self.calls.append((method, params))
+        self.stamps.append((method, params, time.monotonic()))
+        if method == "Target.createTarget":
+            return {"targetId": "NEW"}
         return {}
 
     def close(self):
@@ -276,6 +280,63 @@ def test_cdp_error_during_agent_construction_closes_previous_and_records_no_tab(
     assert not any(method == "Target.closeTarget" for method, _ in clients.clients[2].calls)
 
 
+def test_cdp_error_after_create_target_closes_leaked_tab_next_run():
+    clients = ClientFactory()
+    seen = []
+
+    def factory(url, goal, *, client, backend, text_fn):
+        seen.append(goal)
+        if goal == "first":
+            client.call("Target.createTarget", url="about:blank")
+            raise CdpError("Page.navigate failed: Cannot navigate to invalid URL")
+        return FakeAgent("T2", [decide("DONE", "done")])
+
+    runner = make_runner(factory, clients)
+
+    first = runner.run("example.test", "first")
+    assert (first.status, first.reason) == ("failed", "Page.navigate failed: Cannot navigate to invalid URL")
+    runner.run("https://example.test/", "second")
+    assert clients.clients[1].calls == [("Target.closeTarget", {"targetId": "NEW"})]
+
+
+def test_concurrent_runs_are_serialized():
+    import threading
+
+    clients = ClientFactory()
+
+    def slow_done(state):
+        time.sleep(0.05)
+        decide("DONE", "done")(state)
+
+    runner = make_runner(AgentFactory(lambda n: FakeAgent(f"T{n}", [slow_done])), clients)
+    finished = []
+
+    def go(goal):
+        runner.run("https://example.test/", goal)
+        finished.append(time.monotonic())
+
+    t1 = threading.Thread(target=go, args=("a",))
+    t1.start()
+    time.sleep(0.01)
+    t2 = threading.Thread(target=go, args=("b",))
+    t2.start()
+    t1.join()
+    t2.join()
+
+    closes = [ts for c in clients.clients for (m, _, ts) in c.stamps if m == "Target.closeTarget"]
+    assert len(closes) == 1
+    assert closes[0] >= min(finished)
+
+
+def test_unexpected_exception_is_failed_with_type_name():
+    def boom(state):
+        raise KeyError("answers")
+
+    result = make_runner(AgentFactory(lambda n: FakeAgent("T1", [boom]))).run("https://example.test/", "g")
+    assert result.status == "failed"
+    assert result.reason.startswith("KeyError")
+
+
 def test_second_run_closes_previous_tab(monkeypatch):
     clients = ClientFactory()
     agents = AgentFactory(lambda n: FakeAgent(f"T{n}", [decide("DONE", "done")]))
@@ -286,7 +347,7 @@ def test_second_run_closes_previous_tab(monkeypatch):
     runner.run("https://example.test/", "second")
 
     assert clients.clients[1].calls == [("Target.closeTarget", {"targetId": "T1"})]
-    assert agents.calls[1][2] is clients.clients[1]
+    assert agents.calls[1][2]._client is clients.clients[1]
     assert all(c.closed for c in clients.clients)
 
     def failing_close(self, method, session_id=None, **params):

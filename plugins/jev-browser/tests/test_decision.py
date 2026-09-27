@@ -115,5 +115,12 @@ def test_typesafe_backend_posts_body_and_bearer():
     out = TypeSafeBackend("k", "m", transport=httpx.MockTransport(handler)).decide(BODY)
     assert seen["url"] == "https://api.typesafe.ai/v1/systemone"
     assert seen["auth"] == "Bearer k"
-    assert seen["body"] == json.loads(json.dumps(BODY))
+    assert seen["body"] == {**json.loads(json.dumps(BODY)), "model": "m"}
     assert out == {"model": "m", "answers": {}}
+
+
+@pytest.mark.parametrize("payload", [[], {"model": "x"}])
+def test_typesafe_backend_rejects_unexpected_body(payload):
+    backend = TypeSafeBackend("k", "m", transport=httpx.MockTransport(lambda r: httpx.Response(200, json=payload)))
+    with pytest.raises(DecisionError):
+        backend.decide(BODY)
