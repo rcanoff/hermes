@@ -1,0 +1,7 @@
+name: jev-browser
+version: 0.1.0
+description: "browser_goal tool: jev-ultrafast browser loop on the local Brave browser-daemon, decided by a Hermes-owned model; falls back to standard browser tools."
+author: rcanoff
+python_dependencies:
+  - httpx>=0.28
+  - websockets>=15
