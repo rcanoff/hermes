@@ -18,6 +18,8 @@ class Settings:
     cdp_url: str = "http://host.docker.internal:9221"
     timeout_s: float = 60
     max_stale: int = 8
+    settle_ms: int = 100
+    max_repeat: int = 3
 
     @property
     def jev_enabled(self) -> bool:
@@ -47,4 +49,6 @@ def load(env: Mapping[str, str]) -> Settings:
         cdp_url=env.get("JEV_BROWSER_CDP_URL") or defaults.cdp_url,
         timeout_s=float(env.get("JEV_BROWSER_TIMEOUT_S") or defaults.timeout_s),
         max_stale=int(env.get("JEV_BROWSER_MAX_STALE") or defaults.max_stale),
+        settle_ms=int(env.get("JEV_BROWSER_SETTLE_MS") or defaults.settle_ms),
+        max_repeat=int(env.get("JEV_BROWSER_MAX_REPEAT") or defaults.max_repeat),
     )

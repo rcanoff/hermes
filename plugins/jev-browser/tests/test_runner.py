@@ -94,7 +94,7 @@ class AgentFactory:
         self.make = make
         self.calls = []
 
-    def __call__(self, url, goal, *, client, backend, text_fn):
+    def __call__(self, url, goal, *, client, backend, text_fn, settle_ms=0):
         self.calls.append((url, goal, client))
         return self.make(len(self.calls))
 
@@ -179,6 +179,37 @@ def test_blocked_reason_no_page_change_and_step_budget():
     result = make_runner(AgentFactory(lambda n: FakeAgent("T1", [act, budget]))).run("u", "g")
     assert (result.status, result.reason) == ("blocked", "step budget reached")
     assert len(result.steps) == 1
+
+
+def test_repeated_action_stops_as_blocked():
+    def swap(state):
+        act(state)
+        state["history"][-1]["action"] = "Swap origin and destination."
+
+    result = make_runner(AgentFactory(lambda n: FakeAgent("T1", [act, swap, swap, swap, act, act]))).run("u", "g")
+    assert (result.status, result.reason) == ("blocked", "repeated action 3 times")
+    assert len(result.steps) == 4
+
+
+def test_repeat_counter_ignores_non_consecutive_repeats():
+    def swap(state):
+        act(state)
+        state["history"][-1]["action"] = "Swap origin and destination."
+
+    ticks = [swap, swap, act, swap, swap, decide("DONE", "done")]
+    result = make_runner(AgentFactory(lambda n: FakeAgent("T1", ticks))).run("u", "g")
+    assert result.status == "done"
+
+
+def test_settle_ms_is_passed_to_agent_factory():
+    seen = {}
+
+    def factory(url, goal, *, client, backend, text_fn, settle_ms=None):
+        seen["settle_ms"] = settle_ms
+        return FakeAgent("T1", [decide("DONE", "done")])
+
+    make_runner(factory, settle_ms=150).run("u", "g")
+    assert seen["settle_ms"] == 150
 
 
 def test_timeout_marks_failed_with_reason():
@@ -284,7 +315,7 @@ def test_cdp_error_after_create_target_closes_leaked_tab_next_run():
     clients = ClientFactory()
     seen = []
 
-    def factory(url, goal, *, client, backend, text_fn):
+    def factory(url, goal, *, client, backend, text_fn, settle_ms=0):
         seen.append(goal)
         if goal == "first":
             client.call("Target.createTarget", url="about:blank")

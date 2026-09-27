@@ -10,7 +10,7 @@ from .questions import MAX_STEPS
 
 
 class Agent:
-    def __init__(self, url, goals, *, client, backend, text_fn, record_dir=None, screenshots=False):
+    def __init__(self, url, goals, *, client, backend, text_fn, settle_ms=0, record_dir=None, screenshots=False):
         task = goals.strip() if isinstance(goals, str) else "\n".join(goals).strip()
         if not task:
             raise ValueError("Supply a task")
@@ -18,7 +18,7 @@ class Agent:
         self.pending_text = None
         self.backend = backend
         self.text_fn = text_fn
-        self.browser = Browser(url, client)
+        self.browser = Browser(url, client, settle_ms=settle_ms)
         self.record_dir = Path(record_dir) if record_dir else None
         self.screenshots = screenshots or bool(record_dir)
         try:

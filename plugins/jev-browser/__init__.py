@@ -48,6 +48,8 @@ def register(ctx) -> None:
         text_fn=make_text_fn(ctx.llm, task="jev_browser_text"),
         timeout_s=s.timeout_s,
         max_stale=s.max_stale,
+        settle_ms=s.settle_ms,
+        max_repeat=s.max_repeat,
     )
     ctx.register_tool(
         "browser_goal", "jev_browser", tool.SCHEMA, tool.make_handler(runner),

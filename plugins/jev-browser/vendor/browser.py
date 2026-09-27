@@ -16,8 +16,9 @@ class StalePage(ValueError):
 
 
 class Browser:
-    def __init__(self, url, client):
+    def __init__(self, url, client, settle_ms=0):
         self.client = client
+        self.settle_s = settle_ms / 1000
         self.target = self.client.call("Target.createTarget", url="about:blank", background=True)["targetId"]
         self.session = self.client.call("Target.attachToTarget", targetId=self.target, flatten=True)["sessionId"]
         self.call("Emulation.setDeviceMetricsOverride", width=1120, height=780, deviceScaleFactor=1, mobile=False)
@@ -101,6 +102,8 @@ class Browser:
         if action["kind"] == "wait":
             time.sleep(0.1)
         result = browser_operation({"operation": "act", "session": self.session, "action": action, "text": text}, self.client)
+        if action["kind"] != "wait" and self.settle_s:
+            time.sleep(self.settle_s)  # let animations finish so the next observe is not stale
         self.after_input = action if action["kind"] != "wait" else None
         return result
 
