@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net'
 import type { FastifyInstance } from 'fastify'
 import { linkAttachmentsToMessage } from '../src/db/repos/message-attachments.js'
 import { insertBot, getBotBySlug } from '../src/db/repos/bots.js'
-import { insertMessage, listMessages } from '../src/db/repos/messages.js'
+import { insertMessage, listMessages, MESSAGE_ORDER_KEY } from '../src/db/repos/messages.js'
 import type { SessionStreamEvent } from '../src/streams/hub.js'
 import { attachmentRoot } from '../src/lib/attachment-storage.js'
 import { buildMultipartImagePayload, createTinyJpegBuffer } from './helpers/attachments.js'
@@ -1031,12 +1031,42 @@ describe('message routes', () => {
       expect(sent.json().message.created_at).toEqual(expect.any(String))
     })
 
-    it('rejects an unparsable sent_at on a DM', async () => {
+    it('rejects a sent_at that is not ISO-8601 with a zone on a DM', async () => {
       const { alice, dmId } = await openDm()
-      const sent = await postDm(alice.token, dmId, 'bad time', 'yesterday-ish')
+      for (const bad of ['yesterday-ish', '1', '2026-09-27T12:00:00', '+275760-09-13T00:00:00Z', 1_695_000_000_000]) {
+        const sent = await app!.inject({
+          method: 'POST',
+          url: `/conversations/${dmId}/messages`,
+          headers: { authorization: `Bearer ${alice.token}` },
+          payload: { text: 'bad time', client_message_id: randomUUID(), sent_at: bad },
+        })
+        expect([bad, sent.statusCode]).toEqual([bad, 400])
+      }
+      expect(await listContents(alice.token, dmId)).toEqual([])
+    })
 
-      expect(sent.statusCode).toBe(400)
-      expect(sent.json()).toEqual({ error: 'invalid_request' })
+    it('names the thread tail as the conversation latest message', async () => {
+      const { alice, bob, dmId } = await openDm()
+      const published: Array<{ userId: string; event: SessionStreamEvent }> = []
+      const original = app!.streamHub.publishToUser.bind(app!.streamHub)
+      app!.streamHub.publishToUser = (userId, event) => {
+        published.push({ userId, event })
+        original(userId, event)
+      }
+      const tail = await postDm(alice.token, dmId, 'tail')
+      await postDm(bob.token, dmId, 'uploaded later', '2000-01-01T00:00:00.000Z')
+
+      const last = published.filter((row) => row.event.event === 'conversation_upsert').at(-1)?.event
+      expect(last?.event === 'conversation_upsert' ? last.data.conversation.latest_message_id : null).toBe(tail.json().message.id)
+    })
+
+    it('pages by the order key through an index', () => {
+      const plan = app!.db
+        .prepare(`EXPLAIN QUERY PLAN SELECT id FROM messages WHERE conversation_id = ? ORDER BY ${MESSAGE_ORDER_KEY} DESC, rowid DESC LIMIT 20`)
+        .all('any') as Array<{ detail: string }>
+      const details = plan.map((row) => row.detail).join('\n')
+      expect(details).toContain('messages_conversation_order_idx')
+      expect(details).not.toContain('TEMP B-TREE')
     })
 
     it('sent_at_is_ignored_on_bot_chats', async () => {

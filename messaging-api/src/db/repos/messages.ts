@@ -87,11 +87,8 @@ export const MESSAGE_COLUMNS = `
   (SELECT username FROM users WHERE users.id = messages.sender_user_id) AS sender_username,
   (
     SELECT json_group_array(json_object('user_id', user_id, 'at', delivered_at))
-    FROM (
-      SELECT user_id, delivered_at FROM message_deliveries
-      WHERE message_deliveries.message_id = messages.id
-      ORDER BY delivered_at ASC, user_id ASC
-    )
+    FROM message_deliveries
+    WHERE message_deliveries.message_id = messages.id
   ) AS delivered_by_json
 `
 
@@ -441,11 +438,13 @@ function parseDeliveredBy(raw: string | null | undefined): MessageDelivery[] {
   if (!Array.isArray(value)) {
     return []
   }
-  return value.flatMap((entry: unknown) =>
-    isRecord(entry) && typeof entry.user_id === 'string' && typeof entry.at === 'string'
-      ? [{ user_id: entry.user_id, at: entry.at }]
-      : [],
-  )
+  return value
+    .flatMap((entry: unknown) =>
+      isRecord(entry) && typeof entry.user_id === 'string' && typeof entry.at === 'string'
+        ? [{ user_id: entry.user_id, at: entry.at }]
+        : [],
+    )
+    .sort((a, b) => a.at.localeCompare(b.at) || a.user_id.localeCompare(b.user_id))
 }
 
 function serializeMessageInput(input: MessageInput | null | undefined): string | null {

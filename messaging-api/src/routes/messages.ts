@@ -762,7 +762,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     async (request, reply) => {
       const { id, messageId } = request.params as { id: string; messageId: string }
       const conversation = getOwnedConversation(app, request.userId, id)
-      if (!conversation) {
+      if (!conversation || !isSharedKind(conversation.kind)) {
         return reply.code(404).send({ error: 'not_found' })
       }
       const message = getMessage(app.db, conversation.id, messageId)
@@ -899,12 +899,15 @@ function isUuid(value: string | undefined): value is string {
   return typeof value === 'string' && UUID_RE.test(value)
 }
 
-/** Returns null when absent, the ISO form when parsable, and undefined when present but invalid. */
+/** ISO-8601 with a four-digit year and an explicit `Z` or `±hh:mm` offset. */
+const SENT_AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/
+
+/** Returns null when absent, the ISO form when valid, and undefined when present but invalid. */
 function parseSentAt(value: unknown): string | null | undefined {
   if (value === undefined || value === null) {
     return null
   }
-  if (typeof value !== 'string') {
+  if (typeof value !== 'string' || !SENT_AT_RE.test(value)) {
     return undefined
   }
   const ms = Date.parse(value)
