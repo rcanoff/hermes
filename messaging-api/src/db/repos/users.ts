@@ -12,15 +12,15 @@ export interface UserRow {
 export function listUsersExcept(
   db: Database.Database,
   callerId: string,
-): Array<{ id: string; username: string }> {
+): Array<{ id: string; username: string; ble_public_key: string | null }> {
   return db
     .prepare(`
-      SELECT id, username
+      SELECT id, username, ble_public_key
       FROM users
       WHERE id != ?
       ORDER BY username ASC
     `)
-    .all(callerId) as Array<{ id: string; username: string }>
+    .all(callerId) as Array<{ id: string; username: string; ble_public_key: string | null }>
 }
 
 export function findUserByUsername(db: Database.Database, username: string): UserRow | undefined {

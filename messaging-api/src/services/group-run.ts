@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import type { CuratedModelEntry } from '../lib/companion-models.js'
 import {
@@ -11,6 +12,7 @@ import {
   appendConversationMessageUpsert,
 } from '../db/repos/chat-sync-events.js'
 import { getBotById, hermesProfileKeyForBot, normalizeBotRuntime } from '../db/repos/bots.js'
+import { insertMessageProcess, type ToolingLine } from '../db/repos/process.js'
 import { getConversationById, type ConversationRow } from '../db/repos/conversations.js'
 import {
   claimReadyGroupRuns,
@@ -20,6 +22,7 @@ import {
 } from '../db/repos/group-bot-runs.js'
 import { getMessage, insertMessage, listMessages, type MessageRow } from '../db/repos/messages.js'
 import { startBotTyping } from '../streams/run-event-publisher.js'
+import { buildActivityLine } from './tooling-line.js'
 import { publishToConversationMembers } from '../streams/sse-mutation-publisher.js'
 import type { StreamHub } from '../streams/hub.js'
 import { emitAccountConversationUpsert, emitToConversationMembers } from './chat-sync-emitter.js'
@@ -69,6 +72,7 @@ export function appendGroupAssistantMessage(
   botId: string,
   content: string,
   catalog: CuratedModelEntry[],
+  lines: ToolingLine[] = [],
 ): MessageWithAttachments {
   const messageId = insertMessage(db, {
     conversationId: conversation.id,
@@ -76,11 +80,21 @@ export function appendGroupAssistantMessage(
     content,
     fromBotId: botId,
   })
+  if (lines.length > 0) {
+    insertMessageProcess(db, {
+      assistantMessageId: messageId,
+      conversationId: conversation.id,
+      lines,
+    })
+  }
   const stored = getMessage(db, conversation.id, messageId)
   if (!stored) {
     throw new Error('message_not_found')
   }
   const enriched = enrichMessageWithAttachments(db, stored)
+  if (lines.length > 0) {
+    enriched.process = { lines }
+  }
   emitToConversationMembers(db, conversation.id, (userId) => {
     appendAccountMessageUpsert(db, userId, conversation.id, enriched)
     emitAccountConversationUpsert(db, userId, conversation.id, catalog)
@@ -148,8 +162,8 @@ async function executeClaimedGroupRun(deps: GroupRunDeps, claim: GroupRunClaim):
       },
     })
 
-    const text = await completeGroupTurn(deps, conversation, claim.botId, prompt.text)
-    commitGroupOutput(deps, claim, 'done', text)
+    const turn = await completeGroupTurn(deps, conversation, claim.botId, prompt.text)
+    commitGroupOutput(deps, claim, 'done', turn.text, undefined, turn.lines)
   } catch (error) {
     const code = groupRunFailureCode(error)
     commitGroupOutput(deps, claim, 'failed', code, code)
@@ -163,33 +177,53 @@ async function completeGroupTurn(
   conversation: ConversationRow,
   botId: string,
   promptText: string,
-): Promise<string> {
+): Promise<{ text: string; lines: ToolingLine[] }> {
   const bot = getBotById(deps.db, botId)
   if (!bot || normalizeBotRuntime(bot.runtime) === 'grok') {
-    return hermesAuxiliaryClient.completeHermesAuxiliary(deps.bridgeUrl, deps.bridgeApiKey, {
+    const text = await hermesAuxiliaryClient.completeHermesAuxiliary(deps.bridgeUrl, deps.bridgeApiKey, {
       provider: conversation.provider,
       model: conversation.model,
       messages: [{ role: 'user', content: promptText }],
       timeoutMs: deps.timeoutMs,
       maxTokens: GROUP_MAX_TOKENS,
     })
+    return { text, lines: [] }
   }
 
   const profileSlug = hermesProfileKeyForBot(bot)
+  const hermesSessionId = randomUUID()
   await deps.hermesClient.ensureSession({
-    hermesSessionId: conversation.hermes_session_id,
+    hermesSessionId,
     ...(profileSlug ? { profileSlug } : {}),
     companionUserId: conversation.user_id,
   })
-  return deps.hermesClient.completeChat({
-    hermesSessionId: conversation.hermes_session_id,
+  const lines: ToolingLine[] = []
+  let text = ''
+  for await (const event of deps.hermesClient.streamChat({
+    hermesSessionId,
     messages: [{ role: 'user', content: promptText }],
     ...(profileSlug ? { profileSlug } : {}),
     companionUserId: conversation.user_id,
     ...(conversation.model && conversation.provider
       ? { model: conversation.model, provider: conversation.provider }
       : {}),
-  })
+  })) {
+    if (event.type === 'tool' && event.name) {
+      lines.push(buildActivityLine({
+        tool: event.name,
+        label: event.label,
+        argumentsJson: event.arguments,
+      }))
+    } else if (event.type === 'answer_token' && event.text) {
+      text += event.text
+    } else if (event.type === 'error') {
+      throw new Error(event.text?.trim() || 'Hermes stream failed')
+    }
+  }
+  if (!text.trim()) {
+    throw new Error('Hermes stream completed without assistant text')
+  }
+  return { text, lines }
 }
 function commitGroupOutput(
   deps: GroupRunDeps,
@@ -197,6 +231,7 @@ function commitGroupOutput(
   to: 'done' | 'failed',
   content: string,
   errorCode?: string,
+  lines: ToolingLine[] = [],
 ): void {
   const conversation = getConversationById(deps.db, claim.conversationId)
   if (!conversation) {
@@ -207,7 +242,7 @@ function commitGroupOutput(
     if (!finishGroupRun(deps.db, claim.messageId, claim.botId, 'running', to, errorCode)) {
       return null
     }
-    return appendGroupAssistantMessage(deps.db, conversation, claim.botId, content, deps.catalog)
+    return appendGroupAssistantMessage(deps.db, conversation, claim.botId, content, deps.catalog, lines)
   })()
   if (!message) {
     return

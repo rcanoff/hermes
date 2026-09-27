@@ -18,7 +18,10 @@ describe('group runs', () => {
     app = await createTestApp()
     await app.ready()
     vi.spyOn(app.hermesClient, 'ensureSession').mockResolvedValue()
-    complete = vi.spyOn(app.hermesClient, 'completeChat').mockResolvedValue('ok')
+    complete = vi.spyOn(app.hermesClient, 'streamChat').mockImplementation(async function* () {
+      yield { type: 'answer_token', text: 'ok' }
+      yield { type: 'done' }
+    })
     auxiliary = vi.spyOn(hermesAuxiliaryClient, 'completeHermesAuxiliary').mockResolvedValue('ok')
   })
 
@@ -37,10 +40,11 @@ describe('group runs', () => {
     const group = await createGroup(app!, alice.token, bob.id, alice.id)
     const prompts: string[] = []
     const replies = ['boundary reply', 'second answer', 'third answer']
-    complete.mockImplementation(async (input) => {
+    complete.mockImplementation(async function* (input) {
       const text = typeof input.messages[0]?.content === 'string' ? input.messages[0].content : ''
       prompts.push(text)
-      return replies[prompts.length - 1] ?? 'later'
+      yield { type: 'answer_token', text: replies[prompts.length - 1] ?? 'later' }
+      yield { type: 'done' }
     })
     const publish = vi.spyOn(app!.streamHub, 'publishToUser')
     const legacy = vi.spyOn(app!.streamHub, 'publishLegacy')
@@ -110,16 +114,19 @@ describe('group runs', () => {
     const first = queueMention(app!, group.id, alice.id, group.botId, 'one')
     queueMention(app!, group.id, alice.id, group.botId, 'two')
     let turn = 0
-    complete.mockImplementation(async () => {
+    complete.mockImplementation(async function* () {
       turn += 1
       if (turn === 1) {
         const running = app!.db
           .prepare(`SELECT message_id, bot_id FROM group_bot_runs WHERE state = 'running'`)
           .get() as { message_id: string; bot_id: string }
         finishGroupRun(app!.db, running.message_id, running.bot_id, 'running', 'stuck')
-        return 'lost reply'
+        yield { type: 'answer_token', text: 'lost reply' }
+        yield { type: 'done' }
+        return
       }
-      return 'next reply'
+      yield { type: 'answer_token', text: 'next reply' }
+      yield { type: 'done' }
     })
 
     await drainGroupRuns(deps(app!))
