@@ -93,6 +93,8 @@ export class StreamHub {
   private readonly pendingRewinds = new Map<string, string[]>()
   private readonly userSessions = new Map<string, Set<string>>()
   private readonly sessionUser = new Map<string, string>()
+  /** The `connectUserSession` call that registered each user session; only its unsubscribe unregisters the session. */
+  private readonly userSessionOwners = new Map<string, string>()
 
   subscribeSession(sessionId: string, listener: SessionListener): () => void {
     const identity = randomUUID()
@@ -110,6 +112,7 @@ export class StreamHub {
     const previous = this.sessionConnections.get(sessionId)
     this.sessionConnections.set(sessionId, { identity, listener, closeTransport })
     this.registerUserSession(userId, sessionId)
+    this.userSessionOwners.set(sessionId, identity)
     if (previous && previous.identity !== identity) {
       previous.closeTransport?.()
     }
@@ -128,6 +131,7 @@ export class StreamHub {
   }
 
   unregisterUserSession(sessionId: string): void {
+    this.userSessionOwners.delete(sessionId)
     const userId = this.sessionUser.get(sessionId)
     if (!userId) return
     this.sessionUser.delete(sessionId)
@@ -204,12 +208,11 @@ export class StreamHub {
   }
 
   private releaseConnection(sessionId: string, identity: string, unregisterUser: boolean): void {
-    const current = this.sessionConnections.get(sessionId)
-    if (current?.identity !== identity) {
-      return
+    if (this.sessionConnections.get(sessionId)?.identity === identity) {
+      this.sessionConnections.delete(sessionId)
     }
-    this.sessionConnections.delete(sessionId)
-    if (unregisterUser) {
+    // The connection entry may already be gone (a listener threw) or replaced; the user session still ends with its stream.
+    if (unregisterUser && this.userSessionOwners.get(sessionId) === identity) {
       this.unregisterUserSession(sessionId)
     }
   }

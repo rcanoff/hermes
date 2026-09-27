@@ -93,19 +93,53 @@ describe('presence', () => {
 
   it('reconnect_within_debounce_emits_nothing', async () => {
     const watcher = await connect(bob)
-    const stream = await connect(alice)
-    await stream.close()
+    const first = await connect(alice)
+    await first.close()
     await waitFor(() => app!.streamHub.countUserSessions(alice.id) === 0)
     clock.advance(2_000)
-    await connect(alice)
+    const second = await connect(alice)
+    clock.advance(2_000)
+    await second.close()
+    await waitFor(() => app!.streamHub.countUserSessions(alice.id) === 0)
 
-    clock.advance(10_000)
+    // The debounce restarts at the second close: the first close's timer must not fire.
+    clock.advance(4_999)
+    expect((await listUsers(bob)).alice).toMatchObject({ online: true })
+    clock.advance(1)
+    await waitFor(() => watcher.presence().some((event) => !event.online))
+
+    expect(watcher.presence()).toEqual([
+      { user_id: alice.id, online: true, last_seen_at: new Date(START).toISOString() },
+      { user_id: alice.id, online: false, last_seen_at: new Date(START + 9_000).toISOString() },
+    ])
+  })
+
+  it('same_session_reconnect_keeps_user_online', async () => {
+    const watcher = await connect(bob)
+    const first = await connect(alice)
+    // The phone reopens its stream with the same token while the old one is still open; the server ends the old one.
+    const response = await fetch(`http://127.0.0.1:${port}/events/stream?include_shared=true`, {
+      headers: { authorization: `Bearer ${alice.token}` },
+    })
+    streams.push(new SseStream(response.body!.getReader()))
+    await first.ended()
+
+    clock.advance(5_000)
     await sentinel(watcher)
 
     expect(watcher.presence().filter((event) => event.user_id === alice.id)).toEqual([
       { user_id: alice.id, online: true, last_seen_at: new Date(START).toISOString() },
     ])
     expect((await listUsers(bob)).alice).toMatchObject({ online: true })
+  })
+
+  it('closed_tracker_schedules_nothing', async () => {
+    const stream = await connect(alice)
+    app!.presence.close()
+    await stream.close()
+    await waitFor(() => app!.streamHub.countUserSessions(alice.id) === 0)
+
+    expect(clock.pendingTimers()).toBe(0)
   })
 
   it('presence_is_broadcast_to_others_not_self', async () => {
@@ -198,6 +232,10 @@ class ManualClock implements PresenceClock {
     this.timers = this.timers.filter((timer) => timer.at > this.current)
     for (const timer of due) timer.callback()
   }
+
+  pendingTimers(): number {
+    return this.timers.length
+  }
 }
 
 class SseStream {
@@ -218,6 +256,11 @@ class SseStream {
   async close(): Promise<void> {
     await this.reader.cancel().catch(() => undefined)
     await this.done
+  }
+
+  /** Resolves when the server ends the stream. */
+  ended(): Promise<void> {
+    return this.done
   }
 
   private async pump(): Promise<void> {

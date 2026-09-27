@@ -63,4 +63,38 @@ describe('StreamHub user fan-out', () => {
     hub.unregisterUserSession('sess-a')
     expect(hub.hasUserSessionListener('user-1')).toBe(false)
   })
+
+  it('a user stream whose listener threw still unregisters its session when it closes', () => {
+    const hub = new StreamHub()
+    const unsubscribe = hub.connectUserSession('user-1', 'sess-a', () => { throw new Error('write failed') }, () => {})
+    hub.publishToUser('user-1', { event: 'conversation_deleted', data: { conversationId: 'c1' } })
+    expect(hub.hasSessionListener('sess-a')).toBe(false)
+
+    unsubscribe()
+
+    expect(hub.countUserSessions('user-1')).toBe(0)
+  })
+
+  it('a replaced user stream still unregisters its session when it closes', () => {
+    const hub = new StreamHub()
+    const unsubscribe = hub.connectUserSession('user-1', 'sess-a', vi.fn(), () => {})
+    const stopReplacement = hub.replaceSessionConnection('sess-a', vi.fn())
+
+    unsubscribe()
+
+    expect(hub.countUserSessions('user-1')).toBe(0)
+    expect(hub.hasSessionListener('sess-a')).toBe(true)
+    stopReplacement()
+  })
+
+  it('the older stream of a reconnected session leaves the newer one registered', () => {
+    const hub = new StreamHub()
+    const older = hub.connectUserSession('user-1', 'sess-a', vi.fn(), () => {})
+    const newer = hub.connectUserSession('user-1', 'sess-a', vi.fn(), () => {})
+
+    older()
+    expect(hub.countUserSessions('user-1')).toBe(1)
+    newer()
+    expect(hub.countUserSessions('user-1')).toBe(0)
+  })
 })

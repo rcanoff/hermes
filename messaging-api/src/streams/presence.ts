@@ -33,6 +33,8 @@ export const PRESENCE_OFFLINE_DEBOUNCE_MS = 5_000
 export class PresenceTracker {
   private readonly online = new Set<string>()
   private readonly pendingOffline = new Map<string, unknown>()
+  /** Set by close(): streams that end while the app shuts down schedule no timers and write nothing. */
+  private closed = false
 
   constructor(
     private readonly db: Database.Database,
@@ -46,6 +48,7 @@ export class PresenceTracker {
 
   /** Call after the hub registered the user's stream. */
   connected(userId: string): void {
+    if (this.closed) return
     const at = this.clock.now().toISOString()
     touchUserLastSeen(this.db, userId, at)
     const pending = this.pendingOffline.get(userId)
@@ -60,7 +63,7 @@ export class PresenceTracker {
 
   /** Call after the hub released the user's stream. */
   disconnected(userId: string): void {
-    if (!this.online.has(userId) || this.pendingOffline.has(userId)) return
+    if (this.closed || !this.online.has(userId) || this.pendingOffline.has(userId)) return
     if (this.hub.countUserSessions(userId) > 0) return
     const timer = this.clock.setTimeout(() => {
       this.pendingOffline.delete(userId)
@@ -74,6 +77,7 @@ export class PresenceTracker {
   }
 
   close(): void {
+    this.closed = true
     for (const timer of this.pendingOffline.values()) this.clock.clearTimeout(timer)
     this.pendingOffline.clear()
   }
