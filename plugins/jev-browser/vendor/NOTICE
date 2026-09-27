@@ -7,14 +7,14 @@ Unchanged: questions.py, snapshot.js, LICENSE.
 Changes from upstream:
 - __init__.py: emptied (upstream re-exported Agent/Browser; the plugin imports submodules directly)
 - browser.py imports: removed `browser_harness.admin.ensure_daemon` and `browser_harness.helpers.cdp`.
-- browser.py Browser.__init__: signature `(url, client)`; stores `self.client`; `ensure_daemon()` call removed; `cdp(...)` -> `self.client.call(...)`.
+- browser.py Browser.__init__: signature `(url, client, settle_ms=0)`; stores `self.client` and `self.settle_s`; `ensure_daemon()` call removed; `cdp(...)` -> `self.client.call(...)`.
 - browser.py Browser.call: `cdp(...)` -> `self.client.call(...)`.
-- browser.py Browser.observe / Browser.act: pass `self.client` to `browser_operation`.
+- browser.py Browser.observe / Browser.act: pass `self.client` to `browser_operation`; Browser.act sleeps `settle_s` after non-wait actions so the next observe sees a settled page.
 - browser.py Browser.close: `cdp(...)` -> `self.client.call(...)`.
 - browser.py browser_operation: signature `(request, client)`; inner `call` uses `client.call(...)`.
 - model.py imports: removed `json`, `os`, `httpx`, `TEXT_VALUE`; removed module-level `CLIENT`.
 - model.py post_json: deleted.
 - model.py choose: signature `(state, goal, history, backend)`; `body["model"]` is the literal "jev-latest" (no TYPESAFE_MODEL env read); `post_json(... TYPESAFE_API_KEY ...)` -> `backend.decide(body)`.
 - model.py field_text: signature `(context, text_fn)`; body is `return text_fn(context)` (TEXT_MODEL_* env reads, TEXT_VALUE prompt and value validation moved to decision.make_text_fn).
-- agent.py Agent.__init__: signature adds keyword-only `client, backend, text_fn`; stores `self.backend`, `self.text_fn`; `Browser(url)` -> `Browser(url, client)`.
+- agent.py Agent.__init__: signature adds keyword-only `client, backend, text_fn, settle_ms=0`; stores `self.backend`, `self.text_fn`; `Browser(url)` -> `Browser(url, client, settle_ms=settle_ms)`.
 - agent.py Agent.command: `choose(...)` receives `self.backend`; `field_text(context)` -> `field_text(context, self.text_fn)`.

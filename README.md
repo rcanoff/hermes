@@ -148,7 +148,9 @@ Enable it:
 2. Set `HERMES_BROWSER_AGENT=jev` in `.env` (`standard`, the default, registers nothing and leaves only the built-in browser tools).
 3. `make up`. `data/logs/agent.log` shows `jev-browser: browser_goal registered (decision backend …)`.
 
-Fallback: `browser_goal` never retries. `done` is not trusted; the result tells Hermes to verify the final page with the standard browser tools first. Anything else (`blocked` when the model chooses BLOCKED, three actions without a page change or the step budget runs out; `failed` on the `JEV_BROWSER_TIMEOUT_S` cap (default 60 s), a page that keeps changing, CDP/daemon errors or decision-backend errors) tells Hermes to continue manually from the returned `url` with the standard browser tools.
+Fallback: `browser_goal` never retries. `done` is not trusted; the result tells Hermes to verify the final page with the standard browser tools first. Anything else (`blocked` when the model chooses BLOCKED, three actions without a page change, the same action repeated `JEV_BROWSER_MAX_REPEAT` times (default 3) or the step budget runs out; `failed` on the `JEV_BROWSER_TIMEOUT_S` cap (default 60 s), a page that keeps changing, CDP/daemon errors or decision-backend errors) tells Hermes to continue manually from the returned `url` with the standard browser tools.
+
+Tuning: `JEV_BROWSER_SETTLE_MS` (default 100) pauses after each click/type before the page is re-read, so animated UIs (Google Flights pickers) don't trigger a wasted re-decision; raise it for slow sites, set `0` for the upstream behaviour.
 
 Decision backend (`JEV_BROWSER_DECISION_BACKEND`):
 

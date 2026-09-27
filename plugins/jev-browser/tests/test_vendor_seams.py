@@ -58,6 +58,26 @@ def test_browser_uses_injected_client(fake_client):
     assert b.target is None
 
 
+def test_act_sleeps_settle_ms_after_input(fake_client, monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(browser_mod.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(browser_mod.Browser, "fresh", lambda self, page, action=None: True)
+    monkeypatch.setattr(browser_mod, "browser_operation", lambda request, client: {"ok": True})
+    b = browser_mod.Browser("about:blank", fake_client, settle_ms=120)
+    b.act(ACTION, PAGE)
+    assert sleeps[-1] == pytest.approx(0.12)
+    sleeps.clear()
+    b.act({**ACTION, "kind": "wait"}, PAGE)
+    assert 0.12 not in sleeps  # wait actions already pause; no extra settle
+
+
+def test_agent_passes_settle_ms_to_browser(fake_client, monkeypatch):
+    monkeypatch.setattr(browser_mod.Browser, "observe", lambda self, screenshot=True: dict(PAGE))
+    agent = agent_mod.Agent("about:blank", "goal", client=fake_client, backend=FakeBackend({}), text_fn=None, settle_ms=80)
+    assert agent.browser.settle_s == pytest.approx(0.08)
+
+
+
 def test_choose_uses_backend_and_keeps_output_shape():
     answers = {
         "operation": {"choice": "CLICK", "confidence": 0.9, "probabilities": {"CLICK": 0.9, "DONE": 0.05, "BLOCKED": 0.05}},

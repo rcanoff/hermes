@@ -10,6 +10,12 @@ def test_jev_enabled_with_defaults():
     s = load({"HERMES_BROWSER_AGENT": "jev"})
     assert s.jev_enabled and s.decision_backend == "llm"
     assert s.cdp_url == "http://host.docker.internal:9221" and s.timeout_s == 60 and s.max_stale == 8
+    assert s.settle_ms == 100 and s.max_repeat == 3
+
+
+def test_settle_and_repeat_overrides():
+    s = load({"HERMES_BROWSER_AGENT": "jev", "JEV_BROWSER_SETTLE_MS": "250", "JEV_BROWSER_MAX_REPEAT": "5"})
+    assert s.settle_ms == 250 and s.max_repeat == 5
 
 
 def test_typesafe_backend_requires_key():

@@ -62,6 +62,8 @@ class GoalRunner:
         text_fn,
         timeout_s: float,
         max_stale: int,
+        settle_ms: int = 0,
+        max_repeat: int = 3,
         agent_factory=Agent,
         client_factory=CdpClient,
     ) -> None:
@@ -70,6 +72,8 @@ class GoalRunner:
         self.text_fn = text_fn
         self.timeout_s = timeout_s
         self.max_stale = max_stale
+        self.settle_ms = settle_ms
+        self.max_repeat = max_repeat
         self.agent_factory = agent_factory
         self.client_factory = client_factory
         self._last_target: str | None = None
@@ -89,7 +93,12 @@ class GoalRunner:
             client.connect()
             self._close_previous_tab(client)
             agent = self.agent_factory(
-                url, goal, client=_RecordingClient(client, self), backend=self.backend, text_fn=self.text_fn
+                url,
+                goal,
+                client=_RecordingClient(client, self),
+                backend=self.backend,
+                text_fn=self.text_fn,
+                settle_ms=self.settle_ms,
             )
             self._last_target = agent.browser.target
             status, reason = self._drive(agent, started)
@@ -130,6 +139,8 @@ class GoalRunner:
             state = agent.state
             if len(state["history"]) > seen:
                 seen, stale = len(state["history"]), 0
+                if self._repeating(state["history"]):
+                    raise _Stop("blocked", f"repeated action {self.max_repeat} times")
             elif state["status"] == "ready":
                 stale += 1
                 if stale > self.max_stale:
@@ -141,6 +152,14 @@ class GoalRunner:
         if decisions and decisions[-1].get("choice") == "BLOCKED":
             return "blocked", "model chose BLOCKED"
         return "blocked", "no page change in 3 actions"
+
+    def _repeating(self, history: list) -> bool:
+        """True when the last max_repeat actions are the same operation on the same target with the same text."""
+        tail = history[-self.max_repeat :]
+        if len(tail) < self.max_repeat:
+            return False
+        keys = {(h.get("operation"), h.get("action"), h.get("text")) for h in tail}
+        return len(keys) == 1
 
     def _result(self, agent, url, status, reason, started) -> GoalResult:
         # One clock for every path: covers connect, Agent construction and the last tick.
