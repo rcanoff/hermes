@@ -138,6 +138,30 @@ make browser-daemon-stop
 make browser-daemon-login-uninstall
 ```
 
+## Jev browser agent (optional)
+
+The `jev-browser` plugin (`plugins/jev-browser/`, bind-mounted read-only at `/opt/data/plugins/jev-browser`) adds one tool, `browser_goal(url, goal)`. It runs the vendored [jev-ultrafast](https://github.com/browser-use/jev-ultrafast) loop in a fresh Brave tab through the `browser-daemon` from the section above: open `url`, then observe/decide/act until the goal is reached or the run gives up. It returns JSON with `status` (`done | blocked | failed`), `reason`, the final `url` and `title`, `elapsed_ms`, the executed `steps`, and a `next` hint.
+
+Enable it:
+
+1. Keep `jev-browser` listed under `plugins.enabled` in `data/config.yaml`.
+2. Set `HERMES_BROWSER_AGENT=jev` in `.env` (`standard`, the default, registers nothing and leaves only the built-in browser tools).
+3. `make up`. `data/logs/agent.log` shows `jev-browser: browser_goal registered (decision backend …)`.
+
+Fallback: `browser_goal` never retries. `done` is not trusted; the result tells Hermes to verify the final page with the standard browser tools first. Anything else (`blocked` when the model chooses BLOCKED, three actions without a page change or the step budget runs out; `failed` on the `JEV_BROWSER_TIMEOUT_S` cap (default 60 s), a page that keeps changing, CDP/daemon errors or decision-backend errors) tells Hermes to continue manually from the returned `url` with the standard browser tools.
+
+Decision backend (`JEV_BROWSER_DECISION_BACKEND`):
+
+- `typesafe`: real Jev on TypeSafe (`https://api.typesafe.ai/v1/systemone`), the fast production path. Needs `TYPESAFE_API_KEY` in `.env` (never commit it); `TYPESAFE_MODEL` defaults to `jev-latest`.
+- `llm` (default): keyless fallback; the next action is picked by a Hermes-owned model through `ctx.llm`.
+
+Model calls made through Hermes use two auxiliary slots the plugin registers, both defaulting to `xai-oauth` / `grok-4.20-0309-non-reasoning` with a 30 s timeout and editable like any other auxiliary task (dashboard model picker or `auxiliary.<key>` in `data/config.yaml`):
+
+- `auxiliary.jev_browser_decide`: picks the next browser action (`llm` backend only).
+- `auxiliary.jev_browser_text`: writes the text typed into form fields (both backends).
+
+Tab-handoff limitation: the plugin's tab stays open after a run, and Hermes continues by reopening the returned URL in its own browser session; it cannot attach to the plugin's tab. Page state not encoded in the URL (half-filled forms, open pop-ups) is lost on fallback. Only one plugin tab exists at a time: a new `browser_goal` run closes the previous run's tab.
+
 ## Honcho (self-hosted memory)
 
 Honcho runs on the **same Docker Compose** as Hermes. This workspace does **not** use Honcho Cloud.
