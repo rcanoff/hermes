@@ -11,6 +11,7 @@ import {
 import { DEFAULT_BOT_SLUG, OPERATOR_USERNAME } from '../lib/hermes-profile.js'
 import { backfillAccountSyncEvents } from './repos/chat-sync-events.js'
 import { ensureDefaultBotRow, seedKnownBotResponsibilities } from './repos/bots.js'
+import { MESSAGE_ORDER_KEY } from './repos/messages.js'
 
 export function initSchema(db: Database.Database): void {
   db.pragma('foreign_keys = ON')
@@ -159,11 +160,32 @@ export function initSchema(db: Database.Database): void {
   ensureMessageRunsOriginSessionId(db)
   ensureSharedConversations(db)
   ensureGroupBots(db)
+  ensureMessageDelivery(db)
   ensureChatSyncEvents(db)
   ensurePushDevices(db)
   ensureDeviceSyncState(db)
   ensureCompanionSettings(db)
   ensureAttachmentCleanup(db)
+}
+
+function ensureMessageDelivery(db: Database.Database): void {
+  const messageColumns = db.prepare(`PRAGMA table_info(messages)`).all() as Array<{ name: string }>
+  if (!messageColumns.some((column) => column.name === 'sent_at')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN sent_at TEXT`)
+  }
+
+  // The index ends in the implicit rowid, so paging by (order key, rowid) never sorts a whole conversation.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS messages_conversation_order_idx
+      ON messages (conversation_id, ${MESSAGE_ORDER_KEY});
+
+    CREATE TABLE IF NOT EXISTS message_deliveries (
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL,
+      delivered_at TEXT NOT NULL,
+      PRIMARY KEY (message_id, user_id)
+    );
+  `)
 }
 
 function ensureSharedConversations(db: Database.Database): void {

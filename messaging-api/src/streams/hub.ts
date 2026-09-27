@@ -66,6 +66,10 @@ export type SessionStreamEvent =
       data: { conversationId: string; actorId: string; active: boolean }
     }
   | {
+      event: 'message_delivered'
+      data: { conversationId: string; messageId: string; actorId: string; at: string }
+    }
+  | {
       event: 'conversation_upsert'
       data: {
         conversation: ConversationSyncEntryPayload

@@ -8,7 +8,9 @@ import {
   getMessage,
   listMessages,
   listMessagesPage,
+  markMessageDelivered,
 } from '../db/repos/messages.js'
+import { listConversationMemberIds } from '../db/repos/conversation-members.js'
 import {
   linkAttachmentsToMessage,
   listAttachmentsForMessages,
@@ -45,6 +47,7 @@ import { scheduleTitleGeneration } from '../services/title-generator.js'
 import { scheduleConversationSessionWarmup } from '../services/session-warmup.js'
 import {
   appendAccountMessageUpsert,
+  appendConversationMessageDelivered,
   appendConversationMessageUpsert,
 } from '../db/repos/chat-sync-events.js'
 import {
@@ -70,6 +73,7 @@ interface MessageBody {
   client_message_id?: string | null
   mentioned_bot_id?: string | null
   mentioned_bot_ids?: unknown
+  sent_at?: unknown
 }
 
 class BootstrapValidationError extends Error {
@@ -165,6 +169,10 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     if (shared && !isUuid(clientMessageId)) {
       return reply.code(400).send({ error: 'invalid_request' })
     }
+    const sentAt = conversation.kind === 'user_dm' ? parseSentAt(body.sent_at) : null
+    if (sentAt === undefined) {
+      return reply.code(400).send({ error: 'invalid_request' })
+    }
     if (clientMessageId && isUuid(clientMessageId)) {
       const existing = findMessageByClientId(
         app.db,
@@ -216,6 +224,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
             senderUserId: request.userId,
             clientMessageId,
             mentionedBotId: conversation.kind === 'group' ? null : mentionedBotId ?? null,
+            sentAt,
           })
           if (attachmentIds.length > 0) {
             const staged = validateStagedAttachments(app.db, request.userId, attachmentIds)
@@ -300,6 +309,7 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
           conversationId: conversation.id,
           role: 'user',
           content,
+          clientMessageId,
         })
 
         if (attachmentIds.length > 0) {
@@ -745,6 +755,49 @@ const messageRoutes: FastifyPluginAsync = async (app) => {
     )
     return reply.code(204).send()
   })
+
+  app.post(
+    '/conversations/:id/messages/:messageId/delivered',
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const { id, messageId } = request.params as { id: string; messageId: string }
+      const conversation = getOwnedConversation(app, request.userId, id)
+      if (!conversation || !isSharedKind(conversation.kind)) {
+        return reply.code(404).send({ error: 'not_found' })
+      }
+      const message = getMessage(app.db, conversation.id, messageId)
+      if (!message) {
+        return reply.code(404).send({ error: 'not_found' })
+      }
+      if (message.sender_user_id === request.userId) {
+        return reply.code(403).send({ error: 'forbidden' })
+      }
+
+      const at = new Date().toISOString()
+      const recorded = app.db.transaction(() => {
+        if (!markMessageDelivered(app.db, message.id, request.userId, at)) {
+          return false
+        }
+        appendConversationMessageDelivered(app.db, conversation.user_id, conversation.id, {
+          messageId: message.id,
+          actorId: request.userId,
+          at,
+        })
+        return true
+      })()
+
+      if (recorded) {
+        for (const userId of listConversationMemberIds(app.db, conversation.id)) {
+          if (userId === request.userId) continue
+          app.streamHub.publishToUser(userId, {
+            event: 'message_delivered',
+            data: { conversationId: conversation.id, messageId: message.id, actorId: request.userId, at },
+          })
+        }
+      }
+      return reply.code(204).send()
+    },
+  )
 }
 
 export default messageRoutes
@@ -844,6 +897,28 @@ function optionalBodyId(
 
 function isUuid(value: string | undefined): value is string {
   return typeof value === 'string' && UUID_RE.test(value)
+}
+
+/** ISO-8601 with a four-digit year and an explicit `Z` or `±hh:mm` offset. */
+const SENT_AT_RE = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/
+
+/** Returns null when absent, the ISO form when valid, and undefined when present but invalid. */
+function parseSentAt(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) {
+    return null
+  }
+  const match = typeof value === 'string' ? SENT_AT_RE.exec(value) : null
+  if (!match) {
+    return undefined
+  }
+  // Date.parse rolls impossible days over (2026-02-30 → 03-02); require the calendar date to exist.
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])]
+  const calendar = new Date(Date.UTC(year, month - 1, day))
+  if (calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day) {
+    return undefined
+  }
+  const ms = Date.parse(value as string)
+  return Number.isNaN(ms) ? undefined : new Date(ms).toISOString()
 }
 
 function parseInputBody(value: unknown): { action: string; text?: string } | null {

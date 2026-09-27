@@ -68,6 +68,14 @@ export type ConversationSyncEvent =
     }
   | {
       event_id: string
+      type: 'message_delivered'
+      occurred_at: string
+      message_id: string
+      actor_id: string
+      at: string
+    }
+  | {
+      event_id: string
       type: 'messages_rewound'
       occurred_at: string
       removed_message_ids: string[]
@@ -200,6 +208,22 @@ export function appendConversationMessageDeleted(
     conversationId,
     eventType: 'message_deleted',
     payload: { message_id: messageId },
+  })
+  return { event_id }
+}
+
+export function appendConversationMessageDelivered(
+  db: Database.Database,
+  userId: string,
+  conversationId: string,
+  delivery: { messageId: string; actorId: string; at: string },
+): { event_id: string } {
+  const event_id = insertEvent(db, {
+    scope: 'conversation',
+    userId,
+    conversationId,
+    eventType: 'message_delivered',
+    payload: { message_id: delivery.messageId, actor_id: delivery.actorId, at: delivery.at },
   })
   return { event_id }
 }
@@ -560,6 +584,15 @@ function mapConversationEvent(row: StoredEventRow): ConversationSyncEvent {
         type: 'message_deleted',
         occurred_at: row.occurred_at,
         message_id: payload.message_id as string,
+      }
+    case 'message_delivered':
+      return {
+        event_id: row.id,
+        type: 'message_delivered',
+        occurred_at: row.occurred_at,
+        message_id: payload.message_id as string,
+        actor_id: payload.actor_id as string,
+        at: payload.at as string,
       }
     case 'messages_rewound':
       return {

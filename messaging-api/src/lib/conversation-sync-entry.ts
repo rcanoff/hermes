@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import type { ConversationSyncEntryPayload } from '../db/repos/chat-sync-events.js'
 import type { ConversationRow } from '../db/repos/conversations.js'
+import { MESSAGE_ORDER_KEY } from '../db/repos/messages.js'
 import { modelDisplayName, type CuratedModelEntry } from './companion-models.js'
 
 export function buildConversationSyncEntry(
@@ -13,7 +14,7 @@ export function buildConversationSyncEntry(
       SELECT id, created_at
       FROM messages
       WHERE conversation_id = ?
-      ORDER BY created_at DESC, rowid DESC
+      ORDER BY ${MESSAGE_ORDER_KEY} DESC, rowid DESC
       LIMIT 1
     `)
     .get(conversation.id) as { id: string; created_at: string } | undefined

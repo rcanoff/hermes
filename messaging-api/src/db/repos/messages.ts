@@ -37,6 +37,7 @@ export interface InsertMessageInput {
   senderUserId?: string | null
   clientMessageId?: string | null
   mentionedBotId?: string | null
+  sentAt?: string | null
 }
 
 export interface MessageRow {
@@ -54,7 +55,14 @@ export interface MessageRow {
   client_message_id: string | null
   mentioned_bot_id: string | null
   sequence: number | null
+  sent_at: string | null
+  delivered_by: MessageDelivery[]
   sender_user: { id: string; username: string } | null
+}
+
+export interface MessageDelivery {
+  user_id: string
+  at: string
 }
 
 export interface MessagePage {
@@ -65,14 +73,44 @@ export interface MessagePage {
 
 interface MessageCursorRow extends MessageRow {
   rowid: number
+  order_key: string
 }
 
 export const DUPLICATE_MESSAGE_WINDOW_SECONDS = 60
 
+/** Device send time when the sender supplied one (DMs), else the server time, both as ISO with milliseconds. */
+export const MESSAGE_ORDER_KEY = `COALESCE(sent_at, strftime('%Y-%m-%dT%H:%M:%fZ', created_at))`
+
+/**
+ * Rows before a cursor; binds (order key, order key, order key, rowid). The leading bound is redundant but
+ * sargable, so SQLite seeks the order-key index instead of scanning the conversation for the OR.
+ */
+export const MESSAGE_BEFORE_CURSOR = `(
+  ${MESSAGE_ORDER_KEY} <= ?
+  AND (
+    ${MESSAGE_ORDER_KEY} < ?
+    OR (${MESSAGE_ORDER_KEY} = ? AND rowid < ?)
+  )
+)`
+
+/** Rows after a cursor; binds (order key, order key, order key, rowid). Same redundant bound as before. */
+export const MESSAGE_AFTER_CURSOR = `(
+  ${MESSAGE_ORDER_KEY} >= ?
+  AND (
+    ${MESSAGE_ORDER_KEY} > ?
+    OR (${MESSAGE_ORDER_KEY} = ? AND rowid > ?)
+  )
+)`
+
 export const MESSAGE_COLUMNS = `
   id, conversation_id, role, content, created_at, kind, from_bot_id, to_bot_id, delegation_id, input_json,
-  sender_user_id, client_message_id, mentioned_bot_id, sequence,
-  (SELECT username FROM users WHERE users.id = messages.sender_user_id) AS sender_username
+  sender_user_id, client_message_id, mentioned_bot_id, sequence, sent_at,
+  (SELECT username FROM users WHERE users.id = messages.sender_user_id) AS sender_username,
+  (
+    SELECT json_group_array(json_object('user_id', user_id, 'at', delivered_at))
+    FROM message_deliveries
+    WHERE message_deliveries.message_id = messages.id
+  ) AS delivered_by_json
 `
 
 export interface MessageSqlRow {
@@ -90,7 +128,9 @@ export interface MessageSqlRow {
   client_message_id: string | null
   mentioned_bot_id: string | null
   sequence: number | null
+  sent_at: string | null
   sender_username: string | null
+  delivered_by_json: string | null
 }
 
 export function findRecentDuplicateUserMessage(
@@ -147,9 +187,9 @@ export function insertMessage(db: Database.Database, input: InsertMessageInput):
   db.prepare(`
     INSERT INTO messages (
       id, conversation_id, role, content, kind, from_bot_id, to_bot_id, delegation_id, input_json,
-      sender_user_id, client_message_id, mentioned_bot_id, sequence
+      sender_user_id, client_message_id, mentioned_bot_id, sequence, sent_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     input.conversationId,
@@ -164,9 +204,26 @@ export function insertMessage(db: Database.Database, input: InsertMessageInput):
     input.clientMessageId ?? null,
     input.mentionedBotId ?? null,
     sequence,
+    input.sentAt ?? null,
   )
   touchConversationUpdatedAt(db, input.conversationId)
   return id
+}
+
+/** Records that `userId` stored the message; returns false when it was already recorded. */
+export function markMessageDelivered(
+  db: Database.Database,
+  messageId: string,
+  userId: string,
+  deliveredAt: string,
+): boolean {
+  const result = db
+    .prepare(`
+      INSERT OR IGNORE INTO message_deliveries (message_id, user_id, delivered_at)
+      VALUES (?, ?, ?)
+    `)
+    .run(messageId, userId, deliveredAt)
+  return result.changes > 0
 }
 
 export function listMessages(db: Database.Database, conversationId: string): MessageRow[] {
@@ -176,7 +233,7 @@ export function listMessages(db: Database.Database, conversationId: string): Mes
         SELECT ${MESSAGE_COLUMNS}
         FROM messages
         WHERE conversation_id = ?
-        ORDER BY created_at ASC, rowid ASC
+        ORDER BY ${MESSAGE_ORDER_KEY} ASC, rowid ASC
       `)
       .all(conversationId) as MessageSqlRow[]
   ).map(mapMessageRow)
@@ -196,7 +253,7 @@ export function listRecentMessages(
       SELECT ${MESSAGE_COLUMNS}
       FROM messages
       WHERE conversation_id = ?
-      ORDER BY created_at DESC, rowid DESC
+      ORDER BY ${MESSAGE_ORDER_KEY} DESC, rowid DESC
       LIMIT ?
     `)
     .all(conversationId, limit) as MessageSqlRow[]
@@ -221,14 +278,11 @@ export function listMessagesPage(
         SELECT ${MESSAGE_COLUMNS}
         FROM messages
         WHERE conversation_id = ?
-          AND (
-            created_at < ?
-            OR (created_at = ? AND rowid < ?)
-          )
-        ORDER BY created_at DESC, rowid DESC
+          AND ${MESSAGE_BEFORE_CURSOR}
+        ORDER BY ${MESSAGE_ORDER_KEY} DESC, rowid DESC
         LIMIT ?
       `)
-      .all(conversationId, cursor.created_at, cursor.created_at, cursor.rowid, limit) as MessageSqlRow[]
+      .all(conversationId, cursor.order_key, cursor.order_key, cursor.order_key, cursor.rowid, limit) as MessageSqlRow[]
 
     messages.reverse()
     return buildMessagePage(db, conversationId, messages.map(mapMessageRow))
@@ -245,14 +299,11 @@ export function listMessagesPage(
         SELECT ${MESSAGE_COLUMNS}
         FROM messages
         WHERE conversation_id = ?
-          AND (
-            created_at > ?
-            OR (created_at = ? AND rowid > ?)
-          )
-        ORDER BY created_at ASC, rowid ASC
+          AND ${MESSAGE_AFTER_CURSOR}
+        ORDER BY ${MESSAGE_ORDER_KEY} ASC, rowid ASC
         LIMIT ?
       `)
-      .all(conversationId, cursor.created_at, cursor.created_at, cursor.rowid, limit) as MessageSqlRow[]
+      .all(conversationId, cursor.order_key, cursor.order_key, cursor.order_key, cursor.rowid, limit) as MessageSqlRow[]
 
     return buildMessagePage(db, conversationId, messages.map(mapMessageRow))
   }
@@ -262,7 +313,7 @@ export function listMessagesPage(
       SELECT ${MESSAGE_COLUMNS}
       FROM messages
       WHERE conversation_id = ?
-      ORDER BY created_at DESC, rowid DESC
+      ORDER BY ${MESSAGE_ORDER_KEY} DESC, rowid DESC
       LIMIT ?
     `)
     .all(conversationId, limit) as MessageSqlRow[]
@@ -358,15 +409,15 @@ function getMessageCursor(
 ): MessageCursorRow | undefined {
   const row = db
     .prepare(`
-      SELECT rowid, ${MESSAGE_COLUMNS}
+      SELECT rowid, ${MESSAGE_ORDER_KEY} AS order_key, ${MESSAGE_COLUMNS}
       FROM messages
       WHERE conversation_id = ? AND id = ?
     `)
-    .get(conversationId, messageId) as (MessageSqlRow & { rowid: number }) | undefined
+    .get(conversationId, messageId) as (MessageSqlRow & { rowid: number; order_key: string }) | undefined
   if (!row) {
     return undefined
   }
-  return { ...mapMessageRow(row), rowid: row.rowid }
+  return { ...mapMessageRow(row), rowid: row.rowid, order_key: row.order_key }
 }
 
 export function mapMessageRow(row: MessageSqlRow): MessageRow {
@@ -385,11 +436,30 @@ export function mapMessageRow(row: MessageSqlRow): MessageRow {
     client_message_id: row.client_message_id ?? null,
     mentioned_bot_id: row.mentioned_bot_id ?? null,
     sequence: row.sequence ?? null,
+    sent_at: row.sent_at ?? null,
+    delivered_by: parseDeliveredBy(row.delivered_by_json),
     sender_user:
       row.sender_user_id && row.sender_username
         ? { id: row.sender_user_id, username: row.sender_username }
         : null,
   }
+}
+
+function parseDeliveredBy(raw: string | null | undefined): MessageDelivery[] {
+  if (!raw) {
+    return []
+  }
+  const value = JSON.parse(raw) as unknown
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value
+    .flatMap((entry: unknown) =>
+      isRecord(entry) && typeof entry.user_id === 'string' && typeof entry.at === 'string'
+        ? [{ user_id: entry.user_id, at: entry.at }]
+        : [],
+    )
+    .sort((a, b) => a.at.localeCompare(b.at) || a.user_id.localeCompare(b.user_id))
 }
 
 function serializeMessageInput(input: MessageInput | null | undefined): string | null {
@@ -466,26 +536,20 @@ function buildMessagePage(
       SELECT 1
       FROM messages
       WHERE conversation_id = ?
-        AND (
-          created_at < ?
-          OR (created_at = ? AND rowid < ?)
-        )
+        AND ${MESSAGE_BEFORE_CURSOR}
       LIMIT 1
     `)
-    .get(conversationId, first.created_at, first.created_at, first.rowid) as { 1: number } | undefined
+    .get(conversationId, first.order_key, first.order_key, first.order_key, first.rowid) as { 1: number } | undefined
 
   const hasNewer = db
     .prepare(`
       SELECT 1
       FROM messages
       WHERE conversation_id = ?
-        AND (
-          created_at > ?
-          OR (created_at = ? AND rowid > ?)
-        )
+        AND ${MESSAGE_AFTER_CURSOR}
       LIMIT 1
     `)
-    .get(conversationId, last.created_at, last.created_at, last.rowid) as { 1: number } | undefined
+    .get(conversationId, last.order_key, last.order_key, last.order_key, last.rowid) as { 1: number } | undefined
 
   return {
     messages,
