@@ -118,6 +118,21 @@ class GoalRunner:
             client.close()
         return self._result(agent, url, status, reason, started)
 
+    def close_tab(self) -> bool:
+        """Close the tab left open by the last run. True if a tab was closed."""
+        with self._lock:
+            if self._last_target is None:
+                return False
+            client = self.client_factory(self.cdp_url)
+            try:
+                client.connect()
+                self._close_previous_tab(client)
+            except CdpError:
+                return False
+            finally:
+                client.close()
+            return True
+
     def _close_previous_tab(self, client) -> None:
         target, self._last_target = self._last_target, None
         if target is None:

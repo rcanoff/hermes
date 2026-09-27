@@ -27,6 +27,17 @@ SCHEMA = {
     },
 }
 
+CLOSE_DESCRIPTION = (
+    "Close the browser tab left open by the last browser_goal run. Call it once you have finished "
+    "reading or verifying that page; returns {\"closed\": true|false}."
+)
+
+CLOSE_SCHEMA = {
+    "name": "browser_goal_close",
+    "description": CLOSE_DESCRIPTION,
+    "parameters": {"type": "object", "properties": {}},
+}
+
 
 def make_handler(runner) -> Callable[..., str]:
     # Hermes' registry calls handler(args, **kwargs) (task_id etc.); only the schema args matter.
@@ -34,6 +45,14 @@ def make_handler(runner) -> Callable[..., str]:
         result = runner.run(args["url"], args["goal"]).to_dict()
         result["next"] = NEXT_DONE if result["status"] == "done" else NEXT_FALLBACK
         return json.dumps(result)
+
+    handler.runner = runner
+    return handler
+
+
+def make_close_handler(runner) -> Callable[..., str]:
+    def handler(_args: dict | None = None, **_kwargs) -> str:
+        return json.dumps({"closed": runner.close_tab()})
 
     handler.runner = runner
     return handler
