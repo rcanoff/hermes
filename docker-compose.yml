@@ -23,6 +23,7 @@ services:
       # Host Documents must be a real directory (not a symlink). Nested bind
       # so /opt/data/vaults/<username.lower()> stays under HERMES_WRITE_SAFE_ROOT.
       - ${OBSIDIAN_VAULTS_HOST_PATH:-${HERMES_DATA_DIR}/vault}:/opt/data/vaults:cached
+      - ./plugins/jev-browser:/opt/data/plugins/jev-browser:ro
       - ./scripts/patches/api_server.py:/opt/hermes/gateway/platforms/api_server.py:ro
       - ./scripts/patches/api_server_openai_routes.py:/opt/hermes/gateway/platforms/api_server_openai_routes.py:ro
       - ./scripts/patches/mcp_tool.py:/opt/hermes/tools/mcp_tool.py:ro
@@ -48,6 +49,10 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OBSIDIAN_VAULTS_ROOT: /opt/data/vaults
       HERMES_WRITE_SAFE_ROOT: /opt/data
+      HERMES_BROWSER_AGENT: ${HERMES_BROWSER_AGENT:-standard}
+      JEV_BROWSER_DECISION_BACKEND: ${JEV_BROWSER_DECISION_BACKEND:-llm}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      JEV_BROWSER_TIMEOUT_S: ${JEV_BROWSER_TIMEOUT_S:-60}
     ports:
       - ${HERMES_DASHBOARD_PORT:-9119}:9119
     command: ["gateway", "run"]
