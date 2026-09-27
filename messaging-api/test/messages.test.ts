@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify'
 import { linkAttachmentsToMessage } from '../src/db/repos/message-attachments.js'
 import { insertBot, getBotBySlug } from '../src/db/repos/bots.js'
 import { insertMessage, listMessages } from '../src/db/repos/messages.js'
+import type { SessionStreamEvent } from '../src/streams/hub.js'
 import { attachmentRoot } from '../src/lib/attachment-storage.js'
 import { buildMultipartImagePayload, createTinyJpegBuffer } from './helpers/attachments.js'
 import { getActiveRun } from '../src/db/repos/runs.js'
@@ -940,6 +941,185 @@ describe('message routes', () => {
       expect.objectContaining({ id: firstMessage.id, role: 'user', content: 'Remind me in 2 minutes' }),
     ])
     expect(hermesClient.requests).toHaveLength(1)
+  })
+
+  describe('sent_at', () => {
+    async function openDm() {
+      const alice = await seedTestUser(app!, 'alice', 'password123')
+      const bob = await seedTestUser(app!, 'bob', 'password123')
+      const dm = await app!.inject({
+        method: 'POST',
+        url: '/conversations',
+        headers: { authorization: `Bearer ${alice.token}` },
+        payload: { kind: 'user_dm', participant_user_ids: [bob.id] },
+      })
+      return { alice, bob, dmId: String(dm.json().id) }
+    }
+
+    async function postDm(token: string, dmId: string, text: string, sentAt?: string) {
+      return app!.inject({
+        method: 'POST',
+        url: `/conversations/${dmId}/messages`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { text, client_message_id: randomUUID(), ...(sentAt === undefined ? {} : { sent_at: sentAt }) },
+      })
+    }
+
+    async function listContents(token: string, dmId: string, query = ''): Promise<string[]> {
+      const response = await app!.inject({
+        method: 'GET',
+        url: `/conversations/${dmId}/messages${query}`,
+        headers: { authorization: `Bearer ${token}` },
+      })
+      expect(response.statusCode).toBe(200)
+      return response.json().messages.map((message: { content: string }) => message.content)
+    }
+
+    it('dm_send_with_sent_at_is_ordered_by_it', async () => {
+      const { alice, bob, dmId } = await openDm()
+      const later = await postDm(alice.token, dmId, 'later', '2026-09-27T10:00:05.000Z')
+      const earlier = await postDm(bob.token, dmId, 'earlier', '2026-09-27T12:00:01.000+02:00')
+
+      expect(later.statusCode).toBe(202)
+      expect(later.json().message.sent_at).toBe('2026-09-27T10:00:05.000Z')
+      expect(earlier.json().message.sent_at).toBe('2026-09-27T10:00:01.000Z')
+      expect(await listContents(alice.token, dmId)).toEqual(['earlier', 'later'])
+      expect(await listContents(bob.token, dmId, '?limit=1')).toEqual(['later'])
+      expect(await listContents(bob.token, dmId, `?limit=1&before=${later.json().message.id}`)).toEqual(['earlier'])
+      expect(await listContents(bob.token, dmId, `?limit=1&after=${earlier.json().message.id}`)).toEqual(['later'])
+
+      const sync = await app!.inject({
+        method: 'GET',
+        url: `/conversations/${dmId}/sync`,
+        headers: { authorization: `Bearer ${bob.token}` },
+      })
+      const upserts = sync
+        .json()
+        .events.filter((event: { type: string }) => event.type === 'message_upsert')
+        .map((event: { message: { content: string; sent_at: string | null } }) => [event.message.content, event.message.sent_at])
+        .sort()
+      expect(upserts).toEqual([
+        ['earlier', '2026-09-27T10:00:01.000Z'],
+        ['later', '2026-09-27T10:00:05.000Z'],
+      ])
+    })
+
+    it('orders rows with and without sent_at by one key', async () => {
+      const { alice, bob, dmId } = await openDm()
+      const now = await postDm(alice.token, dmId, 'now')
+      const past = await postDm(bob.token, dmId, 'past', '2000-01-01T00:00:00.000Z')
+      const future = await postDm(alice.token, dmId, 'future', '2999-01-01T00:00:00.000Z')
+
+      expect(await listContents(alice.token, dmId)).toEqual(['past', 'now', 'future'])
+      expect(await listContents(alice.token, dmId, `?limit=1&before=${future.json().message.id}`)).toEqual(['now'])
+      expect(await listContents(alice.token, dmId, `?limit=1&before=${now.json().message.id}`)).toEqual(['past'])
+      expect(await listContents(alice.token, dmId, `?limit=1&after=${past.json().message.id}`)).toEqual(['now'])
+      const page = await app!.inject({
+        method: 'GET',
+        url: `/conversations/${dmId}/messages?limit=1&before=${future.json().message.id}`,
+        headers: { authorization: `Bearer ${alice.token}` },
+      })
+      expect(Object.keys(page.json()._links).sort()).toEqual(['next', 'prev', 'self'])
+    })
+
+    it('sent_at_defaults_to_created_at', async () => {
+      const { alice, dmId } = await openDm()
+      const sent = await postDm(alice.token, dmId, 'no device time')
+
+      expect(sent.statusCode).toBe(202)
+      expect(sent.json().message.sent_at).toBeNull()
+      expect(sent.json().message.created_at).toEqual(expect.any(String))
+    })
+
+    it('rejects an unparsable sent_at on a DM', async () => {
+      const { alice, dmId } = await openDm()
+      const sent = await postDm(alice.token, dmId, 'bad time', 'yesterday-ish')
+
+      expect(sent.statusCode).toBe(400)
+      expect(sent.json()).toEqual({ error: 'invalid_request' })
+    })
+
+    it('sent_at_is_ignored_on_bot_chats', async () => {
+      const response = await app!.inject({
+        method: 'POST',
+        url: `/conversations/${conversationId}/messages`,
+        headers: { authorization: `Bearer ${operatorToken}` },
+        payload: { text: 'bot chat', sent_at: '2000-01-01T00:00:00.000Z' },
+      })
+
+      expect(response.statusCode).toBe(202)
+      expect(response.json().message.sent_at).toBeNull()
+
+      prepareTitleResponse(hermesClient)
+      hermesClient.pushAnswerToken('ok', 0)
+      hermesClient.pushDone(0)
+      hermesClient.closeWithoutDone(0)
+      await completeTitleAfterReply(hermesClient)
+      await waitFor(() => listMessages(app!.db, conversationId).length === 2)
+    })
+
+    it('serialises the sender client_message_id on DM messages everywhere', async () => {
+      const { alice, bob, dmId } = await openDm()
+      const published: Array<{ userId: string; event: SessionStreamEvent }> = []
+      const original = app!.streamHub.publishToUser.bind(app!.streamHub)
+      app!.streamHub.publishToUser = (userId, event) => {
+        published.push({ userId, event })
+        original(userId, event)
+      }
+      const clientMessageId = randomUUID()
+      const sent = await app!.inject({
+        method: 'POST',
+        url: `/conversations/${dmId}/messages`,
+        headers: { authorization: `Bearer ${alice.token}` },
+        payload: { text: 'tagged', client_message_id: clientMessageId },
+      })
+
+      expect(sent.json().message.client_message_id).toBe(clientMessageId)
+      const listed = await app!.inject({
+        method: 'GET',
+        url: `/conversations/${dmId}/messages`,
+        headers: { authorization: `Bearer ${bob.token}` },
+      })
+      expect(listed.json().messages[0].client_message_id).toBe(clientMessageId)
+      const sync = await app!.inject({
+        method: 'GET',
+        url: `/conversations/${dmId}/sync`,
+        headers: { authorization: `Bearer ${bob.token}` },
+      })
+      expect(sync.json().events.find((event: { type: string }) => event.type === 'message_upsert').message.client_message_id).toBe(clientMessageId)
+      const sse = published.find((row) => row.userId === bob.id && row.event.event === 'message_upsert')?.event
+      expect(sse?.event === 'message_upsert' ? sse.data.message.client_message_id : undefined).toBe(clientMessageId)
+    })
+
+    it('echoes client_message_id on bot chat messages', async () => {
+      const clientMessageId = randomUUID()
+      const response = await app!.inject({
+        method: 'POST',
+        url: `/conversations/${conversationId}/messages`,
+        headers: { authorization: `Bearer ${operatorToken}` },
+        payload: { text: 'bot chat tagged', client_message_id: clientMessageId },
+      })
+
+      expect(response.statusCode).toBe(202)
+      expect(response.json().message.client_message_id).toBe(clientMessageId)
+      expect(response.json().message.sender_user).toBeNull()
+
+      prepareTitleResponse(hermesClient)
+      hermesClient.pushAnswerToken('ok', 0)
+      hermesClient.pushDone(0)
+      hermesClient.closeWithoutDone(0)
+      await completeTitleAfterReply(hermesClient)
+      await waitFor(() => listMessages(app!.db, conversationId).length === 2)
+      const listed = await app!.inject({
+        method: 'GET',
+        url: `/conversations/${conversationId}/messages`,
+        headers: { authorization: `Bearer ${operatorToken}` },
+      })
+      expect(listed.json().messages.map((message: { client_message_id: string | null }) => message.client_message_id)).toEqual([
+        clientMessageId,
+        null,
+      ])
+    })
   })
 })
 

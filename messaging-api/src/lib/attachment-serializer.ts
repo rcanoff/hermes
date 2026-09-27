@@ -31,7 +31,7 @@ export interface BotSummary {
 
 export type MessageWithAttachments = Omit<
   MessageRow,
-  'from_bot_id' | 'to_bot_id' | 'delegation_id' | 'input' | 'sender_user_id' | 'client_message_id'
+  'from_bot_id' | 'to_bot_id' | 'delegation_id' | 'input' | 'sender_user_id'
 > & {
   delegation_id?: string
   from_bot?: BotSummary
@@ -114,7 +114,6 @@ export function serializeMessage(
     delegation_id: delegationId,
     input,
     sender_user_id: _senderUserId,
-    client_message_id: _clientMessageId,
     ...rest
   } = row
   const serialized: MessageWithAttachments = {
@@ -123,6 +122,9 @@ export function serializeMessage(
     sender_user: row.sender_user ?? null,
     mentioned_bot_id: row.mentioned_bot_id ?? null,
     sequence: row.sequence ?? null,
+    client_message_id: row.client_message_id ?? null,
+    sent_at: row.sent_at ?? null,
+    delivered_by: row.delivered_by ?? [],
     ...(delegationId ? { delegation_id: delegationId } : {}),
     ...(input ? { input } : {}),
   }
