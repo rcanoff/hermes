@@ -2,7 +2,7 @@ Vendored from https://github.com/browser-use/jev-ultrafast
 Commit: 1231850a0bf1a0c0341fe408ef1668dbbfdfac46 (path jev_ultrafast/)
 License: MIT (see LICENSE)
 
-Unchanged: questions.py, snapshot.js, LICENSE.
+Unchanged: questions.py, LICENSE.
 
 Changes from upstream:
 - __init__.py: emptied (upstream re-exported Agent/Browser; the plugin imports submodules directly)
@@ -18,3 +18,5 @@ Changes from upstream:
 - model.py field_text: signature `(context, text_fn)`; body is `return text_fn(context)` (TEXT_MODEL_* env reads, TEXT_VALUE prompt and value validation moved to decision.make_text_fn).
 - agent.py Agent.__init__: signature adds keyword-only `client, backend, text_fn, settle_ms=0`; stores `self.backend`, `self.text_fn`; `Browser(url)` -> `Browser(url, client, settle_ms=settle_ms)`.
 - agent.py Agent.command: `choose(...)` receives `self.backend`; `field_text(context)` -> `field_text(context, self.text_fn)`.
+- snapshot.js cache.guard: last component is the element's own `innerText.slice(0,200)` instead of the enclosing form/dialog/article/li/tr `innerText.slice(0,6000)`, so live counters and ads next to a control no longer invalidate a click on it.
+- snapshot.js marker: drops the visible page `text` component (keeps url, scroll, viewport, title, action semantics, form values), so typing into a field is not rejected because unrelated text on the page changed.
