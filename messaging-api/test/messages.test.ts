@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net'
 import type { FastifyInstance } from 'fastify'
 import { linkAttachmentsToMessage } from '../src/db/repos/message-attachments.js'
 import { insertBot, getBotBySlug } from '../src/db/repos/bots.js'
-import { insertMessage, listMessages, MESSAGE_ORDER_KEY } from '../src/db/repos/messages.js'
+import { insertMessage, listMessages, MESSAGE_AFTER_CURSOR, MESSAGE_BEFORE_CURSOR, MESSAGE_ORDER_KEY } from '../src/db/repos/messages.js'
 import type { SessionStreamEvent } from '../src/streams/hub.js'
 import { attachmentRoot } from '../src/lib/attachment-storage.js'
 import { buildMultipartImagePayload, createTinyJpegBuffer } from './helpers/attachments.js'
@@ -1033,7 +1033,7 @@ describe('message routes', () => {
 
     it('rejects a sent_at that is not ISO-8601 with a zone on a DM', async () => {
       const { alice, dmId } = await openDm()
-      for (const bad of ['yesterday-ish', '1', '2026-09-27T12:00:00', '+275760-09-13T00:00:00Z', 1_695_000_000_000]) {
+      for (const bad of ['yesterday-ish', '1', '2026-09-27T12:00:00', '+275760-09-13T00:00:00Z', 1_695_000_000_000, '2026-02-30T12:00:00Z', '2026-04-31T00:00:00+02:00']) {
         const sent = await app!.inject({
           method: 'POST',
           url: `/conversations/${dmId}/messages`,
@@ -1067,6 +1067,25 @@ describe('message routes', () => {
       const details = plan.map((row) => row.detail).join('\n')
       expect(details).toContain('messages_conversation_order_idx')
       expect(details).not.toContain('TEMP B-TREE')
+    })
+
+    it('seeks the before page by the order key through the index', () => {
+      const plan = app!.db
+        .prepare(`EXPLAIN QUERY PLAN SELECT id FROM messages WHERE conversation_id = ? AND ${MESSAGE_BEFORE_CURSOR} ORDER BY ${MESSAGE_ORDER_KEY} DESC, rowid DESC LIMIT 20`)
+        .all('any', ...Array.from(MESSAGE_BEFORE_CURSOR.matchAll(/\?/g), () => '')) as Array<{ detail: string }>
+      const details = plan.map((row) => row.detail).join('\n')
+      expect(details).toContain('messages_conversation_order_idx')
+      expect(details).toContain('<expr>')
+      expect(details).not.toContain('TEMP B-TREE')
+    })
+
+    it('seeks hasNewer by the order key through the index', () => {
+      const plan = app!.db
+        .prepare(`EXPLAIN QUERY PLAN SELECT 1 FROM messages WHERE conversation_id = ? AND ${MESSAGE_AFTER_CURSOR} LIMIT 1`)
+        .all('any', ...Array.from(MESSAGE_AFTER_CURSOR.matchAll(/\?/g), () => '')) as Array<{ detail: string }>
+      const details = plan.map((row) => row.detail).join('\n')
+      expect(details).toContain('messages_conversation_order_idx')
+      expect(details).toContain('<expr>')
     })
 
     it('sent_at_is_ignored_on_bot_chats', async () => {

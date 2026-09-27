@@ -81,6 +81,27 @@ export const DUPLICATE_MESSAGE_WINDOW_SECONDS = 60
 /** Device send time when the sender supplied one (DMs), else the server time, both as ISO with milliseconds. */
 export const MESSAGE_ORDER_KEY = `COALESCE(sent_at, strftime('%Y-%m-%dT%H:%M:%fZ', created_at))`
 
+/**
+ * Rows before a cursor; binds (order key, order key, order key, rowid). The leading bound is redundant but
+ * sargable, so SQLite seeks the order-key index instead of scanning the conversation for the OR.
+ */
+export const MESSAGE_BEFORE_CURSOR = `(
+  ${MESSAGE_ORDER_KEY} <= ?
+  AND (
+    ${MESSAGE_ORDER_KEY} < ?
+    OR (${MESSAGE_ORDER_KEY} = ? AND rowid < ?)
+  )
+)`
+
+/** Rows after a cursor; binds (order key, order key, order key, rowid). Same redundant bound as before. */
+export const MESSAGE_AFTER_CURSOR = `(
+  ${MESSAGE_ORDER_KEY} >= ?
+  AND (
+    ${MESSAGE_ORDER_KEY} > ?
+    OR (${MESSAGE_ORDER_KEY} = ? AND rowid > ?)
+  )
+)`
+
 export const MESSAGE_COLUMNS = `
   id, conversation_id, role, content, created_at, kind, from_bot_id, to_bot_id, delegation_id, input_json,
   sender_user_id, client_message_id, mentioned_bot_id, sequence, sent_at,
@@ -257,14 +278,11 @@ export function listMessagesPage(
         SELECT ${MESSAGE_COLUMNS}
         FROM messages
         WHERE conversation_id = ?
-          AND (
-            ${MESSAGE_ORDER_KEY} < ?
-            OR (${MESSAGE_ORDER_KEY} = ? AND rowid < ?)
-          )
+          AND ${MESSAGE_BEFORE_CURSOR}
         ORDER BY ${MESSAGE_ORDER_KEY} DESC, rowid DESC
         LIMIT ?
       `)
-      .all(conversationId, cursor.order_key, cursor.order_key, cursor.rowid, limit) as MessageSqlRow[]
+      .all(conversationId, cursor.order_key, cursor.order_key, cursor.order_key, cursor.rowid, limit) as MessageSqlRow[]
 
     messages.reverse()
     return buildMessagePage(db, conversationId, messages.map(mapMessageRow))
@@ -281,14 +299,11 @@ export function listMessagesPage(
         SELECT ${MESSAGE_COLUMNS}
         FROM messages
         WHERE conversation_id = ?
-          AND (
-            ${MESSAGE_ORDER_KEY} > ?
-            OR (${MESSAGE_ORDER_KEY} = ? AND rowid > ?)
-          )
+          AND ${MESSAGE_AFTER_CURSOR}
         ORDER BY ${MESSAGE_ORDER_KEY} ASC, rowid ASC
         LIMIT ?
       `)
-      .all(conversationId, cursor.order_key, cursor.order_key, cursor.rowid, limit) as MessageSqlRow[]
+      .all(conversationId, cursor.order_key, cursor.order_key, cursor.order_key, cursor.rowid, limit) as MessageSqlRow[]
 
     return buildMessagePage(db, conversationId, messages.map(mapMessageRow))
   }
@@ -521,26 +536,20 @@ function buildMessagePage(
       SELECT 1
       FROM messages
       WHERE conversation_id = ?
-        AND (
-          ${MESSAGE_ORDER_KEY} < ?
-          OR (${MESSAGE_ORDER_KEY} = ? AND rowid < ?)
-        )
+        AND ${MESSAGE_BEFORE_CURSOR}
       LIMIT 1
     `)
-    .get(conversationId, first.order_key, first.order_key, first.rowid) as { 1: number } | undefined
+    .get(conversationId, first.order_key, first.order_key, first.order_key, first.rowid) as { 1: number } | undefined
 
   const hasNewer = db
     .prepare(`
       SELECT 1
       FROM messages
       WHERE conversation_id = ?
-        AND (
-          ${MESSAGE_ORDER_KEY} > ?
-          OR (${MESSAGE_ORDER_KEY} = ? AND rowid > ?)
-        )
+        AND ${MESSAGE_AFTER_CURSOR}
       LIMIT 1
     `)
-    .get(conversationId, last.order_key, last.order_key, last.rowid) as { 1: number } | undefined
+    .get(conversationId, last.order_key, last.order_key, last.order_key, last.rowid) as { 1: number } | undefined
 
   return {
     messages,

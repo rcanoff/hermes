@@ -900,17 +900,24 @@ function isUuid(value: string | undefined): value is string {
 }
 
 /** ISO-8601 with a four-digit year and an explicit `Z` or `±hh:mm` offset. */
-const SENT_AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/
+const SENT_AT_RE = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/
 
 /** Returns null when absent, the ISO form when valid, and undefined when present but invalid. */
 function parseSentAt(value: unknown): string | null | undefined {
   if (value === undefined || value === null) {
     return null
   }
-  if (typeof value !== 'string' || !SENT_AT_RE.test(value)) {
+  const match = typeof value === 'string' ? SENT_AT_RE.exec(value) : null
+  if (!match) {
     return undefined
   }
-  const ms = Date.parse(value)
+  // Date.parse rolls impossible days over (2026-02-30 → 03-02); require the calendar date to exist.
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])]
+  const calendar = new Date(Date.UTC(year, month - 1, day))
+  if (calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day) {
+    return undefined
+  }
+  const ms = Date.parse(value as string)
   return Number.isNaN(ms) ? undefined : new Date(ms).toISOString()
 }
 
