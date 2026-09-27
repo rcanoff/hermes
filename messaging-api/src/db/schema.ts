@@ -891,6 +891,9 @@ function ensureLegacyUserColumns(db: Database.Database): void {
   if (!columns.some((column) => column.name === 'ble_public_key')) {
     db.exec(`ALTER TABLE users ADD COLUMN ble_public_key TEXT`)
   }
+  if (!columns.some((column) => column.name === 'last_seen_at')) {
+    db.exec(`ALTER TABLE users ADD COLUMN last_seen_at TEXT`)
+  }
   if (!columns.some((column) => column.name === 'created_at')) {
     db.exec(`ALTER TABLE users ADD COLUMN created_at TEXT`)
     db.exec(`UPDATE users SET created_at = datetime('now') WHERE created_at IS NULL`)

@@ -39,6 +39,7 @@ import { OpenAiHermesClient } from './services/hermes-client.js'
 import { PushNotificationService } from './services/push-notifications.js'
 import { RunAbortRegistry } from './services/run-abort-registry.js'
 import { StreamHub } from './streams/hub.js'
+import { PresenceTracker, systemPresenceClock } from './streams/presence.js'
 import type { ApnsConfig } from './config.js'
 import type { ApnsClient } from './services/apns-client.js'
 import type { HermesClient } from './services/hermes-client.js'
@@ -52,6 +53,7 @@ declare module 'fastify' {
     hermesDashboard: HermesDashboard
     grokGatewayClient: GrokGatewayClient
     streamHub: StreamHub
+    presence: PresenceTracker
     addressEnrichmentQueue: AddressEnrichmentQueueType
     companionMcpBearerToken: string
     cronWebhookBearer: string
@@ -109,6 +111,15 @@ export function buildApp(options: AppOptions) {
       createGrokGatewayClient(options.grokGatewayUrl, options.grokGatewayToken),
   )
   app.decorate('streamHub', options.streamHub ?? new StreamHub())
+  const presence = new PresenceTracker(
+    app.db,
+    app.streamHub,
+    options.presenceClock ?? systemPresenceClock,
+  )
+  app.decorate('presence', presence)
+  app.addHook('onClose', async () => {
+    presence.close()
+  })
   app.decorate('runAbortRegistry', new RunAbortRegistry())
   app.decorate('streamWaitMs', options.streamWaitMs ?? 30_000)
   app.decorate('companionMcpBearerToken', options.companionMcpBearerToken)

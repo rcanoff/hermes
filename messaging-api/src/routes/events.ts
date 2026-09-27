@@ -41,6 +41,7 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
       },
       closeTransport,
     )
+    app.presence.connected(userId)
 
     request.log.info(
       {
@@ -55,6 +56,7 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
     const closeStream = () => {
       closeTransport()
       unsubscribe()
+      app.presence.disconnected(userId)
     }
 
     await new Promise<void>((resolve) => {
@@ -73,6 +75,9 @@ function visibleStreamEvent(
   event: SessionStreamEvent,
   includeShared: boolean,
 ): boolean {
+  if (event.event === 'presence') {
+    return true
+  }
   if (includeShared) {
     return true
   }

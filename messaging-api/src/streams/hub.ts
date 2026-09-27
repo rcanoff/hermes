@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { MessageWithAttachments } from '../lib/attachment-serializer.js'
 import type { ConversationSyncEntryPayload } from '../db/repos/chat-sync-events.js'
 import type { ToolingLine, ToolingPhase } from '../db/repos/process.js'
+import type { PresenceEvent } from './presence.js'
 
 export type { ToolingLine, ToolingPhase } from '../db/repos/process.js'
 
@@ -75,6 +76,7 @@ export type SessionStreamEvent =
         conversation: ConversationSyncEntryPayload
       }
     }
+  | PresenceEvent
 
 type SessionListener = (event: SessionStreamEvent) => void
 type LegacyListener = (event: LegacyStreamEvent) => void
@@ -164,6 +166,12 @@ export class StreamHub {
     if (!sessions) return
     for (const sessionId of sessions) {
       this.publishSession(sessionId, event)
+    }
+  }
+
+  publishToAllExcept(userId: string, event: SessionStreamEvent): void {
+    for (const recipient of this.userSessions.keys()) {
+      if (recipient !== userId) this.publishToUser(recipient, event)
     }
   }
 

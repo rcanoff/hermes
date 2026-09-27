@@ -9,6 +9,7 @@ import type { GrokGatewayClient } from './services/grok-gateway-client.js'
 import type { HermesClient } from './services/hermes-client.js'
 import type { PushNotificationService } from './services/push-notifications.js'
 import type { StreamHub } from './streams/hub.js'
+import type { PresenceClock } from './streams/presence.js'
 
 export interface AppOptions {
   dbPath: string
@@ -49,6 +50,7 @@ export interface AppOptions {
   cronOutputBridge?: CronOutputBridge
   hermesClient?: HermesClient
   streamHub?: StreamHub
+  presenceClock?: PresenceClock
   addressEnrichmentQueue?: AddressEnrichmentQueue
   pushNotifications?: PushNotificationService
   streamWaitMs?: number

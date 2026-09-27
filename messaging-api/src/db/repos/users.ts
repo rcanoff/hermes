@@ -9,18 +9,32 @@ export interface UserRow {
   created_at: string
 }
 
+export type ListedUser = {
+  id: string
+  username: string
+  ble_public_key: string | null
+  online: boolean
+  last_seen_at: string | null
+}
+
 export function listUsersExcept(
   db: Database.Database,
   callerId: string,
-): Array<{ id: string; username: string; ble_public_key: string | null }> {
-  return db
+  isOnline: (userId: string) => boolean,
+): ListedUser[] {
+  const rows = db
     .prepare(`
-      SELECT id, username, ble_public_key
+      SELECT id, username, ble_public_key, last_seen_at
       FROM users
       WHERE id != ?
       ORDER BY username ASC
     `)
-    .all(callerId) as Array<{ id: string; username: string; ble_public_key: string | null }>
+    .all(callerId) as Array<Omit<ListedUser, 'online'>>
+  return rows.map((row) => ({ ...row, online: isOnline(row.id) }))
+}
+
+export function touchUserLastSeen(db: Database.Database, id: string, at: string): void {
+  db.prepare(`UPDATE users SET last_seen_at = ? WHERE id = ?`).run(at, id)
 }
 
 export function findUserByUsername(db: Database.Database, username: string): UserRow | undefined {
