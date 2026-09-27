@@ -140,7 +140,7 @@ make browser-daemon-login-uninstall
 
 ## Jev browser agent (optional)
 
-The `jev-browser` plugin (`plugins/jev-browser/`, bind-mounted read-only at `/opt/data/plugins/jev-browser`) adds one tool, `browser_goal(url, goal)`. It runs the vendored [jev-ultrafast](https://github.com/browser-use/jev-ultrafast) loop in a fresh Brave tab through the `browser-daemon` from the section above: open `url`, then observe/decide/act until the goal is reached or the run gives up. It returns JSON with `status` (`done | blocked | failed`), `reason`, the final `url` and `title`, `elapsed_ms`, the executed `steps`, and a `next` hint.
+The `jev-browser` plugin (`plugins/jev-browser/`, bind-mounted read-only at `/opt/data/plugins/jev-browser`) adds two tools: `browser_goal(url, goal)` and `browser_goal_close()`. It runs the vendored [jev-ultrafast](https://github.com/browser-use/jev-ultrafast) loop in a fresh Brave tab through the `browser-daemon` from the section above: open `url`, then observe/decide/act until the goal is reached or the run gives up. It returns JSON with `status` (`done | blocked | failed`), `reason`, the final `url` and `title`, `elapsed_ms`, the executed `steps`, and a `next` hint.
 
 Enable it:
 
@@ -162,7 +162,7 @@ Model calls made through Hermes use two auxiliary slots the plugin registers, bo
 - `auxiliary.jev_browser_decide`: picks the next browser action (`llm` backend only).
 - `auxiliary.jev_browser_text`: writes the text typed into form fields (both backends).
 
-Tab-handoff limitation: the plugin's tab stays open after a run, and Hermes continues by reopening the returned URL in its own browser session; it cannot attach to the plugin's tab. Page state not encoded in the URL (half-filled forms, open pop-ups) is lost on fallback. Only one plugin tab exists at a time: a new `browser_goal` run closes the previous run's tab.
+Tab-handoff limitation: the plugin's tab stays open after a run so Hermes can verify it; `browser_goal_close` closes it once the result has been read, and a new `browser_goal` run closes it anyway. Hermes continues by reopening the returned URL in its own browser session; it cannot attach to the plugin's tab. Page state not encoded in the URL (half-filled forms, open pop-ups) is lost on fallback. Only one plugin tab exists at a time: a new `browser_goal` run closes the previous run's tab.
 
 ## Honcho (self-hosted memory)
 

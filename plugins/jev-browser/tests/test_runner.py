@@ -181,6 +181,27 @@ def test_blocked_reason_no_page_change_and_step_budget():
     assert len(result.steps) == 1
 
 
+def test_close_tab_closes_last_target_and_forgets_it():
+    clients = ClientFactory()
+    runner = make_runner(AgentFactory(lambda n: FakeAgent("T1", [decide("DONE", "done")])), clients)
+    runner.run("u", "g")
+
+    assert runner.close_tab() is True
+    assert clients.clients[-1].calls == [("Target.closeTarget", {"targetId": "T1"})]
+    assert clients.clients[-1].closed
+    assert runner.close_tab() is False
+    assert len(clients.clients) == 2  # no client opened when there is nothing to close
+
+
+def test_close_tab_is_false_when_daemon_unreachable():
+    clients = ClientFactory()
+    runner = make_runner(AgentFactory(lambda n: FakeAgent("T1", [decide("DONE", "done")])), clients)
+    runner.run("u", "g")
+    clients.fail_connect = True
+
+    assert runner.close_tab() is False
+
+
 def test_repeated_action_stops_as_blocked():
     def swap(state):
         act(state)

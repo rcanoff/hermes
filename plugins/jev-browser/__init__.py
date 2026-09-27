@@ -55,4 +55,8 @@ def register(ctx) -> None:
         "browser_goal", "jev_browser", tool.SCHEMA, tool.make_handler(runner),
         description=tool.DESCRIPTION, emoji="⚡",
     )
+    ctx.register_tool(
+        "browser_goal_close", "jev_browser", tool.CLOSE_SCHEMA, tool.make_close_handler(runner),
+        description=tool.CLOSE_DESCRIPTION, emoji="⚡",
+    )
     logger.info("browser_goal registered (decision backend %s)", s.decision_backend)

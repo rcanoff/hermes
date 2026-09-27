@@ -22,6 +22,10 @@ class FakeRunner:
         self.calls.append((url, goal))
         return self.result
 
+    def close_tab(self):
+        self.calls.append("close")
+        return True
+
 
 @pytest.fixture
 def fake_runner_done():
@@ -115,7 +119,18 @@ def test_register_registers_tool_and_two_aux_tasks(fake_ctx, plugin, monkeypatch
     assert entry["schema"] == tool.SCHEMA
     assert entry["schema"]["parameters"]["required"] == ["url", "goal"]
     assert set(fake_ctx.aux) == {"jev_browser_decide", "jev_browser_text"}
+    close = fake_ctx.tools["browser_goal_close"]
+    assert close["toolset"] == "jev_browser"
+    assert close["handler"].runner is entry["handler"].runner
     assert isinstance(entry["handler"].runner.backend, LlmBackend)
+
+
+def test_close_handler_reports_closed(fake_runner_done):
+    import tool
+
+    out = json.loads(tool.make_close_handler(fake_runner_done)({}))
+    assert out == {"closed": True}
+    assert fake_runner_done.calls == ["close"]
 
 
 def test_register_typesafe_backend_selected(fake_ctx, plugin, monkeypatch):
