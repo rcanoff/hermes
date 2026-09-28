@@ -73,7 +73,7 @@ describe('presence', () => {
   it('last_disconnect_goes_offline_after_debounce_with_last_seen', async () => {
     const watcher = await connect(bob)
     const stream = await connect(alice)
-    clock.advance(60_000)
+    clock.advance(30_000)
     await stream.close()
     await waitFor(() => app!.streamHub.countUserSessions(alice.id) === 0)
 
@@ -81,7 +81,7 @@ describe('presence', () => {
     expect((await listUsers(bob)).alice).toMatchObject({ online: true })
 
     clock.advance(1)
-    const offlineAt = new Date(START + 65_000).toISOString()
+    const offlineAt = new Date(START + 35_000).toISOString()
     await waitFor(() => watcher.presence().some((event) => !event.online))
 
     expect(watcher.presence()).toEqual([
@@ -174,6 +174,64 @@ describe('presence', () => {
     expect(listed.carol).toMatchObject({ online: false, last_seen_at: null })
   })
 
+  it('stale_stream_without_heartbeat_goes_offline', async () => {
+    const watcher = await connect(bob)
+    const stream = await connect(alice)
+    clock.advance(30_000)
+    await heartbeat(bob)
+
+    clock.advance(15_000)
+    await stream.ended()
+    expect(app!.streamHub.countUserSessions(alice.id)).toBe(0)
+    expect((await listUsers(bob)).alice).toMatchObject({ online: true })
+
+    clock.advance(5_000)
+    const offlineAt = new Date(START + 50_000).toISOString()
+    await waitFor(() => watcher.presence().some((event) => !event.online))
+
+    expect(watcher.presence()).toEqual([
+      { user_id: alice.id, online: true, last_seen_at: new Date(START).toISOString() },
+      { user_id: alice.id, online: false, last_seen_at: offlineAt },
+    ])
+    expect((await listUsers(bob)).alice).toMatchObject({ online: false, last_seen_at: offlineAt })
+  })
+
+  it('heartbeat_keeps_stream_alive', async () => {
+    const watcher = await connect(bob)
+    await connect(alice)
+    clock.advance(30_000)
+    await heartbeat(bob)
+    await heartbeat(alice)
+
+    clock.advance(30_000)
+    await sentinel(watcher)
+
+    expect(app!.streamHub.countUserSessionsWithListeners(alice.id)).toBe(1)
+    expect(watcher.presence().filter((event) => event.user_id === alice.id)).toEqual([
+      { user_id: alice.id, online: true, last_seen_at: new Date(START).toISOString() },
+    ])
+    expect((await listUsers(bob)).alice).toMatchObject({ online: true })
+  })
+
+  it('fresh_connection_counts_as_heartbeat', async () => {
+    const first = await connect(alice)
+    clock.advance(30_000)
+    // Same token: the reconnect replaces the first stream within the same session.
+    const response = await fetch(`http://127.0.0.1:${port}/events/stream?include_shared=true`, {
+      headers: { authorization: `Bearer ${alice.token}` },
+    })
+    const second = new SseStream(response.body!.getReader())
+    streams.push(second)
+    await first.ended()
+
+    clock.advance(30_000)
+    expect(app!.streamHub.countUserSessionsWithListeners(alice.id)).toBe(1)
+
+    clock.advance(15_000)
+    await second.ended()
+    expect(app!.streamHub.countUserSessions(alice.id)).toBe(0)
+  })
+
   async function connect(user: Seeded, token = user.token, query = '?include_shared=true') {
     const before = app!.streamHub.countUserSessionsWithListeners(user.id)
     const response = await fetch(`http://127.0.0.1:${port}/events/stream${query}`, {
@@ -201,6 +259,15 @@ describe('presence', () => {
     const users = (response.json() as { users: ListedUser[] }).users
     return Object.fromEntries(users.map((user) => [user.username, user]))
   }
+
+  async function heartbeat(user: Seeded): Promise<void> {
+    const response = await app!.inject({
+      method: 'POST',
+      url: '/events/heartbeat',
+      headers: { authorization: `Bearer ${user.token}` },
+    })
+    expect(response.statusCode).toBe(204)
+  }
 })
 
 class ManualClock implements PresenceClock {
@@ -226,11 +293,22 @@ class ManualClock implements PresenceClock {
     this.timers = this.timers.filter((timer) => timer.id !== handle)
   }
 
+  /** Fires due timers in time order, each at its own due time, so re-armed timers fire again within one advance. */
   advance(ms: number): void {
-    this.current += ms
-    const due = this.timers.filter((timer) => timer.at <= this.current)
-    this.timers = this.timers.filter((timer) => timer.at > this.current)
-    for (const timer of due) timer.callback()
+    const target = this.current + ms
+    while (true) {
+      const next = this.timers
+        .filter((timer) => timer.at <= target)
+        .reduce<(typeof this.timers)[number] | undefined>(
+          (earliest, timer) => (earliest === undefined || timer.at < earliest.at ? timer : earliest),
+          undefined,
+        )
+      if (next === undefined) break
+      this.timers = this.timers.filter((timer) => timer.id !== next.id)
+      this.current = next.at
+      next.callback()
+    }
+    this.current = target
   }
 
   pendingTimers(): number {

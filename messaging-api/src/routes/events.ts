@@ -41,7 +41,7 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
       },
       closeTransport,
     )
-    app.presence.connected(userId)
+    app.presence.connected(userId, sessionId)
 
     request.log.info(
       {
@@ -67,6 +67,15 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
       request.raw.on('close', onClose)
       request.raw.on('error', onClose)
     })
+  })
+
+  // Liveness: the account stream of a session without a heartbeat for 45 s is closed and the user may go offline.
+  app.post('/events/heartbeat', { preHandler: app.authenticate }, async (request, reply) => {
+    if (!request.sessionId) {
+      return reply.code(401).send({ error: 'session_required' })
+    }
+    app.presence.heartbeat(request.sessionId)
+    return reply.code(204).send()
   })
 }
 

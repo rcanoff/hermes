@@ -95,6 +95,8 @@ export class StreamHub {
   private readonly sessionUser = new Map<string, string>()
   /** The `connectUserSession` call that registered each user session; only its unsubscribe unregisters the session. */
   private readonly userSessionOwners = new Map<string, string>()
+  /** Epoch ms of each user session's last liveness signal (stream connect or client heartbeat). */
+  private readonly lastHeartbeatAt = new Map<string, number>()
 
   subscribeSession(sessionId: string, listener: SessionListener): () => void {
     const identity = randomUUID()
@@ -132,6 +134,7 @@ export class StreamHub {
 
   unregisterUserSession(sessionId: string): void {
     this.userSessionOwners.delete(sessionId)
+    this.lastHeartbeatAt.delete(sessionId)
     const userId = this.sessionUser.get(sessionId)
     if (!userId) return
     this.sessionUser.delete(sessionId)
@@ -140,6 +143,31 @@ export class StreamHub {
     if (sessions?.size === 0) {
       this.userSessions.delete(userId)
     }
+  }
+
+  /** Records a liveness signal for a registered user session; unknown sessions are ignored. */
+  touchHeartbeat(sessionId: string, at: Date): void {
+    if (this.sessionUser.has(sessionId)) {
+      this.lastHeartbeatAt.set(sessionId, at.getTime())
+    }
+  }
+
+  /**
+   * Ends every user session whose last heartbeat is at or before `cutoff`: unregisters it and closes its transport.
+   * Returns the affected user ids.
+   */
+  closeStaleUserSessions(cutoff: Date): string[] {
+    const userIds = new Set<string>()
+    for (const [sessionId, at] of [...this.lastHeartbeatAt]) {
+      if (at > cutoff.getTime()) continue
+      const userId = this.sessionUser.get(sessionId)
+      const connection = this.sessionConnections.get(sessionId)
+      this.sessionConnections.delete(sessionId)
+      this.unregisterUserSession(sessionId)
+      connection?.closeTransport?.()
+      if (userId) userIds.add(userId)
+    }
+    return [...userIds]
   }
 
   hasUserSessionListener(userId: string): boolean {

@@ -25,31 +25,42 @@ export const systemPresenceClock: PresenceClock = {
 
 /** A user whose last stream closed stays online this long, so a reconnect does not flap. */
 export const PRESENCE_OFFLINE_DEBOUNCE_MS = 5_000
+/** How often account streams are checked for a missing heartbeat. */
+export const PRESENCE_SWEEP_INTERVAL_MS = 15_000
+/** An account stream with no heartbeat (or connect) for this long is treated as disconnected. */
+export const PRESENCE_HEARTBEAT_TIMEOUT_MS = 45_000
 
 /**
  * Online = at least one account stream connected (in memory: a fresh process has nobody online).
  * Each online/offline transition is published to every other connected user.
+ * A stream counts as connected only while the client proves it alive: a half-open TCP connection accepts the
+ * server's writes, so a stream without a heartbeat for PRESENCE_HEARTBEAT_TIMEOUT_MS is closed and disconnected.
  */
 export class PresenceTracker {
   private readonly online = new Set<string>()
   private readonly pendingOffline = new Map<string, unknown>()
   /** Set by close(): streams that end while the app shuts down schedule no timers and write nothing. */
   private closed = false
+  private sweepTimer: unknown
 
   constructor(
     private readonly db: Database.Database,
     private readonly hub: StreamHub,
     private readonly clock: PresenceClock,
-  ) {}
+  ) {
+    this.scheduleSweep()
+  }
 
   isOnline(userId: string): boolean {
     return this.online.has(userId)
   }
 
-  /** Call after the hub registered the user's stream. */
-  connected(userId: string): void {
+  /** Call after the hub registered the user's stream; the connect counts as the session's first heartbeat. */
+  connected(userId: string, sessionId: string): void {
     if (this.closed) return
-    const at = this.clock.now().toISOString()
+    const now = this.clock.now()
+    const at = now.toISOString()
+    this.hub.touchHeartbeat(sessionId, now)
     touchUserLastSeen(this.db, userId, at)
     const pending = this.pendingOffline.get(userId)
     if (pending !== undefined) {
@@ -59,6 +70,12 @@ export class PresenceTracker {
     if (this.online.has(userId)) return
     this.online.add(userId)
     this.publish(userId, true, at)
+  }
+
+  /** The client confirmed its account stream is alive. */
+  heartbeat(sessionId: string): void {
+    if (this.closed) return
+    this.hub.touchHeartbeat(sessionId, this.clock.now())
   }
 
   /** Call after the hub released the user's stream. */
@@ -78,8 +95,18 @@ export class PresenceTracker {
 
   close(): void {
     this.closed = true
+    this.clock.clearTimeout(this.sweepTimer)
     for (const timer of this.pendingOffline.values()) this.clock.clearTimeout(timer)
     this.pendingOffline.clear()
+  }
+
+  private scheduleSweep(): void {
+    this.sweepTimer = this.clock.setTimeout(() => {
+      if (this.closed) return
+      const cutoff = new Date(this.clock.now().getTime() - PRESENCE_HEARTBEAT_TIMEOUT_MS)
+      for (const userId of this.hub.closeStaleUserSessions(cutoff)) this.disconnected(userId)
+      this.scheduleSweep()
+    }, PRESENCE_SWEEP_INTERVAL_MS)
   }
 
   private publish(userId: string, online: boolean, at: string): void {
