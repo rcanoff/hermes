@@ -28,7 +28,11 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
       closed = true
       clearInterval(pingInterval)
       request.log.info({ userId, sessionId }, 'SSE session stream disconnected')
+      // Ending the response detaches its socket, so take it first.
+      const socket = reply.raw.socket
       reply.sseEnd()
+      // A keep-alive socket outlives the ended response; closing it is what a peer that was half-open sees on return.
+      socket?.destroy()
     }
 
     const unsubscribe = app.streamHub.connectUserSession(
@@ -70,11 +74,14 @@ const eventsRoutes: FastifyPluginAsync = async (app) => {
   })
 
   // Liveness: the account stream of a session without a heartbeat for 45 s is closed and the user may go offline.
+  // A heartbeat for a session with no registered stream is 409: the client's stream is dead and must be reopened.
   app.post('/events/heartbeat', { preHandler: app.authenticate }, async (request, reply) => {
     if (!request.sessionId) {
       return reply.code(401).send({ error: 'session_required' })
     }
-    app.presence.heartbeat(request.sessionId)
+    if (!app.presence.heartbeat(request.sessionId)) {
+      return reply.code(409).send({ error: 'stream_stale' })
+    }
     return reply.code(204).send()
   })
 }

@@ -145,11 +145,11 @@ export class StreamHub {
     }
   }
 
-  /** Records a liveness signal for a registered user session; unknown sessions are ignored. */
-  touchHeartbeat(sessionId: string, at: Date): void {
-    if (this.sessionUser.has(sessionId)) {
-      this.lastHeartbeatAt.set(sessionId, at.getTime())
-    }
+  /** Records a liveness signal for a registered user session; returns false (and records nothing) for an unknown one. */
+  touchHeartbeat(sessionId: string, at: Date): boolean {
+    if (!this.sessionUser.has(sessionId)) return false
+    this.lastHeartbeatAt.set(sessionId, at.getTime())
+    return true
   }
 
   /**

@@ -72,10 +72,13 @@ export class PresenceTracker {
     this.publish(userId, true, at)
   }
 
-  /** The client confirmed its account stream is alive. */
-  heartbeat(sessionId: string): void {
-    if (this.closed) return
-    this.hub.touchHeartbeat(sessionId, this.clock.now())
+  /**
+   * The client confirmed its account stream is alive. False when the session has no registered stream (the sweep
+   * dropped it, or it never connected): the client's stream is dead and must be reopened.
+   */
+  heartbeat(sessionId: string): boolean {
+    if (this.closed) return true
+    return this.hub.touchHeartbeat(sessionId, this.clock.now())
   }
 
   /** Call after the hub released the user's stream. */

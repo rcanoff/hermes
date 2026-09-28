@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { AddressInfo } from 'node:net'
+import { connect as connectRaw, type AddressInfo } from 'node:net'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { PresenceClock } from '../src/streams/presence.js'
@@ -232,6 +232,79 @@ describe('presence', () => {
     expect(app!.streamHub.countUserSessions(alice.id)).toBe(0)
   })
 
+  it('stale_sweep_closes_only_the_silent_users_session', async () => {
+    // Both phones heartbeat every 20 s; alice's goes into airplane mode after her first heartbeat.
+    const bobStream = await connect(bob)
+    const aliceStream = await connect(alice)
+    clock.advance(20_000)
+    await heartbeat(alice)
+    await heartbeat(bob)
+    clock.advance(20_000)
+    await heartbeat(bob)
+    clock.advance(20_000)
+    await heartbeat(bob)
+    expect(app!.streamHub.countUserSessionsWithListeners(alice.id)).toBe(1)
+
+    // The sweep at 75 s is the first whose cutoff (30 s) passes alice's last heartbeat (20 s).
+    clock.advance(15_000)
+    await aliceStream.ended()
+    expect(app!.streamHub.countUserSessions(alice.id)).toBe(0)
+    expect(app!.streamHub.countUserSessionsWithListeners(bob.id)).toBe(1)
+
+    clock.advance(5_000)
+    await waitFor(() => bobStream.presence().some((event) => !event.online))
+    await heartbeat(bob)
+    clock.advance(20_000)
+    await heartbeat(bob)
+    clock.advance(20_000)
+    await sentinel(bobStream)
+
+    expect(app!.streamHub.countUserSessionsWithListeners(bob.id)).toBe(1)
+    expect(bobStream.presence().filter((event) => event.user_id !== carol.id)).toEqual([
+      { user_id: alice.id, online: true, last_seen_at: new Date(START).toISOString() },
+      { user_id: alice.id, online: false, last_seen_at: new Date(START + 80_000).toISOString() },
+    ])
+    const users = await listUsers(carol)
+    expect(users.bob).toMatchObject({ online: true })
+    expect(users.alice).toMatchObject({ online: false })
+  })
+
+  it('heartbeat_for_a_dropped_session_is_409', async () => {
+    const stream = await connect(alice)
+    clock.advance(45_000)
+    await stream.ended()
+
+    // The phone's socket survived on its side, so it keeps heartbeating a session the server dropped.
+    const response = await postHeartbeat(alice)
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toEqual({ error: 'stream_stale' })
+    // A 409 touches nothing: the session stays dropped until the phone reopens its stream.
+    clock.advance(5_000)
+    expect(app!.streamHub.countUserSessions(alice.id)).toBe(0)
+    expect((await listUsers(bob)).alice).toMatchObject({ online: false })
+  })
+
+  it('stale_close_drops_the_connection_not_just_the_response', async () => {
+    // A keep-alive socket outlives the ended response; the sweep must close the connection itself.
+    const socket = connectRaw(port)
+    let socketClosed = false
+    socket.on('close', () => {
+      socketClosed = true
+    })
+    socket.on('error', () => undefined)
+    // Flowing mode: a paused socket never emits 'end', so it would never close.
+    socket.resume()
+    socket.write(
+      'GET /events/stream?include_shared=true HTTP/1.1\r\n' +
+        `Host: 127.0.0.1:${port}\r\nAuthorization: Bearer ${alice.token}\r\nConnection: keep-alive\r\n\r\n`,
+    )
+    await waitFor(() => app!.streamHub.countUserSessionsWithListeners(alice.id) === 1)
+
+    clock.advance(45_000)
+    await waitFor(() => socketClosed)
+    expect(app!.streamHub.countUserSessions(alice.id)).toBe(0)
+  })
+
   async function connect(user: Seeded, token = user.token, query = '?include_shared=true') {
     const before = app!.streamHub.countUserSessionsWithListeners(user.id)
     const response = await fetch(`http://127.0.0.1:${port}/events/stream${query}`, {
@@ -261,12 +334,15 @@ describe('presence', () => {
   }
 
   async function heartbeat(user: Seeded): Promise<void> {
-    const response = await app!.inject({
+    expect((await postHeartbeat(user)).statusCode).toBe(204)
+  }
+
+  function postHeartbeat(user: Seeded) {
+    return app!.inject({
       method: 'POST',
       url: '/events/heartbeat',
       headers: { authorization: `Bearer ${user.token}` },
     })
-    expect(response.statusCode).toBe(204)
   }
 })
 
